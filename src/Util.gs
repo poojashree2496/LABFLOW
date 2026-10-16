@@ -1,0 +1,161 @@
+/**
+ * Util.gs - errors, time (Asia/Kolkata), encoding, hashing and small helpers.
+ * Everything here is pure or depends only on Utilities, so it is unit-testable.
+ */
+
+/** A failure that is safe to show to the caller. Anything else is logged and replaced by a generic message. */
+class AppError extends Error {
+  constructor(code, message, extra) {
+    super(message);
+    this.name = 'AppError';
+    this.code = code;
+    this.extra = extra || null;
+  }
+}
+function fail(code, message, extra) { throw new AppError(code, message, extra); }
+
+var U = {
+  /** Current time in epoch ms. Tests may set the global __testNow to control the clock. */
+  now: function () { return (typeof __testNow === 'number') ? __testNow : Date.now(); },
+
+  // ---- identifiers ---------------------------------------------------------------------------
+  id: function (kind) {
+    var prefix = Cfg.ID_PREFIX[kind];
+    if (!prefix) throw new Error('Unknown id kind ' + kind);
+    return prefix + '-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12).toUpperCase();
+  },
+
+  // ---- time (fixed +05:30; India has no DST) --------------------------------------------------
+  p2: function (n) { return (n < 10 ? '0' : '') + n; },
+  local: function (ms) {
+    var d = new Date(ms + Cfg.TZ_OFFSET_MIN * 60000);
+    var y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, day = d.getUTCDate();
+    var H = d.getUTCHours(), M = d.getUTCMinutes();
+    return { y: y, m: m, d: day, H: H, M: M, dow: d.getUTCDay() || 7,
+             date: y + '-' + U.p2(m) + '-' + U.p2(day), time: U.p2(H) + ':' + U.p2(M), month: y + '-' + U.p2(m) };
+  },
+  isDate: function (s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z')) && new Date(s + 'T00:00:00Z').toISOString().slice(0, 10) === s; },
+  isTime: function (s) { return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s); },
+  fromLocal: function (dateStr, timeStr) {
+    if (!U.isDate(dateStr) || !U.isTime(timeStr)) fail('BAD_INPUT', 'Invalid date or time.');
+    var y = +dateStr.slice(0, 4), m = +dateStr.slice(5, 7), d = +dateStr.slice(8, 10);
+    return Date.UTC(y, m - 1, d, +timeStr.slice(0, 2), +timeStr.slice(3, 5)) - Cfg.TZ_OFFSET_MIN * 60000;
+  },
+  addDays: function (dateStr, n) {
+    var t = Date.parse(dateStr + 'T00:00:00Z') + n * 86400000;
+    return new Date(t).toISOString().slice(0, 10);
+  },
+  dayStart: function (dateStr) { return U.fromLocal(dateStr, '00:00'); },
+  fmt: function (ms) { var l = U.local(ms); return l.date + ' ' + l.time; },
+
+  // ---- bytes / encoding ----------------------------------------------------------------------
+  /** Apps Script returns SIGNED bytes (-128..127) from digest/HMAC/base64 decode. Normalise to 0..255. */
+  unsigned: function (bytes) {
+    var out = new Uint8Array(bytes.length);
+    for (var i = 0; i < bytes.length; i++) out[i] = bytes[i] & 255;
+    return out;
+  },
+  hex: function (bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += ((bytes[i] & 255) + 256).toString(16).slice(1);
+    return s;
+  },
+  b64uEncode: function (bytesOrString) { return Utilities.base64EncodeWebSafe(bytesOrString).replace(/=+$/, ''); },
+  b64uDecode: function (s) {
+    if (typeof s !== 'string' || !/^[A-Za-z0-9_-]*$/.test(s)) fail('BAD_INPUT', 'Malformed encoded value.');
+    while (s.length % 4) s += '=';
+    return U.unsigned(Utilities.base64DecodeWebSafe(s));
+  },
+  sha256Hex: function (str) { return U.hex(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str, Utilities.Charset.UTF_8)); },
+  sha256Bytes: function (str) { return U.unsigned(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str, Utilities.Charset.UTF_8)); },
+  hmacB64u: function (key, msg) { return U.b64uEncode(Utilities.computeHmacSha256Signature(msg, key)); },
+  /** Constant-time string comparison. */
+  safeEq: function (a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+    var r = 0;
+    for (var i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return r === 0;
+  },
+
+  // ---- misc ----------------------------------------------------------------------------------
+  clamp: function (n, lo, hi) { return Math.min(hi, Math.max(lo, n)); },
+  uniq: function (arr) { var seen = {}; return arr.filter(function (x) { return seen[x] ? false : (seen[x] = true); }); },
+  groupBy: function (arr, fn) { var o = {}; arr.forEach(function (x) { var k = fn(x); (o[k] = o[k] || []).push(x); }); return o; },
+  indexBy: function (arr, key) { var o = {}; arr.forEach(function (x) { o[x[key]] = x; }); return o; },
+  chunk: function (arr, n) { var out = []; for (var i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; },
+  /** Unbiased random integer in [0, n). */
+  randInt: function (n) {
+    var bytes = U.unsigned(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + Math.random(), Utilities.Charset.UTF_8));
+    var x = (bytes[0] * 16777216 + bytes[1] * 65536 + bytes[2] * 256 + bytes[3]);
+    return x % n;
+  },
+  shuffle: function (arr) { var a = arr.slice(); for (var i = a.length - 1; i > 0; i--) { var j = U.randInt(i + 1); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; },
+  /** Neutralise spreadsheet formula injection in exported text cells. */
+  csvSafe: function (v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return isFinite(v) ? String(v) : ''; // real numbers are never formulas
+    var s = String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  },
+  toCsv: function (columns, rows) {
+    var lines = [columns.map(U.csvSafe).join(',')];
+    rows.forEach(function (r) { lines.push(r.map(U.csvSafe).join(',')); });
+    return lines.join('\r\n');
+  },
+  overlaps: function (aStart, aEnd, bStart, bEnd) { return aStart < bEnd && bStart < aEnd; }
+};
+
+/** Input validation. Every RPC handler validates its payload through these; failures become BAD_INPUT. */
+var V = {
+  obj: function (p) { if (!p || typeof p !== 'object' || Array.isArray(p)) fail('BAD_INPUT', 'Invalid request.'); return p; },
+  str: function (v, name, opts) {
+    opts = opts || {};
+    if (v === undefined || v === null || v === '') { if (opts.optional) return opts.def !== undefined ? opts.def : ''; fail('BAD_INPUT', name + ' is required.'); }
+    if (typeof v !== 'string') fail('BAD_INPUT', name + ' must be text.');
+    var s = v.trim();
+    var max = opts.max || 200, min = opts.min || 1;
+    if (s.length < min) fail('BAD_INPUT', name + ' is too short.');
+    if (s.length > max) fail('BAD_INPUT', name + ' is too long.');
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(s)) fail('BAD_INPUT', name + ' contains invalid characters.');
+    if (opts.re && !opts.re.test(s)) fail('BAD_INPUT', opts.reMsg || (name + ' has an invalid format.'));
+    return s;
+  },
+  int: function (v, name, min, max, opts) {
+    opts = opts || {};
+    if ((v === undefined || v === null || v === '') && opts.optional) return opts.def !== undefined ? opts.def : null;
+    var n = typeof v === 'number' ? v : (typeof v === 'string' && /^-?\d+$/.test(v.trim()) ? parseInt(v, 10) : NaN);
+    if (!isFinite(n) || Math.floor(n) !== n) fail('BAD_INPUT', name + ' must be a whole number.');
+    if (n < min || n > max) fail('BAD_INPUT', name + ' must be between ' + min + ' and ' + max + '.');
+    return n;
+  },
+  num: function (v, name, min, max, opts) {
+    opts = opts || {};
+    if ((v === undefined || v === null || v === '') && opts.optional) return opts.def !== undefined ? opts.def : null;
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    if (!isFinite(n)) fail('BAD_INPUT', name + ' must be a number.');
+    if (n < min || n > max) fail('BAD_INPUT', name + ' must be between ' + min + ' and ' + max + '.');
+    return n;
+  },
+  bool: function (v) { return v === true || v === 'true'; },
+  enumOf: function (v, name, values, opts) {
+    opts = opts || {};
+    if ((v === undefined || v === null || v === '') && opts.optional) return opts.def !== undefined ? opts.def : '';
+    if (values.indexOf(v) < 0) fail('BAD_INPUT', name + ' must be one of: ' + values.join(', ') + '.');
+    return v;
+  },
+  id: function (v, name, kind) {
+    var re = new RegExp('^' + Cfg.ID_PREFIX[kind] + '-[0-9A-F]{12}$');
+    if (typeof v !== 'string' || !re.test(v)) fail('BAD_INPUT', name + ' is invalid.');
+    return v;
+  },
+  email: function (v, name) { return V.str(v, name || 'Email', { max: 120, re: /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/ }).toLowerCase(); },
+  date: function (v, name) { if (!U.isDate(v)) fail('BAD_INPUT', (name || 'Date') + ' must be a valid date (YYYY-MM-DD).'); return v; },
+  time: function (v, name) { if (!U.isTime(v)) fail('BAD_INPUT', (name || 'Time') + ' must be HH:MM (24 hour).'); return v; },
+  arr: function (v, name, max) {
+    if (!Array.isArray(v)) fail('BAD_INPUT', name + ' must be a list.');
+    if (v.length > (max || 500)) fail('BAD_INPUT', name + ' has too many entries (max ' + (max || 500) + ').');
+    return v;
+  },
+  rollNo: function (v) { return V.str(v, 'Roll number', { max: 20, min: 3, re: /^[A-Za-z0-9._-]+$/, reMsg: 'Roll number may only contain letters, digits, dot, dash and underscore.' }).toUpperCase(); }
+};
