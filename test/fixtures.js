@@ -9,6 +9,12 @@ const { load, initDb } = require('./harness');
 
 const subtle = nodeCrypto.webcrypto.subtle;
 const NOW = Date.UTC(2026, 9, 14, 4, 30); // Wed 2026-10-14 10:00 IST
+// Karunya campus (approximate). The IoT lab is at LAB_A; the GPU lab is about 350 m away.
+const LAB_A = { lat: 10.93620, lng: 76.74410 };
+const LAB_B = { lat: 10.93930, lng: 76.74510 };
+const WEBAPP = 'https://script.google.com/a/macros/karunya.edu/s/TESTDEPLOYMENT/exec';
+/** A point `metres` north of p (1 degree of latitude is about 111,320 m). */
+const north = (p, metres) => ({ lat: p.lat + metres / 111320, lng: p.lng });
 const b64u = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 async function genDevice() {
@@ -25,6 +31,7 @@ function world(opts = {}) {
   initDb(e);
   e.setTime(NOW);
   e.run("PropertiesService.getScriptProperties().setProperty('BOOTSTRAP_ADMIN_EMAIL','admin@karunya.edu')");
+  e.run("PropertiesService.getScriptProperties().setProperty('WEBAPP_URL', " + JSON.stringify(WEBAPP) + ")");
   const w = { e, NOW, students: [], kioskEmail: 'kiosk1@karunya.edu', devices: {} };
 
   w.call = (email, action, payload) => {
@@ -50,8 +57,8 @@ function world(opts = {}) {
   w.ok(w.admin, 'users.upsert', { email: w.staff, displayName: 'Lab Staff', roles: ['staff'] });
   w.ok(w.admin, 'users.upsert', { email: w.faculty, displayName: 'Dr Faculty', roles: ['faculty'], employeeCode: 'F001' });
   w.ok(w.admin, 'users.upsert', { email: w.faculty2, displayName: 'Dr Other', roles: ['faculty'], employeeCode: 'F002' });
-  w.lab = w.ok(w.admin, 'labs.upsert', { code: 'IOT01', name: 'IoT Lab', type: 'iot', capacity: 70 }).lab;
-  w.lab2 = w.ok(w.admin, 'labs.upsert', { code: 'GPU01', name: 'GPU Lab', type: 'gpu', capacity: 30 }).lab;
+  w.lab = w.ok(w.admin, 'labs.upsert', { code: 'IOT01', name: 'IoT Lab', type: 'iot', capacity: 70, latitude: LAB_A.lat, longitude: LAB_A.lng, radiusM: 20, checkinMode: opts.mode || 'AB', openTime: '08:00', closeTime: '19:00' }).lab;
+  w.lab2 = w.ok(w.admin, 'labs.upsert', { code: 'GPU01', name: 'GPU Lab', type: 'gpu', capacity: 30, latitude: LAB_B.lat, longitude: LAB_B.lng, radiusM: 20, checkinMode: opts.mode || 'AB' }).lab;
   w.ok(w.admin, 'kiosks.upsert', { labId: w.lab.labId, name: 'IoT door', authorizedEmail: w.kioskEmail });
   w.ok(w.admin, 'kiosks.upsert', { labId: w.lab2.labId, name: 'GPU door', authorizedEmail: 'kiosk2@karunya.edu' });
   w.course = w.ok(w.admin, 'courses.upsert', { code: 'CSE301', name: 'Embedded Systems' }).course;
@@ -66,7 +73,7 @@ function world(opts = {}) {
   if (rows.length) w.ok(w.admin, 'students.import', { rows });
   for (let i = 1; i <= n; i++) {
     const email = 'student' + i + '@karunya.edu';
-    const r = w.ok(email, 'onboard', { rollNo: rows[i - 1].rollNo, name: rows[i - 1].name });
+    const r = w.ok(email, 'onboard', { rollNo: rows[i - 1].rollNo, name: rows[i - 1].name, consent: true, mobile: '98765' + String(43210 + i) });
     w.students.push({ email, studentId: r.student.studentId, rollNo: rows[i - 1].rollNo, status: r.student.status });
   }
   if (rows.length) w.ok(w.admin, 'roster.import', { courseId: w.course.courseId, rows: rows.map((r) => r.rollNo) });
@@ -86,13 +93,32 @@ function world(opts = {}) {
     w.devices[student.studentId] = dev;
     return dev;
   };
-  w.qr = async (student, sessionId, purpose, dev) => {
+  /** Version B: the rotating student QR, i.e. token~timestamp~signature(token.timestamp). `at` overrides the timestamp. */
+  w.sign = async (token, dev, at) => { const ts = at === undefined ? w.eval('U.now()') : at; return token + '~' + ts + '~' + (await signWith(dev, token + '.' + ts)); };
+  w.qr = async (student, sessionId, purpose, dev, at) => {
     dev = dev || w.devices[student.studentId];
     const ch = w.ok(student.email, 'attend.challenge', { sessionId, purpose, credentialId: dev.credentialId });
-    return ch.token + '~' + (await signWith(dev, ch.token));
+    return w.sign(ch.token, dev, at);
   };
+  /** The QR as a link, the way a teacher's camera opens it. */
+  w.qrLink = async (...args) => WEBAPP + '?s=' + (await w.qr(...args));
   w.scan = (qr, kiosk) => w.call(kiosk || w.kioskEmail, 'kiosk.scan', { qr });
+  w.phoneScan = (scannerEmail, qr) => w.call(scannerEmail, 'scan.submit', { qr });
+
+  // ---- Version A: kiosk QR + GPS ----
+  w.kioskCode = (kiosk) => w.ok(kiosk || w.kioskEmail, 'kiosk.display').code;
+  w.at = (metres, accuracy, base) => Object.assign(north(base || LAB_A, metres || 0), { accuracy: accuracy === undefined ? 12 : accuracy });
+  /** Open the kiosk link as the student, then submit. opts: { action, sessionId, reservationId, reason, geo (null = no location), code } */
+  w.checkin = (student, opts = {}) => {
+    const code = opts.code || w.kioskCode(opts.kiosk);
+    const op = w.call(student.email, 'checkin.open', { code });
+    if (!op.ok) return op;
+    const action = opts.action || op.data.actions[0];
+    const target = opts.sessionId || (action === 'in' && !opts.reservationId ? op.data.prefill : undefined);
+    const geo = opts.geo === null ? undefined : (opts.geo || w.at(3, 12));
+    return w.call(student.email, 'checkin.submit', { pass: op.data.pass, action, sessionId: target && target.startsWith('SES-') ? target : undefined, reservationId: opts.reservationId, reason: opts.reason, geo });
+  };
   return w;
 }
 
-module.exports = { world, genDevice, signWith, NOW, b64u };
+module.exports = { world, genDevice, signWith, NOW, b64u, LAB_A, LAB_B, WEBAPP, north };

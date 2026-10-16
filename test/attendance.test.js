@@ -82,32 +82,40 @@ test('race: two DIFFERENT valid IN codes for the same student cannot both check 
   assert.equal(w.eval("Db.readAll('AttendanceEvents').length"), 1);
 });
 
-test('expired QR is rejected; freshness window is the configured TTL', async () => {
+test('expired nonce is rejected; the phone keeps re-signing a live nonce, a stale timestamp is refused', async () => {
   const w = await ready(1); const [s] = w.students; open(w);
-  const qr = await w.qr(s, w.sid, 'in');
-  w.advance(66 * 1000); // ttl 60s + 5s skew
-  assert.equal(w.scan(qr).error.code, 'EXPIRED');
-  const qr2 = await w.qr(s, w.sid, 'in');
+  const dev = w.devices[s.studentId];
+  const ch = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: dev.credentialId });
+  assert.equal(ch.rotateSeconds, 3); assert.equal(ch.url.indexOf('https://'), 0);
+  const shot = await w.sign(ch.token, dev);           // a screenshot taken now
   w.advance(30 * 1000);
-  assert.equal(w.scan(qr2).ok, true, 'still fresh at 30s');
+  assert.equal(w.scan(shot).error.code, 'STALE_QR', 'a 30 s old rotation is a screenshot');
+  assert.equal(w.scan(await w.sign(ch.token, dev)).ok, true, 'the same nonce re-signed now is still valid at 30 s');
+  w.advance(125 * 1000); // past the minimum gap between check-in and check-out
+  const ch2 = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose: 'out', credentialId: dev.credentialId });
+  w.advance(66 * 1000); // ttl 60 s + 5 s skew
+  assert.equal(w.scan(await w.sign(ch2.token, dev)).error.code, 'EXPIRED', 'fresh timestamp cannot revive an expired nonce');
+  assert.equal(w.scan(await w.sign(ch2.token, dev, w.eval('U.now()') + 60000)).error.code, 'EXPIRED');
 });
 
 test('forged signature, wrong key, tampered token and foreign MAC are rejected', async () => {
   const w = await ready(2); const [a, b] = w.students; open(w);
   const ch = w.ok(a.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: w.devices[a.studentId].credentialId });
   // signed by student B's device key, presented for A
-  const wrong = ch.token + '~' + (await signWith(w.devices[b.studentId], ch.token));
-  assert.equal(w.scan(wrong).error.code, 'BAD_SIGNATURE');
+  assert.equal(w.scan(await w.sign(ch.token, w.devices[b.studentId])).error.code, 'BAD_SIGNATURE');
   // attacker device not enrolled
-  const rogue = await genDevice();
-  assert.equal(w.scan(ch.token + '~' + (await signWith(rogue, ch.token))).error.code, 'BAD_SIGNATURE');
-  // token without a signature
-  assert.equal(w.scan(ch.token + '~').error.code, 'BAD_SIGNATURE');
+  assert.equal(w.scan(await w.sign(ch.token, await genDevice())).error.code, 'BAD_SIGNATURE');
+  // the timestamp is inside the signature: changing it breaks the signature (no re-dating a screenshot)
+  const good = await w.sign(ch.token, w.devices[a.studentId]), p3 = good.split('~');
+  assert.equal(w.scan(p3[0] + '~' + (Number(p3[1]) + 1000) + '~' + p3[2]).error.code, 'BAD_SIGNATURE');
+  // token without a signature or timestamp
+  assert.equal(w.scan(ch.token + '~').error.code, 'BAD_TOKEN');
+  assert.equal(w.scan(ch.token + '~' + (await signWith(w.devices[a.studentId], ch.token))).error.code, 'BAD_TOKEN', 'old two-part format is not accepted');
   // tamper: swap the student id in the token body (MAC must break)
   const parts = ch.token.split('.'); parts[1] = b.studentId;
-  assert.equal(w.scan(parts.join('.') + '~' + (await signWith(w.devices[a.studentId], parts.join('.')))).error.code, 'BAD_TOKEN');
+  assert.equal(w.scan(await w.sign(parts.join('.'), w.devices[a.studentId])).error.code, 'BAD_TOKEN');
   // forged token with the correct shape but made up MAC
-  assert.equal(w.scan('a1.x.y.z.q.i.n.9999999999.' + 'A'.repeat(27) + '~' + 'A'.repeat(86)).error.code, 'BAD_TOKEN');
+  assert.equal(w.scan('a1.x.y.z.q.i.n.9999999999.' + 'A'.repeat(27) + '~' + w.eval('U.now()') + '~' + 'A'.repeat(86)).error.code, 'BAD_TOKEN');
   // garbage
   for (const g of ['', 'hello', '~', 'a~b', '{"x":1}', 'x'.repeat(600)]) assert.equal(w.scan(g).ok, false);
   assert.equal(w.eval("Db.readAll('AttendanceEvents').length"), 0);
@@ -223,7 +231,7 @@ test('rescan window: answered keeps credit; missed caps verified time and flags'
   w.scan(await w.qr(a, w.sid, 'in')); w.scan(await w.qr(b, w.sid, 'in'));
   w.advance(30 * 60000);
   assert.equal(w.err(a.email, 'attend.challenge', { sessionId: w.sid, purpose: 'rescan', credentialId: w.devices[a.studentId].credentialId }).code, 'NO_RESCAN_WINDOW');
-  w.ok(w.faculty, 'attend.openRescan', { sessionId: w.sid, minutes: 5 });
+  w.ok(w.faculty, 'attend.openRescan', { sessionId: w.sid, seconds: 300 });
   assert.equal(w.scan(await w.qr(a, w.sid, 'rescan')).data.type, 'RESCAN');
   assert.equal(w.err(a.email, 'attend.challenge', { sessionId: w.sid, purpose: 'rescan', credentialId: w.devices[a.studentId].credentialId }).code, 'ALREADY_RESCANNED');
   w.advance(10 * 60000); // window closes, b never answered

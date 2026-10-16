@@ -1,8 +1,9 @@
 /**
- * AttendanceService.gs - challenge issue, kiosk scanning, rescans, spot checks, corrections, summaries.
+ * AttendanceService.gs - attendance rules shared by both check-in modes, Version B scanning, rescans, spot checks,
+ * corrections and summaries. Version A (kiosk QR + GPS) lives in CheckinService.gs and reuses the gates here.
  *
  * SOURCE OF TRUTH: AttendanceEvents is APPEND-ONLY. No code path updates or deletes an event row.
- *   IN / OUT / RESCAN      accepted kiosk scans
+ *   IN / OUT / RESCAN      accepted check-ins (mode A or B; method kiosk | scanner)
  *   SPOT_OK / SPOT_FAIL    faculty photo spot-check outcomes
  *   CORR_IN / CORR_OUT     manual corrections (operator, reason, approval status recorded)
  *   VOID                   cancels an earlier event (ref = that event's id) - the original stays in the log
@@ -11,6 +12,12 @@
  *
  * VERIFIED DURATION: time counts only between an entry and a verified end - an exit scan, or (when the exit scan is
  * missing) the last rescan/spot-check inside that stint. A missing exit scan NEVER credits the full session.
+ * An event's lunch break (session.breakStart..breakEnd) is never counted and needs no scans.
+ *
+ * VERSION B (device-signed QR): the phone holds a server nonce (Attend.challenge) and re-signs "token.timestamp"
+ * every few seconds; the QR is a link carrying "token~timestamp~signature". A kiosk scanner, or the phone of the
+ * session's teacher, lab staff, an event coordinator or a class representative, submits it. Attend.STEPS_B is the
+ * verification pipeline.
  */
 var Attend = {
   LATE_AFTER_MIN: 15,
@@ -49,16 +56,25 @@ var Attend = {
     return out;
   },
 
+  /** Milliseconds of [a, b] that fall inside the session's break (0 when there is none). */
+  _breakOverlap: function (session, a, b) {
+    if (!session.breakStart || !session.breakEnd || b <= a) return 0;
+    return Math.max(0, Math.min(b, session.breakEnd) - Math.max(a, session.breakStart));
+  },
+  inBreak: function (session, t) { return !!(session.breakStart && session.breakEnd && t >= session.breakStart && t < session.breakEnd); },
+
   /** Pure derivation for ONE student from their effective events. */
   _compute: function (session, evts, windows, now) {
-    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false;
+    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, lastEvent = null;
     (evts || []).forEach(function (e) {
       if (e.type === 'CORR_IN' || e.type === 'CORR_OUT') corrected = true;
       if (e.type === 'IN' || e.type === 'CORR_IN') { if (inAt === null) { inAt = e.at; if (firstIn === null) firstIn = e.at; verified.push(e.at); } }
       else if (e.type === 'OUT' || e.type === 'CORR_OUT') { if (inAt !== null) { stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at); } }
       else if (e.type === 'RESCAN' || e.type === 'SPOT_OK') verified.push(e.at);
       else if (e.type === 'SPOT_FAIL') spotFail = true;
+      if (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT') lastEvent = e;
     });
+    var openIn = inAt;
     if (inAt !== null) stints.push({ inAt: inAt, out: null });
     var inside = inAt !== null;
 
@@ -84,7 +100,7 @@ var Attend = {
         var before = inStint.filter(function (t) { return t < cap; });
         end = Math.min(end, Math.max.apply(null, before.concat([s.inAt])));
       }
-      minutes += Math.max(0, end - s.inAt) / 60000;
+      minutes += Math.max(0, end - s.inAt - Attend._breakOverlap(session, s.inAt, end)) / 60000;
       if (verifiedUntil === null || end > verifiedUntil) verifiedUntil = end;
     });
 
@@ -95,7 +111,8 @@ var Attend = {
     if (spotFail) flags.push('spot_check_failed');
     if (corrected) flags.push('corrected');
     var status = firstIn === null ? 'absent' : spotFail ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
-    return { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil, status: status, flags: flags, inside: inside, missedWindows: missed.length };
+    return { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
+             status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent };
   },
 
   activeWindow: function (sessionId, now) {
@@ -104,14 +121,11 @@ var Attend = {
     return w.length ? w[w.length - 1] : null;
   },
 
-  // ---- challenge (student side) ---------------------------------------------------------------------------
-  /**
-   * Validate that `studentId` may perform `purpose` in `session` right now, given effective events.
-   * Used both when issuing a challenge and again, under the lock, when the scan is redeemed.
-   */
-  _checkAllowed: function (session, studentId, purpose, now, effectiveByStudent) {
+  // ---- gates shared by both check-in modes -----------------------------------------------------------------
+  /** Is the session in a state that accepts this kind of scan right now? */
+  _sessionGate: function (session, purpose, now) {
     var st = session.status;
-    if (purpose === 'in') { if (st !== 'open') fail('SESSION_NOT_OPEN', st === 'closed' ? 'This session is closed.' : 'This session has not been opened by the faculty yet.'); }
+    if (purpose === 'in') { if (st !== 'open') fail('SESSION_NOT_OPEN', st === 'closed' ? 'This session is closed.' : 'This session has not been opened yet.'); }
     else if (purpose === 'out') {
       var graceOk = st === 'closed' && session.closedAt && now <= session.closedAt + Settings.get('exitGraceMinutes') * 60000;
       if (st !== 'open' && !graceOk) fail('SESSION_NOT_OPEN', 'This session is closed and the exit grace period has passed. Ask your faculty for a correction.');
@@ -119,94 +133,233 @@ var Attend = {
       if (st !== 'open') fail('SESSION_NOT_OPEN', 'This session is not open.');
       if (!Attend.activeWindow(session.sessionId, now)) fail('NO_RESCAN_WINDOW', 'There is no rescan window open right now.');
     } else fail('BAD_INPUT', 'Unknown action.');
-    if (!Roster.isEligible(session, studentId)) fail('NOT_ELIGIBLE', 'You are not enrolled in this session.');
-    var c = Attend._compute(session, effectiveByStudent[studentId] || [], [], now);
-    if (purpose === 'in' && c.inside) fail('DUPLICATE_IN', 'You are already checked in.');
-    if ((purpose === 'out' || purpose === 'rescan') && !c.inside) fail('NO_ENTRY', 'You have not checked in to this session.');
+  },
+  _enrolmentGate: function (session, studentId) {
+    if (!Roster.isEligible(session, studentId)) fail('NOT_ELIGIBLE', 'This student is not on the roster for this session.');
+  },
+  /** Direction rules for one student, from their effective events. Returns the computed state. */
+  _stateGate: function (session, studentId, purpose, now, effectiveByStudent) {
+    var mine = effectiveByStudent[studentId] || [];
+    var c = Attend._compute(session, mine, [], now);
+    if (purpose === 'in' && c.inside) fail('DUPLICATE_IN', 'Already checked in.');
+    if ((purpose === 'out' || purpose === 'rescan') && !c.inside) fail('NO_ENTRY', 'Not checked in to this session.');
+    if (purpose === 'out') {
+      var gap = Settings.get('minScanGapSeconds') * 1000, since = c.lastEvent ? now - c.lastEvent.at : Infinity;
+      if (since < gap) fail('TOO_SOON', 'Checked in ' + Math.round(since / 1000) + ' seconds ago. Check-out is possible after ' + Math.round(gap / 1000) + ' seconds (stops accidental double scans).');
+    }
     if (purpose === 'rescan') {
-      var w = Attend.activeWindow(session.sessionId, now), done = (effectiveByStudent[studentId] || []).some(function (e) { return e.type === 'RESCAN' && e.at >= w.openedAt; });
-      if (done) fail('ALREADY_RESCANNED', 'You have already confirmed for this rescan.');
+      var w = Attend.activeWindow(session.sessionId, now), done = mine.some(function (e) { return e.type === 'RESCAN' && e.at >= w.openedAt; });
+      if (done) fail('ALREADY_RESCANNED', 'Presence already confirmed for this rescan.');
     }
     return c;
   },
+  _checkAllowed: function (session, studentId, purpose, now, effectiveByStudent) {
+    Attend._sessionGate(session, purpose, now);
+    Attend._enrolmentGate(session, studentId);
+    return Attend._stateGate(session, studentId, purpose, now, effectiveByStudent);
+  },
 
-  /** Issue a fresh, single-use challenge for the device to sign. The QR = token + '~' + signature. */
+  /** Append the accepted event, consume the single-use key, audit. Runs inside the lock (last pipeline step). */
+  _record: function (c) {
+    var s = c.session, now = c.now, purpose = c.purpose;
+    var win = purpose === 'rescan' ? Attend.activeWindow(s.sessionId, now) : null;
+    var ev = Db.insert('AttendanceEvents', {
+      eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: c.studentId, type: Attend.TYPE_OF[purpose], source: c.method, kioskId: c.kioskId || '',
+      credentialId: c.credentialId || '', nonce: c.nonce, at: now, recordedBy: c.scannedBy, approvalStatus: 'na', ref: win ? win.windowId : '', createdAt: now,
+      mode: c.mode, method: c.method, scannedBy: c.scannedBy, scannerRole: c.scannerRole, geofence: c.geofence || '', distanceM: c.distanceM === undefined ? null : c.distanceM,
+      accuracyM: c.accuracyM === undefined ? null : c.accuracyM, entryReason: c.entryReason || (purpose === 'in' ? Attend.reasonOf(s) : ''), assurance: c.assurance || 'standard'
+    });
+    Tokens.redeem(c.nonce, c.redeemPurpose || purpose, c.studentId, s.sessionId, c.kioskId || '', ev.eventId);
+    Audit.log({ actor: c.scannedBy, role: c.scannerRole, action: 'scan.accept', entityType: 'AttendanceEvent', entityId: ev.eventId,
+                detail: { type: ev.type, mode: c.mode, method: c.method, studentId: c.studentId, sessionId: s.sessionId, kioskId: c.kioskId || '', geofence: ev.geofence, assurance: ev.assurance } });
+    Occupancy.invalidate(s.labId);
+    var stu = c.student || Db.cachedGet('StudentProfiles', 'studentId', c.studentId, 120) || {};
+    c.event = ev;
+    c.result = { ok: true, type: ev.type, at: now, eventId: ev.eventId, mode: c.mode, method: c.method, assurance: ev.assurance, geofence: ev.geofence,
+                 student: { studentId: c.studentId, name: stu.name, rollNo: stu.rollNo, hasPhoto: !!stu.photoFileId }, session: { sessionId: s.sessionId, title: s.title } };
+  },
+  /** The entry reason a session implies (FR-13): class, event or research. */
+  reasonOf: function (session) { return session.type === 'event' ? 'event' : session.type === 'research' ? 'research' : 'class'; },
+
+  /** Follow-up work after an accepted scan. Never changes the outcome; failures are only logged. */
+  _afterAccept: function (c) {
+    try { Booking.markUsed(c.studentId, c.session.labId, c.now); } catch (e) { Syslog.warn('attend', 'BOOKING_MARK_FAILED', String(e && e.message)); }
+    try { Flags.afterScan(c); } catch (e) { Syslog.warn('attend', 'FLAG_CHECK_FAILED', String(e && e.message)); }
+  },
+  /** Record why a scan was refused, and raise a flag for refusals that indicate sharing or relaying. */
+  _afterReject: function (c, e, actor, role) {
+    Audit.tryLog({ actor: actor, role: role, action: 'scan.reject', entityType: 'Session', entityId: c.sessionId || '', result: 'rejected',
+                   detail: { code: e.code, mode: c.mode, method: c.method, kioskId: c.kioskId || '', studentId: c.studentId || '', purpose: c.purpose || '', step: (c.trace && c.trace.length) ? c.trace[c.trace.length - 1].id : '' } });
+    try { Flags.afterReject(c, e); } catch (x) { /* never mask the real error */ }
+  },
+
+  // ---- challenge (student side, Version B) ------------------------------------------------------------------
+  /** Issue a fresh, single-use server nonce for the device. The phone signs "token.timestamp" every few seconds. */
   challenge: function (ctx, p) {
     V.obj(p);
     var st = Creds._requireVerifiedStudent(ctx);
     var purpose = V.enumOf(p.purpose, 'Action', ['in', 'out', 'rescan']);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
+    var lab = Db.cachedGet('Labs', 'labId', session.labId, 120);
+    if (!Labs.allows(lab, 'B')) fail('MODE_DISABLED', 'This lab uses the kiosk QR. Scan the code on the lab screen with your phone camera.');
     var cred = Creds.get(V.id(p.credentialId, 'Device', 'cred'));
     if (!cred || cred.studentId !== st.studentId) fail('NO_DEVICE', 'This device is not registered to you.');
     if (cred.status !== 'active') fail('DEVICE_INACTIVE', cred.status === 'pending_approval' ? 'This device is waiting for approval at the lab desk.' : 'This device has been revoked. Register it again.');
     if (!Auth.rateLimit('chal|' + st.studentId, 40, 60)) fail('RATE_LIMITED', 'Too many requests. Wait a moment.');
+    session = Sessions.openResearchIfDue(session, st.studentId);
     var now = U.now();
     Attend._checkAllowed(session, st.studentId, purpose, now, Attend._effective(Attend._eventsFor(session)));
     var ttl = Settings.get('qrTtlSeconds'), exp = Math.floor(now / 1000) + ttl;
     var token = Tokens.make(['a1', st.studentId, cred.credentialId, session.sessionId, session.labId, Attend.PURPOSE_CODE[purpose], Tokens.nonce(), String(exp)]);
-    return { token: token, expiresAt: exp * 1000, ttl: ttl, serverNow: now };
+    return { token: token, expiresAt: exp * 1000, ttl: ttl, serverNow: now, rotateSeconds: Settings.get('studentQrRotateSeconds'), freshSeconds: Settings.get('qrFreshSeconds'), url: Setup.webAppUrl() };
   },
 
-  // ---- scanning (kiosk side) ------------------------------------------------------------------------------
-  kioskScan: function (ctx, p) {
-    V.obj(p);
-    var kiosk = ctx.kiosk;
-    if (!kiosk) fail('FORBIDDEN', 'Only a registered kiosk can scan.');
-    var info = { kioskId: kiosk.kioskId };
-    try { return Attend._scan(kiosk, String(p.qr || ''), info); }
-    catch (e) {
+  // ---- Version B verification pipeline -------------------------------------------------------------------------
+  STEPS_B: [
+    { id: 'payload', label: 'Code is a LABFLOW student QR (link or raw text)', run: function (c) {
+      var raw = String(c.input || '').trim();
+      if (!raw || raw.length > 900) fail('BAD_TOKEN', 'That is not a LABFLOW code.');
+      if (raw.indexOf('?') >= 0) raw = U.queryParam(raw, 's');
+      var p = raw.split('~');
+      if (p.length !== 3 || !p[0] || !/^\d{10,14}$/.test(p[1]) || !/^[A-Za-z0-9_-]{60,120}$/.test(p[2])) fail('BAD_TOKEN', 'That is not a LABFLOW code.');
+      c.token = p[0]; c.ts = Number(p[1]); c.sig = p[2];
+    } },
+    { id: 'token_mac', label: 'Server token is authentic and untampered (HMAC)', run: function (c) {
+      var parts = Tokens.parse(c.token, 'a1', 8);
+      c.studentId = parts[1]; c.credentialId = parts[2]; c.sessionId = parts[3]; c.labId = parts[4]; c.purpose = Attend.PURPOSE[parts[5]]; c.nonce = parts[6]; c.exp = Number(parts[7]);
+      if (!c.purpose) fail('BAD_TOKEN', 'Unrecognised code.');
+      c.subject = { studentId: c.studentId, sessionId: c.sessionId, purpose: c.purpose };
+    } },
+    { id: 'nonce_fresh', label: 'Server nonce is still valid', run: function (c) {
+      var now = U.now();
+      if (now / 1000 > c.exp + 5) fail('EXPIRED', 'This code has expired. Keep the app open; it fetches a new one by itself.');
+      if (c.exp - now / 1000 > 200) fail('BAD_TOKEN', 'Invalid code timing.');
+    } },
+    { id: 'qr_fresh', label: 'Rotating timestamp is fresh (screenshots go stale)', run: function (c) {
+      var age = (U.now() - c.ts) / 1000;
+      if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
+      if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
+    } },
+    { id: 'mode_enabled', label: 'The lab accepts device QR check-in', run: function (c) {
+      c.lab = Db.cachedGet('Labs', 'labId', c.labId, 120);
+      if (!c.lab) fail('BAD_TOKEN', 'Unknown lab.');
+      if (!Labs.allows(c.lab, 'B')) fail('MODE_DISABLED', 'This lab uses the kiosk QR + GPS check-in.');
+    } },
+    { id: 'scanner_allowed', label: 'The scanner may scan for this session', run: function (c) { Attend._authorizeScanner(c); } },
+    { id: 'rate_limit', label: 'Per-student scan rate limit', run: function (c) {
+      if (!Auth.rateLimit('scanstu|' + c.studentId, 15, 60)) fail('RATE_LIMITED', 'Too many scans for this student. Wait a moment.');
+    } },
+    { id: 'device_active', label: 'Device credential belongs to the student and is active', run: function (c) {
+      c.cred = Creds.get(c.credentialId);
+      if (!c.cred || c.cred.studentId !== c.studentId) fail('UNKNOWN_DEVICE', 'Device not recognised.');
+      if (c.cred.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
+    } },
+    { id: 'student_verified', label: 'Student profile is verified and the account active', run: function (c) {
+      c.student = Db.cachedGet('StudentProfiles', 'studentId', c.studentId, 120);
+      if (!c.student) fail('UNKNOWN_STUDENT', 'Student not found.');
+      if (c.student.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
+      var user = c.student.userId ? Db.cachedGet('Users', 'userId', c.student.userId, 120) : null;
+      if (!user || user.status !== 'active') fail('ACCOUNT_DISABLED', 'This account is disabled.');
+    } },
+    { id: 'signature', label: 'ECDSA P-256 signature matches the registered public key', run: function (c) {
+      if (!Creds.verifySignature(c.cred.publicKey, c.token + '.' + c.ts, c.sig)) fail('BAD_SIGNATURE', 'The device signature is invalid.');
+    } },
+    { id: 'replay', locked: true, label: 'Nonce has not been used before', run: function (c) {
+      if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'This code was already used.');
+    } },
+    { id: 'revocation_recheck', locked: true, label: 'Credential still active (revocation wins a race)', run: function (c) {
+      var again = Creds.get(c.credentialId);
+      if (!again || again.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
+    } },
+    { id: 'session_open', locked: true, label: 'Session is open in this lab (or inside the exit grace)', run: function (c) {
+      c.session = Db.get('Sessions', c.sessionId);
+      if (!c.session || c.session.labId !== c.labId) fail('SESSION_NOT_FOUND', 'Session not found.');
+      c.now = U.now();
+      Attend._sessionGate(c.session, c.purpose, c.now);
+    } },
+    { id: 'enrolment', locked: true, label: 'Student is on the roster for this session', run: function (c) { Attend._enrolmentGate(c.session, c.studentId); } },
+    { id: 'attendance_state', locked: true, label: 'Direction is valid (no double entry, minimum gap, one rescan)', run: function (c) {
+      c.state = Attend._stateGate(c.session, c.studentId, c.purpose, c.now, Attend._effective(Attend._eventsFor(c.session)));
+    } },
+    { id: 'record', locked: true, label: 'Append the event and consume the nonce', run: function (c) { Attend._record(c); } }
+  ],
+
+  /** Who may submit a student QR. Sets method / scannerRole / scannedBy / assurance on the context. */
+  _authorizeScanner: function (c) {
+    var sc = c.scanner;
+    if (sc.kind === 'kiosk') {
+      if (c.labId !== sc.kiosk.labId) fail('WRONG_LAB', 'This code is for a different lab.');
+      c.method = 'kiosk'; c.scannerRole = 'kiosk'; c.scannedBy = sc.kiosk.authorizedEmail; c.kioskId = sc.kiosk.kioskId; c.assurance = 'standard';
+      return;
+    }
+    var ctx = sc.ctx, s = Db.get('Sessions', c.sessionId);
+    if (!s || s.labId !== c.labId) fail('SESSION_NOT_FOUND', 'Session not found.');
+    c.method = 'scanner'; c.scannedBy = ctx.email;
+    if (ctx.has('admin')) { c.scannerRole = 'admin'; c.assurance = 'high'; return; }
+    if (ctx.has('staff')) { c.scannerRole = 'staff'; c.assurance = 'high'; return; }
+    if (ctx.has('faculty') && Auth.ownsSession(ctx, s)) { c.scannerRole = 'faculty'; c.assurance = 'high'; return; }
+    if (Events.isCoordinator(ctx, s)) { c.scannerRole = 'coordinator'; c.assurance = 'standard'; if (ctx.student && ctx.student.studentId === c.studentId) fail('SELF_SCAN', 'You cannot scan your own code.'); return; }
+    if (ctx.student && ClassReps.isRepFor(ctx.student.studentId, s)) {
+      if (!Settings.get('crScanningEnabled')) fail('NOT_SCANNER', 'Class representative scanning is switched off.');
+      if (ctx.student.studentId === c.studentId) fail('SELF_SCAN', 'A class representative cannot scan their own code.');
+      if (s.status !== 'open') fail('CR_SESSION_ENDED', 'Class representative scanning is only possible while the session is open.');
+      c.scannerRole = 'cr'; c.assurance = 'standard';
+      return;
+    }
+    fail('NOT_SCANNER', 'Only the teacher, lab staff, the event coordinator or the class representative of this session can scan student codes.');
+  },
+
+  _runB: function (c, actor, role) {
+    c.mode = 'B';
+    try {
+      var res = Pipeline.run('B.scan', Attend.STEPS_B, c);
+      Attend._afterAccept(c);
+      return res;
+    } catch (e) {
       if (e instanceof AppError) {
-        Audit.tryLog({ actor: kiosk.authorizedEmail, role: 'kiosk', action: 'scan.reject', entityType: 'Session', entityId: info.sessionId || '', result: 'rejected',
-                       detail: { code: e.code, kioskId: kiosk.kioskId, studentId: info.studentId || '', purpose: info.purpose || '', credentialId: info.credentialId || '' } });
-        if (info.studentName) e.extra = Object.assign({}, e.extra, { student: info.studentName });
+        Attend._afterReject(c, e, actor, role);
+        if (c.student && c.student.name) e.extra = Object.assign({}, e.extra, { student: c.student.name });
       }
       throw e;
     }
   },
 
-  _scan: function (kiosk, qr, info) {
-    if (!Auth.rateLimit('scan|' + kiosk.kioskId, 150, 60)) fail('RATE_LIMITED', 'Scanner is going too fast. Wait a moment.');
-    var sep = qr.indexOf('~');
-    if (sep < 1 || qr.length > 500) fail('BAD_TOKEN', 'That is not a LABFLOW code.');
-    var token = qr.slice(0, sep), sig = qr.slice(sep + 1);
-    var parts = Tokens.parse(token, 'a1', 8); // MAC check: proves the server issued it, untampered
-    var studentId = parts[1], credId = parts[2], sessionId = parts[3], labId = parts[4], purpose = Attend.PURPOSE[parts[5]], nonce = parts[6], exp = Number(parts[7]);
-    Object.assign(info, { studentId: studentId, credentialId: credId, sessionId: sessionId, purpose: purpose });
-    if (!purpose) fail('BAD_TOKEN', 'Unrecognised code.');
-    var now = U.now();
-    if (now / 1000 > exp + 5) fail('EXPIRED', 'This code has expired. Refresh it on the phone and scan again.');
-    if (exp - now / 1000 > 190) fail('BAD_TOKEN', 'Invalid code timing.');
-    if (labId !== kiosk.labId) fail('WRONG_LAB', 'This code is for a different lab.');
-    if (!Auth.rateLimit('scanstu|' + studentId, 15, 60)) fail('RATE_LIMITED', 'Too many scans for this student. Wait a moment.');
+  /** Kiosk with a USB/Bluetooth scanner (or camera) reading student QR codes. */
+  kioskScan: function (ctx, p) {
+    V.obj(p);
+    if (!ctx.kiosk) fail('FORBIDDEN', 'Only a registered kiosk can scan.');
+    if (!Auth.rateLimit('scan|' + ctx.kiosk.kioskId, 150, 60)) fail('RATE_LIMITED', 'Scanner is going too fast. Wait a moment.');
+    return Attend._runB({ input: p.qr, scanner: { kind: 'kiosk', kiosk: ctx.kiosk } }, ctx.kiosk.authorizedEmail, 'kiosk');
+  },
 
-    var cred = Creds.get(credId);
-    if (!cred || cred.studentId !== studentId) fail('UNKNOWN_DEVICE', 'Device not recognised.');
-    if (cred.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
-    var student = Db.cachedGet('StudentProfiles', 'studentId', studentId, 120);
-    if (!student) fail('UNKNOWN_STUDENT', 'Student not found.');
-    info.studentName = student.name;
-    if (!Creds.verifySignature(cred.publicKey, token, sig)) fail('BAD_SIGNATURE', 'The device signature is invalid.'); // the expensive step: outside the lock
+  /** Teacher, staff, coordinator or class representative scanning on their own phone (in-app camera or a QR link). */
+  phoneScan: function (ctx, p) {
+    V.obj(p);
+    if (!Auth.rateLimit('pscan|' + ctx.email, 120, 60)) fail('RATE_LIMITED', 'Scanning too fast. Wait a moment.');
+    return Attend._runB({ input: p.qr, scanner: { kind: 'phone', ctx: ctx } }, ctx.email, ctx.roles[0] || 'user');
+  },
 
-    return Locks.with(function () {
-      if (Tokens.wasRedeemed(nonce)) fail('REPLAY', 'This code was already used.');
-      var again = Creds.get(credId); // re-read inside the lock: revocation must win a race
-      if (!again || again.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
-      var stu = Db.cachedGet('StudentProfiles', 'studentId', studentId, 120);
-      if (!stu || stu.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
-      var user = stu.userId ? Db.cachedGet('Users', 'userId', stu.userId, 120) : null;
-      if (!user || user.status !== 'active') fail('ACCOUNT_DISABLED', 'This account is disabled.');
-      var session = Db.get('Sessions', sessionId);
-      if (!session || session.labId !== kiosk.labId) fail('SESSION_NOT_FOUND', 'Session not found.');
-      var now2 = U.now();
-      var eff = Attend._effective(Attend._eventsFor(session));
-      Attend._checkAllowed(session, studentId, purpose, now2, eff);
-      var win = purpose === 'rescan' ? Attend.activeWindow(sessionId, now2) : null;
-      var ev = Db.insert('AttendanceEvents', { eventId: U.id('event'), sessionId: sessionId, labId: labId, studentId: studentId, type: Attend.TYPE_OF[purpose], source: 'kiosk', kioskId: kiosk.kioskId,
-        credentialId: credId, nonce: nonce, at: now2, recordedBy: kiosk.authorizedEmail, approvalStatus: 'na', ref: win ? win.windowId : '', createdAt: now2 });
-      Tokens.redeem(nonce, purpose, studentId, sessionId, kiosk.kioskId, ev.eventId);
-      Audit.log({ actor: kiosk.authorizedEmail, role: 'kiosk', action: 'scan.accept', entityType: 'AttendanceEvent', entityId: ev.eventId, detail: { type: ev.type, studentId: studentId, sessionId: sessionId, kioskId: kiosk.kioskId } });
-      return { ok: true, type: ev.type, at: now2, student: { name: stu.name, rollNo: stu.rollNo }, session: { sessionId: sessionId, title: session.title } };
-    });
+  /** A photo for the scanner screen, only for an event this scanner recorded in the last two minutes. */
+  scanPhoto: function (ctx, p) {
+    V.obj(p);
+    var ev = Db.mustGet('AttendanceEvents', V.id(p.eventId, 'Event', 'event'), 'Event');
+    var mine = ctx.kiosk ? ev.kioskId === ctx.kiosk.kioskId : ev.scannedBy === ctx.email;
+    if (!mine || U.now() - ev.at > 120000) fail('FORBIDDEN', 'This photo is no longer available on this screen.');
+    var prof = Db.get('StudentProfiles', ev.studentId);
+    if (!prof || !prof.photoFileId) return { dataUrl: null };
+    Audit.tryLog({ actor: ctx.email, role: ctx.kiosk ? 'kiosk' : ctx.roles[0], action: 'photo.view', entityType: 'StudentProfile', entityId: prof.studentId, detail: { via: 'scan', eventId: ev.eventId } });
+    return { dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(DriveApp.getFileById(prof.photoFileId).getBlob().getBytes()) };
+  },
+
+  /** Lab staff confirming who is at the desk before issuing a kit: the student shows their live QR. */
+  STEPS_IDENTIFY: null, // built below from STEPS_B
+  identify: function (ctx, p) {
+    V.obj(p);
+    var c = { input: p.qr, scanner: { kind: 'phone', ctx: ctx }, mode: 'B' };
+    Pipeline.run('B.identify', Attend.STEPS_IDENTIFY, c);
+    var st = c.student;
+    Audit.tryLog({ actor: ctx.email, role: ctx.roles[0], action: 'student.identify', entityType: 'StudentProfile', entityId: st.studentId });
+    return { student: Users._pubStudent(st) };
   },
 
   // ---- live views -----------------------------------------------------------------------------------------
@@ -215,7 +368,7 @@ var Attend = {
     var wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var c = Attend._compute(session, eff[studentId] || [], wins, now);
     var w = Attend.activeWindow(session.sessionId, now), done = w ? (eff[studentId] || []).some(function (e) { return e.type === 'RESCAN' && e.at >= w.openedAt; }) : false;
-    return { state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, status: c.status, verifiedMinutes: c.verifiedMinutes, flags: c.flags,
+    return { state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, lastIn: c.lastIn, status: c.status, verifiedMinutes: c.verifiedMinutes, flags: c.flags,
              rescan: w && c.inside ? { windowId: w.windowId, closesAt: w.closesAt, done: done } : null };
   },
 
@@ -230,45 +383,50 @@ var Attend = {
       if (c.status === 'flagged' || c.status === 'missed_rescan') flagged++;
       if (c.status === 'unverified_exit') unverified++;
     });
-    var w = Attend.activeWindow(session.sessionId, now);
-    return { enrolled: eligible ? eligible.length : null, inside: inside, left: left, attended: seen, absent: eligible ? Math.max(0, eligible.length - seen) : null, flagged: flagged, unverifiedExits: unverified, rescanWindow: w ? { windowId: w.windowId, closesAt: w.closesAt } : null };
+    var w = Attend.activeWindow(session.sessionId, now), lab = Db.cachedGet('Labs', 'labId', session.labId, 120) || {};
+    var capacity = session.labEventId ? ((Db.get('Events', session.labEventId) || {}).capacity || lab.capacity) : lab.capacity;
+    return { enrolled: eligible ? eligible.length : null, inside: inside, left: left, attended: seen, absent: eligible ? Math.max(0, eligible.length - seen) : null, flagged: flagged, unverifiedExits: unverified,
+             rescanWindow: w ? { windowId: w.windowId, closesAt: w.closesAt } : null, capacity: capacity || null, overCapacity: !!capacity && inside > capacity, onBreak: Attend.inBreak(session, now), serverNow: now };
   },
 
-  /** Faculty live roster: every enrolled student plus anyone else who scanned in. */
+  /** Live roster: every enrolled student plus anyone else who scanned in, with how they were checked in. */
   roster: function (ctx, p) {
     V.obj(p);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('staff') || Auth.ownsSession(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
+    if (!(ctx.has('staff') || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
-    var ids = session.openToAll ? {} : Roster.eligibleSet(session);
+    var eligible = session.openToAll ? {} : Roster.eligibleSet(session), ids = Object.assign({}, eligible);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
     var checks = {}; Db.where('SpotChecks', function (c) { return c.sessionId === session.sessionId; }).forEach(function (c) { checks[c.studentId] = c; });
     var rows = Object.keys(ids).map(function (sid) {
-      var pr = profiles[sid] || {}, c = Attend._compute(session, eff[sid] || [], wins, now), sc = checks[sid];
-      return { studentId: sid, rollNo: pr.rollNo, name: pr.name, section: pr.section, enrolled: session.openToAll ? null : !!Roster.eligibleSet(session)[sid], state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, status: c.status, flags: c.flags,
-               verifiedMinutes: c.verifiedMinutes, spotCheck: sc ? sc.outcome : null, hasPhoto: !!pr.photoFileId };
+      var pr = profiles[sid] || {}, c = Attend._compute(session, eff[sid] || [], wins, now), sc = checks[sid], le = c.lastEvent || {};
+      return { studentId: sid, rollNo: pr.rollNo, name: pr.name, section: pr.section, enrolled: session.openToAll ? null : !!eligible[sid], state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, status: c.status, flags: c.flags,
+               verifiedMinutes: c.verifiedMinutes, spotCheck: sc ? sc.outcome : null, hasPhoto: !!pr.photoFileId,
+               method: le.method || le.source || '', scannerRole: le.scannerRole || '', scannedBy: le.scannerRole === 'cr' || le.scannerRole === 'coordinator' ? le.scannedBy : '', geofence: le.geofence || '', assurance: le.assurance || '' };
     }).sort(function (a, b) { return String(a.rollNo) < String(b.rollNo) ? -1 : 1; });
-    return { session: Sessions.pub(session, Sessions._ref()), counts: Attend.liveCounts(session), roster: rows, serverNow: now };
+    var openFlags = Db.where('Flags', function (f) { return f.sessionId === session.sessionId && f.status === 'open'; }).length;
+    return { session: Sessions.pub(session, Sessions._ref()), counts: Attend.liveCounts(session), roster: rows, openFlags: openFlags, guests: session.labEventId ? Events.guestCount(session.labEventId) : 0, serverNow: now };
   },
 
   // ---- rescan windows --------------------------------------------------------------------------------------
   openRescan: function (ctx, p) {
     V.obj(p);
-    var minutes = V.int(p.minutes, 'Minutes', 1, 60, { optional: true, def: Settings.get('rescanWindowMinutes') });
+    var seconds = V.int(p.seconds, 'Seconds', 30, 3600, { optional: true, def: Settings.get('rescanWindowSeconds') });
     return Locks.with(function () {
       var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-      if (!Auth.ownsSession(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+      if (!Auth.canOperate(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
       if (s.status !== 'open') fail('INVALID_STATE', 'Rescans can only be requested while the session is open.');
+      if (Attend.inBreak(s, U.now())) fail('INVALID_STATE', 'The session is on its break.');
       if (Attend.activeWindow(s.sessionId)) fail('CONFLICT', 'A rescan window is already open.');
-      var w = Attend._startWindow(s, 'manual', ctx.email, minutes);
-      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'rescan.open', entityType: 'Session', entityId: s.sessionId, detail: { minutes: minutes, windowId: w.windowId } });
+      var w = Attend._startWindow(s, 'manual', ctx.email, seconds);
+      Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: 'rescan.open', entityType: 'Session', entityId: s.sessionId, detail: { seconds: seconds, windowId: w.windowId } });
       return { window: { windowId: w.windowId, closesAt: w.closesAt } };
     });
   },
-  _startWindow: function (session, kind, by, minutes) {
+  _startWindow: function (session, kind, by, seconds) {
     var now = U.now();
-    var w = Db.insert('RescanWindows', { windowId: U.id('window'), sessionId: session.sessionId, kind: kind, openedAt: now, closesAt: now + minutes * 60000, openedBy: by, status: 'open' });
+    var w = Db.insert('RescanWindows', { windowId: U.id('window'), sessionId: session.sessionId, kind: kind, openedAt: now, closesAt: now + seconds * 1000, openedBy: by, status: 'open' });
     Db.update('Sessions', session.sessionId, { rescansDone: (session.rescansDone || 0) + 1, nextRescanAt: null });
     return w;
   },
@@ -280,7 +438,8 @@ var Attend = {
       Locks.with(function () {
         var fresh = Db.get('Sessions', s.sessionId);
         if (fresh.status !== 'open' || !fresh.nextRescanAt || fresh.nextRescanAt > U.now() || Attend.activeWindow(fresh.sessionId)) return;
-        var w = Attend._startWindow(fresh, 'random', 'system', Settings.get('rescanWindowMinutes'));
+        if (Attend.inBreak(fresh, U.now())) { Db.update('Sessions', fresh.sessionId, { nextRescanAt: fresh.breakEnd + 5 * 60000 }); return; }
+        var w = Attend._startWindow(fresh, 'random', 'system', Settings.get('rescanWindowSeconds'));
         Audit.log({ actor: 'system', role: 'system', action: 'rescan.random', entityType: 'Session', entityId: fresh.sessionId, detail: { windowId: w.windowId } });
         started++;
       });
@@ -345,7 +504,7 @@ var Attend = {
       var studentId = V.id(p.studentId, 'Student', 'student');
       var student = Db.mustGet('StudentProfiles', studentId, 'Student');
       var now = U.now(), eff = Attend._effective(Attend._eventsFor(s)), cur = Attend._compute(s, eff[studentId] || [], [], now);
-      var rec = { eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: studentId, source: 'manual', recordedBy: ctx.email, reason: reason, createdAt: now };
+      var rec = { eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: studentId, source: 'manual', method: 'manual', scannedBy: ctx.email, scannerRole: ctx.roles[0], recordedBy: ctx.email, reason: reason, createdAt: now };
       if (action === 'void') {
         var target = Db.mustGet('AttendanceEvents', V.id(p.eventId, 'Event', 'event'), 'Event');
         if (target.sessionId !== s.sessionId || target.studentId !== studentId) fail('BAD_INPUT', 'That event does not belong to this student and session.');
@@ -373,6 +532,7 @@ var Attend = {
       var ev = Db.insert('AttendanceEvents', rec);
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'attendance.correct', entityType: 'AttendanceEvent', entityId: ev.eventId, detail: { action: action, studentId: studentId, rollNo: student.rollNo, sessionId: s.sessionId, reason: reason, approval: rec.approvalStatus, at: rec.at } });
       if (!auto) Notify.toRole('admin', 'correction', 'Attendance correction needs approval', ctx.email + ' requested a correction for ' + student.rollNo + ' (' + s.title + ').', 'corr:' + ev.eventId);
+      if (action === 'add_in') { try { Flags.afterManual(studentId, s); } catch (e) { Syslog.warn('attend', 'FLAG_CHECK_FAILED', String(e && e.message)); } }
       if (s.status === 'closed' && auto) Attend.rebuildSummary(s.sessionId);
       return { eventId: ev.eventId, approvalStatus: rec.approvalStatus };
     });
@@ -487,3 +647,6 @@ var Attend = {
       .map(function (e) { return { type: e.type, at: e.at, source: e.source, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
   }
 };
+
+/** Identification at the lab desk: the device checks of Version B without the session and attendance steps. */
+Attend.STEPS_IDENTIFY = Attend.STEPS_B.filter(function (s) { return ['payload', 'token_mac', 'nonce_fresh', 'qr_fresh', 'device_active', 'student_verified', 'signature'].indexOf(s.id) >= 0; });

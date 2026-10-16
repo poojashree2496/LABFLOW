@@ -90,6 +90,7 @@ var Creds = {
   completeRegistration: function (ctx, p) {
     V.obj(p);
     var st = Creds._requireVerifiedStudent(ctx);
+    if (Users.consentRequired(ctx.user)) fail('CONSENT_REQUIRED', 'Accept the privacy notice first.');
     var label = V.str(p.label, 'Device name', { optional: true, max: 60, def: 'My phone' });
     var publicKey = V.str(p.publicKey, 'Public key', { max: 120, re: /^[A-Za-z0-9_-]+$/ });
     var signature = V.str(p.signature, 'Signature', { max: 120, re: /^[A-Za-z0-9_-]+$/ });
@@ -117,6 +118,8 @@ var Creds = {
       Audit.log({ actor: ctx.email, role: 'student', action: needsApproval ? 'cred.request_replacement' : 'cred.register', entityType: 'DeviceCredential', entityId: cred.credentialId,
                   detail: { studentId: st.studentId, label: label, replaces: cred.replacesCredentialId } });
       if (needsApproval) Notify.toRole('staff', 'device', 'Device replacement request', st.name + ' (' + st.rollNo + ') requests a new device. Verify ID in person, then approve.', 'cred:' + cred.credentialId);
+      // Students register phones; a desktop registration is allowed but flagged (a browser profile is easier to copy).
+      try { Flags.afterRegistration(st, cred.credentialId, V.bool(p.desktop)); } catch (e) { Syslog.warn('creds', 'FLAG_CHECK_FAILED', String(e && e.message)); }
       return { credentialId: cred.credentialId, status: cred.status };
     });
   },
