@@ -29,6 +29,12 @@ var Notify = {
     var p = Db.get('StudentProfiles', studentId);
     if (p && p.userId) Notify.toUser(p.userId, type, title, body, dedupeKey, opts);
   },
+  /** Notify by email address: in-app (and queued email) when the address has an account, otherwise a direct email. */
+  toEmail: function (email, type, title, body, dedupeKey) {
+    var u = Db.cachedGet('Users', 'email', email, 300);
+    if (u && u.status === 'active') return Notify.toUser(u.userId, type, title, body, dedupeKey ? dedupeKey + ':' + u.userId : '');
+    return Notify.sendNow(email, title, body);
+  },
 
   list: function (ctx) {
     if (!ctx.user) return { notifications: [], unread: 0 };
