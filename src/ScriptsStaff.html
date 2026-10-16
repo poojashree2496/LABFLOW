@@ -1,0 +1,331 @@
+<script>
+/* Lab staff views: desk queues, issue/return, inventory, bookings, people & device approvals, reports. Also reused by admins. */
+(function () {
+'use strict';
+const LF = window.LF, h = LF.h, api = LF.api, fmt = LF.fmt, ui = LF.ui, clear = LF.clear;
+const CONDITIONS = ['good', 'fair', 'poor', 'damaged'];
+const isAdmin = () => LF.me.roles.includes('admin');
+const opt = (list, v, l) => list.map((x) => ({ value: x[v], label: typeof l === 'function' ? l(x) : x[l] }));
+const meta = {}; // labs / categories cache for the current view
+async function loadMeta() {
+  const [labs, cats] = await Promise.all([api('labs.list', { includeInactive: true }), api('categories.list')]);
+  meta.labs = labs.labs; meta.cats = cats.categories;
+  meta.labName = (id) => (meta.labs.find((l) => l.labId === id) || {}).name || id; meta.catName = (id) => (meta.cats.find((c) => c.categoryId === id) || {}).name || id;
+  return meta;
+}
+
+/** Searchable student picker. onPick(student). */
+function studentPicker(label, onPick, opts) {
+  opts = opts || {};
+  const out = h('div', { class: 'hint', 'aria-live': 'polite' }), chosen = h('div'), list = h('div', { style: { display: 'grid', gap: '6px' } });
+  const input = h('input', { class: 'input', type: 'search', 'aria-label': label, placeholder: 'Roll number or name', oninput: LF.util.debounce(async (e) => {
+    const q = e.target.value.trim(); clear(list); if (q.length < 2) { out.textContent = 'Type at least 2 characters.'; return; }
+    out.textContent = 'Searching...';
+    try {
+      const r = await api('students.list', { q, limit: 8, status: opts.status });
+      out.textContent = r.students.length ? '' : 'No student found.';
+      r.students.forEach((s) => list.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { clear(list); out.textContent = ''; input.value = ''; setChosen(s); onPick(s); } }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), ui.status(s.status))));
+    } catch (x) { out.textContent = LF.errMsg(x); }
+  }, 250) });
+  function setChosen(s) { clear(chosen).append(h('div', { class: 'row' }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), h('span', { class: 'toolbar' }, ui.status(s.status), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { clear(chosen); onPick(null); } }, 'Change')))); }
+  return { el: h('div', { class: 'field' }, h('label', null, label), input, out, list, chosen), set: setChosen };
+}
+
+/** Student photo + devices dialog (identity checks at the desk). */
+function showStudent(s, reload) {
+  const body = h('div', { style: { display: 'grid', gap: '12px' } }, ui.skeleton(3)); const m = LF.modal(s.name + ' · ' + s.rollNo, body, { wide: true });
+  (async () => {
+    try {
+      const [creds, photo] = await Promise.all([api('cred.list', { studentId: s.studentId }), s.hasPhoto ? api('photo.get', { studentId: s.studentId }).catch(() => ({ dataUrl: null })) : Promise.resolve({ dataUrl: null })]);
+      const file = h('input', { type: 'file', accept: 'image/*', capture: 'user', class: 'input', 'aria-label': 'Take or upload a reference photo', onchange: async (e) => { try { await api('photo.set', { studentId: s.studentId, photo: await LF.util.photoFromFile(e.target.files[0]) }); LF.toast('Photo saved', 'good'); m.close(); if (reload) reload(); } catch (x) { LF.fail(x); } } });
+      clear(body).append(h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap' } }, photo.dataUrl ? h('img', { class: 'photo', src: photo.dataUrl, alt: 'Reference photo of ' + s.name }) : h('div', { class: 'photo', style: { display: 'grid', placeItems: 'center' } }, 'No photo'),
+        h('dl', { class: 'dl' }, ...[['Email', s.email || '-'], ['Dept / section', s.department + ' / ' + (s.section || '-')], ['Year', s.year || '-'], ['Profile', s.status]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))]))),
+        h('div', { class: 'field' }, h('label', null, 'Reference photo'), file),
+        h('h3', { class: 't-h3' }, 'Devices'),
+        creds.credentials.length ? h('div', { style: { display: 'grid', gap: '8px' } }, creds.credentials.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), h('div', { class: 'hint' }, 'Registered ' + fmt.dt(c.createdAt) + (c.revokeReason ? ' · ' + c.revokeReason : ''))), h('div', { class: 'toolbar' }, ui.status(c.status),
+          c.status === 'active' || c.status === 'pending_approval' ? ui.button('Revoke', { size: 'sm', kind: 'danger', onClick: async () => { if (!await LF.confirm({ title: 'Revoke device?', message: 'The phone stops working at the kiosk immediately.', confirmLabel: 'Revoke', danger: true })) return; await api('cred.revoke', { credentialId: c.credentialId, reason: 'revoked by staff' }); LF.toast('Revoked', 'good'); m.close(); } }) : null)))) : h('div', { class: 'hint' }, 'No devices registered.'),
+        isAdmin() && s.email ? ui.button('Unlink account (wrong account claimed this profile)', { kind: 'danger', onClick: () => { m.close(); LF.ui.formModal({ title: 'Unlink ' + s.rollNo, intro: 'Detaches the Google account and revokes all devices. The roll number can then be claimed again.', fields: [{ name: 'reason', label: 'Reason', type: 'textarea', rows: 2, required: true, maxlength: 200 }], submitLabel: 'Unlink', onSubmit: async (v) => { await api('students.unlink', { studentId: s.studentId, reason: v.reason }); LF.toast('Unlinked', 'good'); if (reload) reload(); } }); } }) : null);
+    } catch (e) { clear(body).append(ui.errorBox(e)); }
+  })();
+}
+LF.showStudent = showStudent;
+
+/* ------------------------------------------------------------------ Desk (queues) */
+LF.register({ role: 'staff', id: 'queue', label: 'Desk', icon: 'home', render(root) {
+  const stats = h('div', { class: 'grid-stats' }), body = h('div', { style: { display: 'grid', gap: '20px' } });
+  root.append(h('h1', { class: 't-h1' }, 'Lab desk'), stats, body);
+  const reload = () => { ui.loadInto(stats, async () => {
+    const d = await api('dash.staff');
+    return h('div', { class: 'grid-stats' }, ui.stat('Students to verify', d.pendingStudents, null, d.pendingStudents ? 'warn' : ''), ui.stat('Device requests', d.pendingCredentials, null, d.pendingCredentials ? 'warn' : ''), ui.stat('Booking requests', d.pendingBookings, null, d.pendingBookings ? 'warn' : ''),
+      ui.stat('Loans out', d.activeLoans), ui.stat('Overdue', d.overdueLoans, null, d.overdueLoans ? 'bad' : ''), ui.stat('Damaged / missing', d.damaged + ' / ' + d.missing, null, d.damaged + d.missing ? 'warn' : ''));
+  }, 1); ui.loadInto(body, async () => {
+    const [pc, ps, pb, ov] = await Promise.all([api('cred.pending'), api('students.list', { status: 'pending', limit: 50 }), api('booking.list', { status: 'pending' }), api('loans.list', { status: 'overdue' })]);
+    return h('div', { style: { display: 'grid', gap: '20px' } },
+      section('Device replacement requests', 'Check the student\'s ID card in person before approving. The old device stops working at once.', pc.pending.length ? pc.pending.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.studentName), ' ' + c.rollNo, h('div', { class: 'hint' }, c.label + ' · requested ' + fmt.dt(c.createdAt))),
+        h('div', { class: 'toolbar' }, ui.button('Approve', { kind: 'primary', size: 'sm', onClick: () => LF.ui.formModal({ title: 'Approve new device for ' + c.studentName, fields: [{ name: 'idChecked', label: 'I have checked the student\'s ID card in person', type: 'checkbox' }], submitLabel: 'Approve device', onSubmit: async (v) => { if (!v.idChecked) throw new LF.ApiError('BAD_INPUT', 'Confirm the ID check first.'); await api('cred.approve', { credentialId: c.credentialId, idChecked: true }); LF.toast('Device approved', 'good'); reload(); } }) }),
+          ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject device request', fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('cred.reject', { credentialId: c.credentialId, reason: v.reason }); reload(); } }) })))) : null),
+      section('Students awaiting verification', 'Match the roll number to the ID card, then verify.', ps.students.length ? ps.students.map((s) => h('div', { class: 'row' }, h('div', null, h('strong', null, s.rollNo), ' ' + s.name, h('div', { class: 'hint' }, s.email + ' · ' + s.department + ' ' + (s.section || ''))),
+        h('div', { class: 'toolbar' }, ui.button('Details', { size: 'sm', onClick: () => showStudent(s, reload) }), ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: s.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }),
+          ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject ' + s.rollNo, fields: [{ name: 'note', label: 'Note for the student', maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('students.verify', { studentId: s.studentId, approve: false, note: v.note }); reload(); } }) })))) : null),
+      section('Booking requests', null, pb.reservations.length ? pb.reservations.map((b) => bookingRow(b, reload)) : null),
+      section('Overdue loans', null, ov.loans.length ? ov.loans.map((l) => h('div', { class: 'row' }, h('div', null, h('strong', null, l.borrowerName), h('div', { class: 'hint' }, 'Due ' + fmt.dt(l.dueAt))), ui.button('Open return', { size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.loanId = l.loanId; LF.go('desk'); } }))) : null));
+  }); };
+  loadMeta().then(reload).catch(reload);
+  LF.every(30000, () => { if (!document.querySelector('.modal-back')) reload(); });
+  function section(title, lead, rows) { return h('section', { 'aria-label': title }, h('h2', { class: 't-h2' }, title), lead ? h('p', { class: 'hint' }, lead) : null, rows ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '8px' } }, rows) : h('div', { class: 'hint', style: { marginTop: '6px' } }, 'Nothing waiting.')); }
+} });
+
+function bookingRow(b, reload) {
+  return h('div', { class: 'row' }, h('div', null, h('strong', null, b.requesterName), ' wants ' + b.resourceName + ' × ' + b.quantity, h('div', { class: 'hint' }, fmt.dt(b.startAt) + ' → ' + fmt.dt(b.endAt) + ' · ' + b.purpose)),
+    b.status === 'pending' ? h('div', { class: 'toolbar' }, ui.button('Approve', { size: 'sm', kind: 'primary', onClick: async () => { await api('booking.decide', { reservationId: b.reservationId, approve: true }); LF.toast('Approved', 'good'); reload(); } }),
+      ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject booking', fields: [{ name: 'note', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('booking.decide', { reservationId: b.reservationId, approve: false, note: v.note }); reload(); } }) })) : ui.status(b.status));
+}
+
+/* ------------------------------------------------------------------ Issue / Return */
+LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', render(root) {
+  const wanted = LF.sel && LF.sel.loanId; if (LF.sel) LF.sel.loanId = null;
+  root.append(h('h1', { class: 't-h1' }, 'Issue & return'), h('div', { id: 'desk-body' }));
+  const body = root.querySelector('#desk-body');
+  ui.loadInto(body, async () => { await loadMeta(); return ui.tabs([
+    { id: 'issue', label: 'Issue', render: (p) => { p.appendChild(issueForm()); } },
+    { id: 'return', label: 'Return', render: (p) => { p.appendChild(returnView(wanted)); } },
+    { id: 'all', label: 'All loans', render: (p) => { ui.loadInto(p, allLoans); } }], wanted ? 'return' : 'issue'); });
+
+  function issueForm() {
+    const root = h('div', { class: 'split' });
+    let idem = LF.util.uuid(), borrower = null, group = null, lines = []; // lines: { assetId, qty, name }
+    const lab = ui.field({ name: 'lab', label: 'Lab', type: 'select', required: true, options: opt(meta.labs.filter((l) => l.status === 'active'), 'labId', 'name') });
+    const kind = ui.field({ name: 'kind', label: 'Issue to', type: 'select', options: [{ value: 'student', label: 'A student' }, { value: 'group', label: 'A project group' }] });
+    const days = ui.field({ name: 'days', label: 'Loan period (days)', type: 'number', min: 1, max: 120, value: LF.me.settings.loanDefaultDays });
+    const notes = ui.field({ name: 'notes', label: 'Notes', maxlength: 300 });
+    const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
+    let kitId = '', kitPicks = [], reservationId = '';
+    function drawWho() {
+      clear(who); borrower = null; group = null; reservationId = '';
+      if (kind.get() === 'student') who.append(studentPicker('Student', (s) => { borrower = s; loadBookings(); }, { status: 'verified' }).el);
+      else api('groups.list').then((r) => { const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
+      clear(bookingBox);
+    }
+    async function loadBookings() {
+      clear(bookingBox); reservationId = '';
+      const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group; if (!id) return;
+      try {
+        const r = await api('booking.list', { status: 'approved', labId: lab.get() });
+        const mine = r.reservations.filter((b) => b.requesterId === id && b.endAt > LF.now());
+        if (!mine.length) return;
+        const sel = ui.field({ name: 'rsv', label: 'Collect an advance booking (optional)', type: 'select', options: [{ value: '', label: 'No, issue directly' }].concat(mine.map((b) => ({ value: b.reservationId, label: b.resourceName + ' × ' + b.quantity + ' · ' + fmt.dt(b.startAt) }))) });
+        sel.input.addEventListener('change', () => { reservationId = sel.get(); });
+        bookingBox.append(sel.el);
+      } catch (e) { /* optional */ }
+    }
+    async function drawKits() {
+      clear(kitBox); kitId = ''; kitPicks = [];
+      const r = await api('kits.list', { labId: lab.get() }), kits = r.kits.filter((k) => k.status === 'active'); if (!kits.length) return;
+      const sel = ui.field({ name: 'kit', label: 'Issue a kit (optional)', type: 'select', options: [{ value: '', label: 'No kit' }].concat(opt(kits, 'kitId', 'name')) });
+      const comps = h('div', { style: { display: 'grid', gap: '8px' } });
+      sel.input.addEventListener('change', async () => {
+        kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId); if (!k) return;
+        for (const c of k.components) {
+          const av = await api('assets.list', { labId: lab.get(), categoryId: c.categoryId, status: 'available', limit: 200 });
+          const pick = ui.field({ name: 'c' + c.componentId, label: meta.catName(c.categoryId) + ' × ' + c.quantity, type: 'select', options: [{ value: '', label: 'Choose item' }].concat(av.assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
+          pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.componentId !== c.componentId); if (pick.get()) kitPicks.push({ componentId: c.componentId, assetId: pick.get(), qty: c.quantity }); });
+          comps.append(pick.el);
+        }
+      });
+      kitBox.append(sel.el, comps);
+    }
+    function drawItems() {
+      clear(itemBox); const q = h('input', { class: 'input', type: 'search', placeholder: 'Scan tag or search equipment', 'aria-label': 'Search equipment to add', oninput: LF.util.debounce(async (e) => {
+        const v = e.target.value.trim(); clear(res); if (v.length < 2) return;
+        try { const r = await api('assets.list', { labId: lab.get(), q: v, status: 'available', limit: 8 }); r.assets.forEach((a) => res.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { addLine(a); e.target.value = ''; clear(res); } }, h('span', null, h('strong', null, a.name), a.assetTag ? ' · ' + a.assetTag : ''), h('span', { class: 'hint' }, a.trackingMode === 'quantity' ? a.quantityAvailable + ' available' : 'single item')))); if (!r.assets.length) res.append(h('div', { class: 'hint' }, 'Nothing available matches.')); } catch (x) { LF.fail(x); }
+      }, 250) });
+      const res = h('div', { style: { display: 'grid', gap: '6px' } }); itemBox.append(h('div', { class: 'field' }, h('label', null, 'Add individual items'), q), res);
+    }
+    function addLine(a) { const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
+    function drawCart() {
+      clear(cart); if (!lines.length) return;
+      cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
+    }
+    kind.input.addEventListener('change', drawWho);
+    lab.input.addEventListener('change', () => { lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
+    drawWho(); drawKits(); drawItems();
+    const submit = ui.button('Issue items', { kind: 'primary', icon: 'check', onClick: async () => {
+      msg.hidden = true; clear(result);
+      const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
+      if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+      try {
+        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
+        idem = LF.util.uuid(); lines = []; kitPicks = []; drawCart(); drawKits();
+        result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
+      } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
+    } });
+    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, lab.el, kind.el, who, bookingBox, days.el, notes.el),
+      h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, msg, submit, result));
+    return root;
+  }
+
+  function returnView(preselect) {
+    const root = h('div', { style: { display: 'grid', gap: '16px' } }), list = h('div'), detail = h('div');
+    const q = h('input', { class: 'input', type: 'search', placeholder: 'Search borrower name, roll number or loan id', 'aria-label': 'Search open loans', style: { maxWidth: '420px' }, oninput: LF.util.debounce(() => loadList(q.value.trim()), 250) });
+    root.append(h('div', { class: 'toolbar' }, q, ui.button('Overdue only', { size: 'sm', onClick: () => loadList(q.value.trim(), 'overdue') }), ui.button('All open', { size: 'sm', onClick: () => loadList(q.value.trim(), 'active') })), list, detail);
+    function loadList(text, status) {
+      ui.loadInto(list, async () => {
+        const r = await api('loans.list', { status: status || 'active', q: text || undefined });
+        if (!r.loans.length) return ui.empty('No open loans match', 'Closed loans are listed under All loans.');
+        return h('div', { style: { display: 'grid', gap: '6px' } }, r.loans.slice(0, 30).map((l) => h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => openLoan(l.loanId) }, h('span', null, h('strong', null, l.borrowerName), h('span', { class: 'hint' }, ' · ' + meta.labName(l.labId) + ' · due ' + fmt.dt(l.dueAt))), h('span', { class: 'toolbar' }, l.overdue ? ui.badge('overdue', 'bad') : null, ui.status(l.status)))));
+      }, 3);
+    }
+    function openLoan(id) {
+      ui.loadInto(detail, async () => {
+        const { loan } = await api('loans.get', { loanId: id });
+        const open = loan.items.filter((i) => i.outstanding > 0); let idem = LF.util.uuid();
+        const rows = open.map((i) => {
+          const f = (name, label, v) => h('input', { class: 'input', type: 'number', min: 0, max: i.outstanding, value: v || 0, 'aria-label': label + ' ' + i.name, style: { width: '72px' } });
+          const ret = f('r', 'Returned', 0), con = f('c', 'Consumed', 0), dam = f('d', 'Damaged', 0), mis = f('m', 'Missing', 0);
+          const cond = h('select', { class: 'input', 'aria-label': 'Condition of ' + i.name, style: { width: '110px' } }, CONDITIONS.map((c) => h('option', { value: c, selected: c === (i.conditionOut || 'good') }, c)));
+          const note = h('input', { class: 'input', 'aria-label': 'Note for ' + i.name, placeholder: 'note', maxlength: 200 });
+          const all = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { ret.value = i.outstanding; con.value = 0; dam.value = 0; mis.value = 0; } }, 'All back');
+          return { i, ret, con, dam, mis, cond, note, tr: h('tr', null, h('td', null, h('strong', null, i.name), i.assetTag ? h('div', { class: 'hint' }, i.assetTag) : null), h('td', { style: { textAlign: 'right' } }, String(i.outstanding)), h('td', null, ret), h('td', null, con), h('td', null, dam), h('td', null, mis), h('td', null, cond), h('td', null, note), h('td', null, all)) };
+        });
+        const msg = h('div', { class: 'err', role: 'alert', hidden: true });
+        const done = ui.button('Record return', { kind: 'primary', icon: 'check', onClick: async () => {
+          msg.hidden = true;
+          const lines = rows.map((x) => ({ loanItemId: x.i.loanItemId, qtyReturned: +x.ret.value || 0, qtyConsumed: +x.con.value || 0, qtyDamaged: +x.dam.value || 0, qtyMissing: +x.mis.value || 0, conditionIn: x.cond.value, note: x.note.value })).filter((l) => l.qtyReturned + l.qtyConsumed + l.qtyDamaged + l.qtyMissing > 0);
+          if (!lines.length) { msg.textContent = 'Enter how many of each item came back (use "All back" for a full return).'; msg.hidden = false; return; }
+          try { const r = await api('loans.return', { idemKey: idem, loanId: id, lines }, { retry: true }); LF.toast(r.loan.status === 'closed' ? 'Loan closed' : 'Partial return recorded', 'good'); clear(detail); loadList(q.value.trim()); }
+          catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+        } });
+        return h('section', { class: 'card', 'aria-label': 'Return items' }, h('h2', { class: 't-h2' }, loan.borrowerName), h('div', { class: 'hint' }, 'Issued ' + fmt.dt(loan.issuedAt) + ' · due ' + fmt.dt(loan.dueAt) + (loan.overdue ? ' · OVERDUE' : '')),
+          open.length ? h('div', { class: 'tbl-wrap', style: { marginTop: '10px' } }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['Item', 'Out', 'Returned', 'Consumed', 'Damaged', 'Missing', 'Condition', 'Note', ''].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, rows.map((x) => x.tr)))) : ui.empty('Everything on this loan has been returned.'),
+          msg, open.length ? h('div', { style: { marginTop: '12px' } }, done) : null);
+      }, 3);
+    }
+    loadList(''); if (preselect) openLoan(preselect);
+    return root;
+  }
+
+  async function allLoans() {
+    const r = await api('loans.list', { limit: 200 });
+    return ui.table({ caption: 'All loans', searchPlaceholder: 'Search borrower', pageSize: 25, rows: r.loans, filters: [{ label: 'Status', options: ['open', 'partial', 'closed'], get: (x) => x.status }],
+      columns: [{ key: 'borrowerName', label: 'Borrower' }, { label: 'Lab', text: (x) => meta.labName(x.labId) }, { key: 'issuedAt', label: 'Issued', render: (x) => fmt.dt(x.issuedAt) }, { key: 'dueAt', label: 'Due', render: (x) => fmt.dt(x.dueAt) },
+        { key: 'status', label: 'Status', render: (x) => h('span', { class: 'pill-row' }, ui.status(x.status), x.overdue ? ui.badge('overdue', 'bad') : null), text: (x) => x.status + (x.overdue ? ' overdue' : '') },
+        { label: '', sort: false, render: (x) => x.status === 'closed' ? null : ui.button('Return', { size: 'sm', onClick: () => { LF.sel.loanId = x.loanId; LF.go('desk'); } }) }] }).el;
+  }
+} });
+
+/* ------------------------------------------------------------------ Inventory */
+LF.register({ role: 'staff', id: 'inventory', label: 'Inventory', icon: 'box', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Inventory'), h('div', { id: 'inv-body' }));
+  const body = root.querySelector('#inv-body');
+  ui.loadInto(body, async () => { await loadMeta(); return ui.tabs([
+    { id: 'assets', label: 'Assets', render: (p) => { ui.loadInto(p, assetsView); } }, { id: 'categories', label: 'Categories', render: (p) => { ui.loadInto(p, catsView); } }, { id: 'kits', label: 'Kits', render: (p) => { ui.loadInto(p, kitsView); } }]); });
+
+  async function assetsView() {
+    const r = await api('assets.list', { limit: 500 });
+    const reload = () => LF.go('inventory');
+    const t = ui.table({ caption: 'Assets', searchPlaceholder: 'Search name, tag, serial', pageSize: 25, rows: r.assets,
+      filters: [{ label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }, { label: 'Category', options: opt(meta.cats, 'categoryId', 'name'), get: (x) => x.categoryId }, { label: 'Status', options: ['available', 'on_loan', 'maintenance', 'damaged', 'missing', 'retired'], get: (x) => x.status }],
+      toolbar: h('div', { class: 'toolbar' }, ui.button('Add asset', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => editAsset(null, reload) }), ui.button('Import CSV', { size: 'sm', icon: 'upload', onClick: () => importAssets(reload) })),
+      empty: ui.empty('No assets yet', 'Add equipment one by one, or import a CSV with columns: category, lab, name, assetTag, serialNo, location, quantity, condition, valueInr.'),
+      columns: [{ key: 'name', label: 'Item' }, { key: 'assetTag', label: 'Tag' }, { label: 'Lab', text: (x) => meta.labName(x.labId) }, { label: 'Category', text: (x) => meta.catName(x.categoryId) },
+        { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'condition', label: 'Condition' },
+        { label: 'Stock', align: 'right', text: (x) => x.quantityAvailable, render: (x) => x.trackingMode === 'quantity' ? x.quantityAvailable + ' / ' + x.quantityTotal : '1' },
+        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Edit', { size: 'sm', onClick: () => editAsset(x, reload) }), ui.button('Check', { size: 'sm', onClick: () => conditionCheck(x, reload) }), ui.button('History', { size: 'sm', onClick: () => history(x) })) }] });
+    return t.el;
+  }
+  function editAsset(a, reload) {
+    const cat = () => meta.cats.find((c) => c.categoryId === catSel.get()) || meta.cats[0];
+    const catSel = ui.field({ name: 'categoryId', label: 'Category', type: 'select', required: true, value: a ? a.categoryId : '', options: opt(meta.cats, 'categoryId', (c) => c.name + (c.trackingMode === 'quantity' ? ' (counted stock)' : ' (single items)')) });
+    const labSel = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, value: a ? a.labId : '', options: opt(meta.labs, 'labId', 'name') });
+    const name = ui.field({ name: 'name', label: 'Name', required: true, value: a ? a.name : '', maxlength: 80 }), tag = ui.field({ name: 'assetTag', label: 'Asset tag', value: a ? a.assetTag : '', maxlength: 40, hint: 'Required for single items. Letters, numbers, . _ / -' });
+    const serial = ui.field({ name: 'serialNo', label: 'Serial number', value: a ? a.serialNo : '', maxlength: 60 }), loc = ui.field({ name: 'location', label: 'Location (shelf / cupboard)', value: a ? a.location : '', maxlength: 60 });
+    const qty = ui.field({ name: 'quantityTotal', label: 'Total quantity', type: 'number', min: 0, value: a ? a.quantityTotal : 1 }), val = ui.field({ name: 'valueInr', label: 'Value (INR)', type: 'number', min: 0, value: a ? a.valueInr : 0 });
+    const cond = ui.field({ name: 'condition', label: 'Condition', type: 'select', value: a ? a.condition : 'good', options: CONDITIONS }), status = ui.field({ name: 'status', label: 'Status', type: 'select', value: a && a.status !== 'on_loan' ? a.status : 'available', options: ['available', 'maintenance', 'retired', 'damaged', 'missing'] });
+    const notes = ui.field({ name: 'notes', label: 'Notes', type: 'textarea', rows: 2, value: a ? a.notes : '', maxlength: 300 });
+    const msg = h('div', { class: 'err', role: 'alert', hidden: true });
+    const qtyBox = h('div'), tagBox = h('div');
+    function sync() { const q = cat().trackingMode === 'quantity'; qty.el.hidden = !q; status.el.hidden = a && a.status === 'on_loan'; }
+    catSel.input.addEventListener('change', sync); sync();
+    if (a) { catSel.input.disabled = true; }
+    let m; const save = ui.button('Save', { kind: 'primary', onClick: async () => {
+      msg.hidden = true;
+      try { await api('assets.upsert', { assetId: a ? a.assetId : undefined, categoryId: catSel.get(), labId: labSel.get(), name: name.get(), assetTag: tag.get(), serialNo: serial.get(), location: loc.get(), quantityTotal: Number(qty.get()), valueInr: Number(val.get()) || 0, condition: cond.get(), status: status.get(), notes: notes.get() }); LF.toast('Saved', 'good'); m.close(); reload(); }
+      catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+    } });
+    m = LF.modal(a ? 'Edit ' + a.name : 'Add asset', h('div', { style: { display: 'grid', gap: '12px' } }, catSel.el, labSel.el, name.el, tag.el, serial.el, qty.el, h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } }, cond.el, status.el), loc.el, val.el, notes.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), save)), { wide: true });
+    void qtyBox; void tagBox;
+  }
+  function conditionCheck(a, reload) {
+    const idem = LF.util.uuid();
+    LF.ui.formModal({ title: 'Condition check: ' + a.name, intro: a.trackingMode === 'individual' ? 'Marking an available item "damaged" takes it out of circulation.' : 'Records the condition of the stock lot.',
+      fields: [{ name: 'condition', label: 'Condition', type: 'select', value: a.condition, options: CONDITIONS }, { name: 'note', label: 'Note', type: 'textarea', rows: 2, maxlength: 300 }], submitLabel: 'Record',
+      onSubmit: async (v) => { await api('assets.condition', { idemKey: idem, assetId: a.assetId, condition: v.condition, note: v.note }, { retry: true }); LF.toast('Recorded', 'good'); reload(); } });
+  }
+  function history(a) {
+    const body = h('div', null, ui.skeleton(4)); LF.modal('History: ' + a.name, body, { wide: true });
+    api('assets.history', { assetId: a.assetId }).then((r) => clear(body).append(r.events.length ? ui.table({ caption: 'Asset history', search: false, rows: r.events, pageSize: 15, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'type', label: 'Event' }, { key: 'qtyDelta', label: 'Qty', align: 'right' }, { key: 'by', label: 'By' }, { key: 'note', label: 'Note' }] }).el : ui.empty('No history yet'))).catch((e) => clear(body).append(ui.errorBox(e)));
+  }
+  function importAssets(reload) {
+    const out = h('div', { role: 'status' }), file = h('input', { type: 'file', accept: '.csv', class: 'input', 'aria-label': 'CSV file with assets' });
+    let rows = null;
+    file.addEventListener('change', async () => { rows = LF.util.csvObjects(await file.files[0].text()); clear(out).append(h('div', { class: 'hint' }, rows.length + ' row(s) read. Columns used: category, lab (code), name, assetTag, serialNo, location, quantity, condition, valueInr.')); });
+    let m; m = LF.modal('Import assets from CSV', h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'The first row must be the header. "category" must match an existing category name and "lab" an existing lab code. Nothing is imported if any row has a problem.'), file, out,
+      ui.button('Import', { kind: 'primary', icon: 'upload', onClick: async () => { if (!rows || !rows.length) throw new LF.ApiError('BAD_INPUT', 'Choose a CSV file first.'); const r = await api('assets.import', { rows }); if (r.errors.length) { clear(out).append(h('div', { class: 'card bad' }, h('strong', null, 'Nothing imported. Fix these rows:'), h('ul', null, r.errors.slice(0, 15).map((e) => h('li', null, 'Row ' + e.row + ': ' + e.error))))); return; } LF.toast(r.imported + ' assets imported', 'good'); m.close(); reload(); } })));
+  }
+  async function catsView() {
+    const r = await api('categories.list');
+    return ui.table({ caption: 'Categories', rows: r.categories, search: false, empty: ui.empty('No categories', 'Create categories first (for example "ESP32 board" as single items, "Jumper wires" as counted stock).'),
+      toolbar: ui.button('Add category', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => catForm(null) }),
+      columns: [{ key: 'name', label: 'Category' }, { key: 'trackingMode', label: 'Tracked as', render: (x) => x.trackingMode === 'individual' ? 'Single items (each has a tag)' : 'Counted stock' }, { key: 'notes', label: 'Notes' }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => catForm(x) }) }] }).el;
+  }
+  function catForm(c) {
+    LF.ui.formModal({ title: c ? 'Edit category' : 'Add category', fields: [{ name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 60 }, { name: 'trackingMode', label: 'Tracked as', type: 'select', value: c ? c.trackingMode : 'individual', options: [{ value: 'individual', label: 'Single items (each has its own tag)' }, { value: 'quantity', label: 'Counted stock (consumables, cables)' }] }, { name: 'notes', label: 'Notes', maxlength: 200, value: c ? c.notes : '' }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('categories.upsert', { categoryId: c ? c.categoryId : undefined, name: v.name, trackingMode: v.trackingMode, notes: v.notes }); LF.toast('Saved', 'good'); LF.go('inventory'); } });
+  }
+  async function kitsView() {
+    const r = await api('kits.list');
+    return ui.table({ caption: 'Kits', rows: r.kits, search: false, empty: ui.empty('No kits yet', 'A kit is a named bundle, for example "IoT starter kit": 1 ESP32, 1 breadboard, 10 jumper wires.'),
+      toolbar: ui.button('Add kit', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => kitForm(null) }),
+      columns: [{ key: 'name', label: 'Kit' }, { label: 'Lab', text: (x) => meta.labName(x.labId) }, { label: 'Contents', text: (x) => x.components.map((c) => c.quantity + ' × ' + meta.catName(c.categoryId)).join(', ') }, { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => kitForm(x) }) }] }).el;
+  }
+  function kitForm(k) {
+    const name = ui.field({ name: 'name', label: 'Kit name', required: true, value: k ? k.name : '', maxlength: 80 }), lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, value: k ? k.labId : '', options: opt(meta.labs, 'labId', 'name') });
+    const desc = ui.field({ name: 'description', label: 'Description', maxlength: 300, value: k ? k.description : '' }), st = ui.field({ name: 'status', label: 'Status', type: 'select', value: k ? k.status : 'active', options: ['active', 'inactive'] });
+    const comps = h('div', { style: { display: 'grid', gap: '8px' } }), msg = h('div', { class: 'err', role: 'alert', hidden: true });
+    const addRow = (c) => { const cat = h('select', { class: 'input', 'aria-label': 'Component category' }, meta.cats.map((x) => h('option', { value: x.categoryId, selected: c && c.categoryId === x.categoryId }, x.name))), qty = h('input', { class: 'input', type: 'number', min: 1, value: c ? c.quantity : 1, 'aria-label': 'Quantity', style: { width: '90px' } });
+      const row = h('div', { class: 'toolbar' }, cat, qty, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => row.remove() }, 'Remove')); row.get = () => ({ categoryId: cat.value, quantity: Number(qty.value) }); comps.append(row); };
+    (k ? k.components : [null]).forEach(addRow);
+    let m; m = LF.modal(k ? 'Edit kit' : 'Add kit', h('div', { style: { display: 'grid', gap: '12px' } }, name.el, lab.el, desc.el, st.el, h('div', { class: 't-label' }, 'Contents'), comps, h('div', null, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => addRow(null) }, 'Add component')), msg,
+      h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), ui.button('Save', { kind: 'primary', onClick: async () => { msg.hidden = true; try { await api('kits.upsert', { kitId: k ? k.kitId : undefined, name: name.get(), labId: lab.get(), description: desc.get(), status: st.get(), components: Array.from(comps.children).map((r) => r.get()) }); LF.toast('Saved', 'good'); m.close(); LF.go('inventory'); } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; } } }))), { wide: true });
+  }
+} });
+
+/* ------------------------------------------------------------------ Bookings */
+LF.register({ role: 'staff', id: 'bookings', label: 'Bookings', icon: 'calendar', render(root) {
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Advance bookings'), out);
+  ui.loadInto(out, async () => {
+    await loadMeta(); const r = await api('booking.list', {});
+    const reload = () => LF.go('bookings');
+    return ui.table({ caption: 'Bookings', searchPlaceholder: 'Search requester or item', pageSize: 20, rows: r.reservations, filters: [{ label: 'Status', options: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled'], get: (x) => x.status }, { label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }],
+      columns: [{ key: 'requesterName', label: 'Requester' }, { key: 'resourceName', label: 'Item' }, { key: 'quantity', label: 'Qty', align: 'right' }, { key: 'startAt', label: 'From', render: (x) => fmt.dt(x.startAt) }, { key: 'endAt', label: 'To', render: (x) => fmt.dt(x.endAt) }, { key: 'purpose', label: 'Purpose' },
+        { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },
+        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, x.status === 'pending' ? [ui.button('Approve', { size: 'sm', kind: 'primary', onClick: async () => { await api('booking.decide', { reservationId: x.reservationId, approve: true }); LF.toast('Approved', 'good'); reload(); } }), ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject booking', fields: [{ name: 'note', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('booking.decide', { reservationId: x.reservationId, approve: false, note: v.note }); reload(); } }) })] : null,
+          x.status === 'pending' || x.status === 'approved' ? ui.button('Cancel', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Cancel this booking?', message: x.requesterName + ' · ' + x.resourceName, confirmLabel: 'Cancel booking', cancelLabel: 'Keep', danger: true })) return; await api('booking.cancel', { reservationId: x.reservationId }); reload(); } }) : null) }] }).el;
+  });
+} });
+
+/* ------------------------------------------------------------------ People */
+LF.register({ role: 'staff', id: 'people', label: 'Students', icon: 'users', render(root) {
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Students'), out);
+  ui.loadInto(out, async () => {
+    const r = await api('students.list', { limit: 500 }); const reload = () => LF.go('people');
+    return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }],
+      empty: ui.empty('No students yet', 'An administrator imports the student list. Students can also create their own profile at first sign-in.'),
+      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'hasPhoto', label: 'Photo', render: (x) => x.hasPhoto ? 'Yes' : 'No', text: (x) => x.hasPhoto ? 'yes' : 'no' },
+        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null) }] }).el;
+  });
+} });
+
+LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue'])); } });
+})();
+</script>

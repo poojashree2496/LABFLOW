@@ -1,0 +1,253 @@
+<script>
+/* Administrator views: overview, sessions, people, academics (courses, mapping, rosters, timetable), labs & kiosks,
+   correction approvals, settings, audit & system. The admin also reuses the staff desk/inventory/booking views. */
+(function () {
+'use strict';
+const LF = window.LF, h = LF.h, api = LF.api, fmt = LF.fmt, ui = LF.ui, clear = LF.clear;
+const DOW = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const opt = (list, v, l) => list.map((x) => ({ value: x[v], label: typeof l === 'function' ? l(x) : x[l] }));
+const times = (s) => fmt.time(s.scheduledStart) + ' - ' + fmt.time(s.scheduledEnd);
+
+function csvButton(label, hint, columns, onRows) {
+  const file = h('input', { type: 'file', accept: '.csv', class: 'input', 'aria-label': label });
+  const out = h('div', { role: 'status' }); let rows = null;
+  file.addEventListener('change', async () => { rows = LF.util.csvObjects(await file.files[0].text()); clear(out).append(h('div', { class: 'hint' }, rows.length + ' row(s) read.')); });
+  return { el: h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, hint + ' First row = header with columns: ' + columns + '.'), file, out,
+    ui.button('Import', { kind: 'primary', icon: 'upload', onClick: async () => { if (!rows || !rows.length) throw new LF.ApiError('BAD_INPUT', 'Choose a CSV file first.'); const r = await onRows(rows); clear(out).append(h('div', { class: r.errors && r.errors.length ? 'card warn' : 'card good' }, r.summary, r.errors && r.errors.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.errors.slice(0, 12).map((e) => h('li', null, 'Row ' + e.row + ': ' + e.message))) : null)); } })) };
+}
+
+/* ------------------------------------------------------------------ Overview */
+LF.register({ role: 'admin', id: 'overview', label: 'Overview', icon: 'home', render(root) {
+  const out = h('div', { style: { display: 'grid', gap: '20px' } }); let days = 14;
+  const sel = h('select', { class: 'input', 'aria-label': 'Period', style: { width: 'auto' }, onchange: (e) => { days = +e.target.value; load(); } }, [7, 14, 30, 60].map((d) => h('option', { value: d, selected: d === 14 }, 'Last ' + d + ' days')));
+  root.append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h1', { class: 't-h1' }, 'Overview'), sel), out);
+  const load = () => ui.loadInto(out, async () => {
+    const d = await api('dash.admin', { days }), q = d.queues, st = d.stock;
+    const chart = d.attendanceByDay.map((x) => ({ label: x.date.slice(5), a: x.sessions, b: x.present }));
+    const totalPresent = d.attendanceByDay.reduce((n, x) => n + x.present, 0), totalSessions = d.attendanceByDay.reduce((n, x) => n + x.sessions, 0);
+    return h('div', { style: { display: 'grid', gap: '20px' } },
+      h('div', { class: 'grid-stats' }, ui.stat('Labs', d.labs), ui.stat('Open sessions now', d.openSessions, null, d.openSessions ? 'good' : ''), ui.stat('Students', d.users.student), ui.stat('Faculty', d.users.faculty), ui.stat('Lab staff', d.users.staff), ui.stat('Admins', d.users.admin)),
+      h('section', { class: 'card', 'aria-label': 'Attendance by day' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h2', { class: 't-h2' }, 'Sessions and attendance'), h('div', { class: 'hint' }, totalSessions + ' sessions · ' + totalPresent + ' attendances')),
+        totalSessions ? [ui.barChart(chart, { label: 'Sessions (dark) and attendances (lime) per day' }), h('div', { class: 'hint' }, 'Dark bars: sessions held. Lime bars: students with a verified attendance. Based on closed and open sessions only.')] : ui.empty('No sessions in this period', 'Charts fill in as sessions are held.')),
+      h('div', { class: 'split' },
+        h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Equipment'), h('dl', { class: 'dl' }, ...[['Single items', st.individual], ['On loan', st.onLoan], ['Counted units', st.quantityUnits], ['Units out', st.quantityOut], ['Damaged', st.damaged], ['Missing', st.missing]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))]))),
+        h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Waiting for action'), h('dl', { class: 'dl' }, ...[['Students to verify', q.pendingStudents], ['Device requests', q.pendingCredentials], ['Booking requests', q.pendingBookings], ['Attendance corrections', q.pendingCorrections], ['Overdue loans', q.overdueLoans]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))])))));
+  });
+  load();
+  LF.every(60000, () => { if (!document.querySelector('.modal-back')) load(); });
+} });
+
+/* ------------------------------------------------------------------ Sessions */
+LF.register({ role: 'admin', id: 'sessions', label: 'Sessions', icon: 'clock', render(root) {
+  const date = h('input', { class: 'input', type: 'date', value: fmt.todayIst(), 'aria-label': 'Date', style: { maxWidth: '180px' } }), list = h('div', { style: { display: 'grid', gap: '12px' } });
+  root.append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h1', { class: 't-h1' }, 'Sessions'), date), h('p', { class: 't-muted' }, 'Every lab session. Opening or closing one never touches another. Admins can override the time window or a busy lab; overrides are audited.'), list);
+  const reload = () => ui.loadInto(list, async () => {
+    const r = await api('sessions.day', { date: date.value });
+    if (!r.sessions.length) return ui.empty('No sessions on this date', 'Timetable slots create classes automatically. Create events or research visits below.');
+    return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => LF.sessionCard(s, reload)));
+  });
+  date.addEventListener('change', reload); reload();
+  root.append(h('h2', { class: 't-h2', style: { marginTop: '24px' } }, 'Create event or research visit'), h('div', { id: 'adm-new' }));
+  root.querySelector('#adm-new').appendChild(LF.newSessionForm());
+  LF.every(20000, () => { if (!document.querySelector('.modal-back')) reload(); });
+} });
+LF.register({ role: 'admin', id: 'live', label: 'Live roster', icon: 'users', render(root) { return LF.liveRoster(root); } });
+
+/* ------------------------------------------------------------------ People */
+LF.register({ role: 'admin', id: 'users', label: 'People', icon: 'users', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'People & roles'), ui.tabs([
+    { id: 'staff', label: 'Staff, faculty & admins', render: (p) => { ui.loadInto(p, usersView); } },
+    { id: 'students', label: 'Students', render: (p) => { ui.loadInto(p, studentsView); } },
+    { id: 'import', label: 'Import', render: (p) => { p.appendChild(importView()); } }]));
+  async function usersView() {
+    const r = await api('users.list'), reload = () => LF.go('users');
+    return ui.table({ caption: 'Users', searchPlaceholder: 'Search name or email', pageSize: 25, rows: r.users, filters: [{ label: 'Role', options: ['student', 'faculty', 'staff', 'admin'], get: (x) => x.roles.includes('admin') ? 'admin' : x.roles.includes('staff') ? 'staff' : x.roles.includes('faculty') ? 'faculty' : 'student' }, { label: 'Status', options: ['active', 'disabled'], get: (x) => x.status }],
+      toolbar: ui.button('Add person', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => userForm(null, reload) }),
+      columns: [{ key: 'displayName', label: 'Name' }, { key: 'email', label: 'Email' }, { label: 'Roles', text: (x) => x.roles.join(' '), render: (x) => h('span', { class: 'pill-row' }, x.roles.map((r) => ui.badge(r, r === 'admin' ? 'bad' : r === 'staff' ? 'info' : ''))) },
+        { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'lastLoginAt', label: 'Last sign-in', render: (x) => x.lastLoginAt ? fmt.dt(x.lastLoginAt) : 'never', text: (x) => x.lastLoginAt || 0 },
+        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Edit', { size: 'sm', onClick: () => userForm(x, reload) }), ui.button(x.status === 'active' ? 'Disable' : 'Enable', { size: 'sm', onClick: () => LF.ui.formModal({ title: (x.status === 'active' ? 'Disable ' : 'Enable ') + x.email, fields: [{ name: 'reason', label: 'Reason', maxlength: 200 }], submitLabel: 'Confirm', onSubmit: async (v) => { await api('users.status', { userId: x.userId, status: x.status === 'active' ? 'disabled' : 'active', reason: v.reason }); LF.toast('Updated', 'good'); reload(); } }) })) }] }).el;
+  }
+  function userForm(u, reload) {
+    const roles = ['student', 'faculty', 'staff', 'admin'].map((r) => ui.field({ name: r, label: r === 'staff' ? 'Lab staff' : r[0].toUpperCase() + r.slice(1), type: 'checkbox', value: u ? u.roles.includes(r) : r === 'faculty' }));
+    const email = ui.field({ name: 'email', label: 'University email', type: 'email', required: true, value: u ? u.email : '', readOnly: !!u, hint: 'Must be @karunya.edu or @karunya.edu.in' }), name = ui.field({ name: 'displayName', label: 'Name', required: true, value: u ? u.displayName : '', maxlength: 80 });
+    const dept = ui.field({ name: 'department', label: 'Department', value: 'CSE' }), code = ui.field({ name: 'employeeCode', label: 'Employee code', maxlength: 30 });
+    const msg = h('div', { class: 'err', role: 'alert', hidden: true }); let m;
+    m = LF.modal(u ? 'Edit ' + u.email : 'Add person', h('div', { style: { display: 'grid', gap: '12px' } }, email.el, name.el, h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px' } }, h('legend', { class: 't-label' }, 'Roles'), ...roles.map((r) => r.el)), dept.el, code.el, msg,
+      h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), ui.button('Save', { kind: 'primary', onClick: async () => {
+        msg.hidden = true; const rs = ['student', 'faculty', 'staff', 'admin'].filter((r, i) => roles[i].get());
+        try { await api('users.upsert', { email: email.get(), displayName: name.get(), roles: rs, department: dept.get(), employeeCode: code.get(), status: u ? u.status : 'active' }); LF.toast('Saved', 'good'); m.close(); reload(); } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; } } }))));
+  }
+  async function studentsView() {
+    const r = await api('students.list', { limit: 500 }), reload = () => LF.go('users');
+    return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }],
+      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Open', { size: 'sm', onClick: () => LF.showStudent(x, reload) }) }] }).el;
+  }
+  function importView() {
+    const stu = csvButton('Student list CSV', 'Imports the official student list. With an email column, the student is verified automatically the first time they sign in with that email.', 'rollNo, name, email (optional), department, section, year',
+      async (rows) => { const r = await api('students.import', { rows }); return { summary: r.created + ' created, ' + r.updated + ' updated, ' + r.skipped + ' already linked.', errors: r.errors }; });
+    const usr = csvButton('Staff and faculty CSV', 'Creates or updates staff, faculty and admin accounts.', 'email, name, roles (e.g. faculty or "faculty;staff"), department, employeeCode',
+      async (rows) => { const r = await api('users.import', { rows }); return { summary: r.imported + ' account(s) saved.', errors: r.errors }; });
+    return h('div', { class: 'split' }, h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Students'), stu.el), h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Staff & faculty'), usr.el));
+  }
+} });
+
+/* ------------------------------------------------------------------ Academics */
+LF.register({ role: 'admin', id: 'academics', label: 'Academics', icon: 'book', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Courses, rosters & timetable'), ui.tabs([
+    { id: 'courses', label: 'Courses', render: (p) => { ui.loadInto(p, coursesView); } },
+    { id: 'map', label: 'Faculty mapping', render: (p) => { ui.loadInto(p, mappingView); } },
+    { id: 'roster', label: 'Rosters', render: (p) => { p.appendChild(rosterView()); } },
+    { id: 'timetable', label: 'Timetable', render: (p) => { ui.loadInto(p, timetableView); } }]));
+
+  async function coursesView() {
+    const r = await api('courses.list'), reload = () => LF.go('academics');
+    const imp = csvButton('Course CSV', 'Bulk-add courses.', 'code, name, department, semester', async (rows) => { const x = await api('courses.import', { rows }); return { summary: x.created + ' added, ' + x.skipped + ' already existed.', errors: x.errors }; });
+    return h('div', { style: { display: 'grid', gap: '16px' } }, ui.table({ caption: 'Courses', rows: r.courses, searchPlaceholder: 'Search courses', pageSize: 20, empty: ui.empty('No courses yet', 'Add the lab courses you run, for example CS201 Data Structures Lab.'),
+      toolbar: ui.button('Add course', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => courseForm(null, reload) }),
+      columns: [{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'department', label: 'Dept.' }, { key: 'semester', label: 'Semester' }, { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => courseForm(x, reload) }) }] }).el,
+      h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import courses from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
+  }
+  function courseForm(c, reload) {
+    LF.ui.formModal({ title: c ? 'Edit course' : 'Add course', cols: 2, fields: [{ name: 'code', label: 'Code', required: true, value: c ? c.code : '', maxlength: 20 }, { name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 100 }, { name: 'department', label: 'Department', value: c ? c.department : 'CSE' }, { name: 'semester', label: 'Semester', value: c ? c.semester : '', maxlength: 20 }, { name: 'status', label: 'Status', type: 'select', value: c ? c.status : 'active', options: ['active', 'inactive'] }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('courses.upsert', Object.assign({ courseId: c ? c.courseId : undefined }, v)); LF.toast('Saved', 'good'); reload(); } });
+  }
+  async function mappingView() {
+    const [m, c, f] = await Promise.all([api('facultycourses.list'), api('courses.list'), api('directory.faculty')]), reload = () => LF.go('academics');
+    return ui.table({ caption: 'Faculty to course mapping', rows: m.mappings, searchPlaceholder: 'Search', empty: ui.empty('No mappings yet', 'Map faculty to the courses they teach. Mapping controls who sees which students.'),
+      toolbar: ui.button('Map faculty to course', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => LF.ui.formModal({ title: 'Map faculty to course', fields: [{ name: 'facultyId', label: 'Faculty', type: 'select', required: true, options: opt(f.faculty, 'facultyId', 'name') }, { name: 'courseId', label: 'Course', type: 'select', required: true, options: opt(c.courses.filter((x) => x.status === 'active'), 'courseId', (x) => x.code + ' ' + x.name) }, { name: 'section', label: 'Section (blank = all)', maxlength: 10 }, { name: 'term', label: 'Term', maxlength: 20 }], submitLabel: 'Save', onSubmit: async (v) => { await api('facultycourses.set', v); LF.toast('Mapped', 'good'); reload(); } }) }),
+      columns: [{ key: 'facultyName', label: 'Faculty' }, { key: 'courseCode', label: 'Course' }, { key: 'courseName', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'term', label: 'Term' }, { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove mapping?', message: x.facultyName + ' → ' + x.courseCode, confirmLabel: 'Remove', danger: true })) return; await api('facultycourses.remove', { mapId: x.mapId }); reload(); } }) }] }).el;
+  }
+  function rosterView() {
+    const box = h('div', { style: { display: 'grid', gap: '16px' } });
+    ui.loadInto(box, async () => {
+      const c = await api('courses.list'); if (!c.courses.length) return ui.empty('Add a course first');
+      const sel = ui.field({ name: 'course', label: 'Course', type: 'select', options: opt(c.courses, 'courseId', (x) => x.code + ' ' + x.name) }), list = h('div');
+      const imp = csvButton('Roll numbers CSV', 'Adds students to the selected course. Students must already be in the student list.', 'rollNo', async (rows) => { const r = await api('roster.import', { courseId: sel.get(), rows: rows.map((x) => ({ rollNo: x.rollNo || x.rollno || Object.values(x)[0] })) }); load(); return { summary: r.added + ' added, ' + r.already + ' already enrolled.', errors: r.errors }; });
+      const load = () => ui.loadInto(list, async () => {
+        const r = await api('roster.list', { courseId: sel.get() });
+        return ui.table({ caption: 'Course roster', rows: r.roster, searchPlaceholder: 'Search roster', pageSize: 25, empty: ui.empty('Nobody enrolled', 'Import roll numbers below.'), columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status },
+          { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove from roster?', message: x.rollNo + ' ' + x.name + '. Past attendance is kept.', confirmLabel: 'Remove', danger: true })) return; await api('roster.remove', { rosterId: x.rosterId }); load(); } }) }] }).el;
+      });
+      sel.input.addEventListener('change', load); load();
+      return h('div', { style: { display: 'grid', gap: '16px' } }, sel.el, list, h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import roster from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
+    });
+    return box;
+  }
+  async function timetableView() {
+    const [labs, c, f] = await Promise.all([api('labs.list'), api('courses.list'), api('directory.faculty')]), reload = () => LF.go('academics');
+    const labSel = h('select', { class: 'input', 'aria-label': 'Filter by lab', style: { maxWidth: '260px' } }, h('option', { value: '' }, 'All labs'), labs.labs.map((l) => h('option', { value: l.labId }, l.name))), out = h('div');
+    const load = () => ui.loadInto(out, async () => {
+      const r = await api('timetable.list', { labId: labSel.value || undefined });
+      return ui.table({ caption: 'Timetable', rows: r.slots, searchPlaceholder: 'Search', pageSize: 25, empty: ui.empty('No timetable slots', 'Add weekly slots. Sessions are created automatically for each date.'),
+        columns: [{ key: 'dayOfWeek', label: 'Day', text: (x) => x.dayOfWeek, render: (x) => DOW[x.dayOfWeek] }, { label: 'Time', text: (x) => x.startTime, render: (x) => x.startTime + ' - ' + x.endTime }, { key: 'labName', label: 'Lab' }, { label: 'Course', text: (x) => x.courseCode, render: (x) => x.courseCode + ' ' + x.courseName }, { key: 'facultyName', label: 'Faculty' }, { key: 'section', label: 'Sec.' }, { label: 'Valid', text: (x) => x.validFrom, render: (x) => x.validFrom + ' to ' + x.validTo },
+          { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Edit', { size: 'sm', onClick: () => slotForm(x) }), ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove this slot?', message: 'Future sessions stop being created. Sessions already created are kept.', confirmLabel: 'Remove', danger: true })) return; await api('timetable.remove', { slotId: x.slotId }); load(); } })) }] }).el;
+    });
+    function slotForm(s, override) {
+      const day = ui.field({ name: 'dayOfWeek', label: 'Day', type: 'select', value: s ? s.dayOfWeek : 1, options: [1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: DOW[d] })) });
+      const fields = { labId: ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, value: s ? s.labId : '', options: opt(labs.labs, 'labId', 'name') }), courseId: ui.field({ name: 'courseId', label: 'Course', type: 'select', required: true, value: s ? s.courseId : '', options: opt(c.courses.filter((x) => x.status === 'active'), 'courseId', (x) => x.code + ' ' + x.name) }),
+        facultyId: ui.field({ name: 'facultyId', label: 'Faculty', type: 'select', required: true, value: s ? s.facultyId : '', options: opt(f.faculty, 'facultyId', 'name') }), section: ui.field({ name: 'section', label: 'Section (blank = all)', value: s ? s.section : '', maxlength: 10 }),
+        startTime: ui.field({ name: 'startTime', label: 'Start', type: 'time', required: true, value: s ? s.startTime : '09:00' }), endTime: ui.field({ name: 'endTime', label: 'End', type: 'time', required: true, value: s ? s.endTime : '11:00' }),
+        validFrom: ui.field({ name: 'validFrom', label: 'Valid from', type: 'date', required: true, value: s ? s.validFrom : fmt.todayIst() }), validTo: ui.field({ name: 'validTo', label: 'Valid to', type: 'date', required: true, value: s ? s.validTo : new Date(Date.parse(fmt.todayIst() + 'T00:00:00Z') + 120 * 86400000).toISOString().slice(0, 10) }) };
+      const ov = ui.field({ name: 'override', label: 'Allow two classes in this lab at the same time', type: 'checkbox', value: !!override }), msg = h('div', { class: 'err', role: 'alert', hidden: true }); let m;
+      m = LF.modal(s ? 'Edit slot' : 'Add timetable slot', h('div', { style: { display: 'grid', gap: '12px' } }, day.el, fields.labId.el, fields.courseId.el, fields.facultyId.el, fields.section.el, h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } }, fields.startTime.el, fields.endTime.el, fields.validFrom.el, fields.validTo.el), ov.el, msg,
+        h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), ui.button('Save', { kind: 'primary', onClick: async () => {
+          msg.hidden = true; const p = { slotId: s ? s.slotId : undefined, dayOfWeek: Number(day.get()), override: ov.get() }; Object.keys(fields).forEach((k) => { p[k] = fields[k].get(); });
+          try { await api('timetable.upsert', p); LF.toast('Saved', 'good'); m.close(); load(); } catch (e) { msg.textContent = LF.errMsg(e) + (e.extra && e.extra.overridable ? ' Tick the box above to allow it.' : ''); msg.hidden = false; } } }))));
+    }
+    return h('div', { style: { display: 'grid', gap: '12px' } }, h('div', { class: 'toolbar' }, labSel, ui.button('Add slot', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => slotForm(null) })), out, (labSel.addEventListener('change', load), load(), null));
+  }
+} });
+
+/* ------------------------------------------------------------------ Labs & kiosks */
+LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Labs & kiosks'), ui.tabs([{ id: 'labs', label: 'Labs', render: (p) => { ui.loadInto(p, labsView); } }, { id: 'kiosks', label: 'Scan kiosks', render: (p) => { ui.loadInto(p, kiosksView); } }]));
+  async function labsView() {
+    const r = await api('labs.list', { includeInactive: true }), reload = () => LF.go('labs');
+    return ui.table({ caption: 'Labs', rows: r.labs, searchPlaceholder: 'Search labs', empty: ui.empty('No labs yet', 'Add each laboratory (IoT, computing, GPU, research...).'), toolbar: ui.button('Add lab', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => labForm(null, reload) }),
+      columns: [{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'type', label: 'Type' }, { label: 'Location', text: (x) => (x.building || '') + ' ' + (x.room || '') }, { key: 'capacity', label: 'Capacity', align: 'right' }, { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => labForm(x, reload) }) }] }).el;
+  }
+  function labForm(l, reload) {
+    LF.ui.formModal({ title: l ? 'Edit lab' : 'Add lab', cols: 2, fields: [{ name: 'code', label: 'Code', required: true, value: l ? l.code : '', maxlength: 20 }, { name: 'name', label: 'Name', required: true, value: l ? l.name : '', maxlength: 80 }, { name: 'type', label: 'Type', type: 'select', value: l ? l.type : 'computing', options: ['iot', 'computing', 'gpu', 'research', 'other'] }, { name: 'capacity', label: 'Capacity', type: 'number', min: 1, value: l ? l.capacity : 60 }, { name: 'building', label: 'Building', value: l ? l.building : '' }, { name: 'room', label: 'Room', value: l ? l.room : '' }, { name: 'status', label: 'Status', type: 'select', value: l ? l.status : 'active', options: ['active', 'inactive'] }, { name: 'notes', label: 'Notes', value: l ? l.notes : '', span: true }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('labs.upsert', Object.assign({ labId: l ? l.labId : undefined }, v, { capacity: Number(v.capacity) })); LF.toast('Saved', 'good'); reload(); } });
+  }
+  async function kiosksView() {
+    const [k, labs] = await Promise.all([api('kiosks.list'), api('labs.list', { includeInactive: true })]), reload = () => LF.go('labs'), name = (id) => (labs.labs.find((l) => l.labId === id) || {}).name || id;
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'card sky' }, h('strong', null, 'How a kiosk works. '), 'Create a dedicated @karunya Google account for each scanning station (for example lab1-kiosk@karunya.edu.in) and register it here. Sign in to LABFLOW with that account on the lab PC or tablet. Only a registered, active kiosk account can record scans, and each kiosk can only record scans for its own lab.'),
+      ui.table({ caption: 'Kiosks', rows: k.kiosks, search: false, empty: ui.empty('No kiosks yet'), toolbar: ui.button('Register kiosk', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => kioskForm(null, labs.labs, reload) }),
+        columns: [{ key: 'name', label: 'Kiosk' }, { label: 'Lab', text: (x) => name(x.labId) }, { key: 'authorizedEmail', label: 'Account' }, { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'lastSeenAt', label: 'Last seen', render: (x) => x.lastSeenAt ? fmt.dt(x.lastSeenAt) : 'never', text: (x) => x.lastSeenAt || 0 },
+          { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Edit', { size: 'sm', onClick: () => kioskForm(x, labs.labs, reload) }), x.status === 'active' ? ui.button('Revoke', { size: 'sm', kind: 'danger', onClick: async () => { if (!await LF.confirm({ title: 'Revoke this kiosk?', message: 'It can no longer record scans.', confirmLabel: 'Revoke', danger: true })) return; await api('kiosks.upsert', { kioskId: x.kioskId, labId: x.labId, name: x.name, authorizedEmail: x.authorizedEmail, status: 'revoked' }); reload(); } }) : null) }] }).el);
+  }
+  function kioskForm(k, labs, reload) {
+    LF.ui.formModal({ title: k ? 'Edit kiosk' : 'Register kiosk', fields: [{ name: 'name', label: 'Name', required: true, value: k ? k.name : '', maxlength: 60 }, { name: 'labId', label: 'Lab', type: 'select', required: true, value: k ? k.labId : '', options: opt(labs, 'labId', 'name') }, { name: 'authorizedEmail', label: 'Kiosk Google account', type: 'email', required: true, value: k ? k.authorizedEmail : '' }, { name: 'status', label: 'Status', type: 'select', value: k ? k.status : 'active', options: ['active', 'revoked'] }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('kiosks.upsert', Object.assign({ kioskId: k ? k.kioskId : undefined }, v)); LF.toast('Saved', 'good'); reload(); } });
+  }
+} });
+
+/* ------------------------------------------------------------------ Corrections */
+LF.register({ role: 'admin', id: 'approvals', label: 'Approvals', icon: 'shield', render(root) {
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Attendance corrections'), h('p', { class: 't-muted' }, 'Corrections to sessions older than the policy window wait here. Approving adds the change; rejecting leaves attendance as scanned.'), out);
+  ui.loadInto(out, async () => {
+    const r = await api('corrections.pending');
+    if (!r.corrections.length) return ui.empty('Nothing waiting', 'Late corrections requested by faculty appear here.');
+    const names = { CORR_IN: 'Add entry', CORR_OUT: 'Add exit', VOID: 'Cancel a scan' };
+    return h('div', { style: { display: 'grid', gap: '12px' } }, r.corrections.map((c) => h('article', { class: 'card' }, h('div', { class: 't-h3' }, (names[c.type] || c.type) + ' · ' + c.studentName + ' (' + c.rollNo + ')'), h('div', { class: 'hint' }, c.sessionTitle + ' · ' + c.sessionDate + ' · requested by ' + c.requestedBy + ' ' + fmt.dt(c.createdAt) + (c.type !== 'VOID' ? ' · time ' + fmt.dt(c.at) : '')),
+      h('p', null, 'Reason: ' + c.reason), h('div', { class: 'toolbar' }, ui.button('Approve', { kind: 'primary', onClick: async () => { await api('corrections.decide', { eventId: c.eventId, approve: true }); LF.toast('Approved', 'good'); LF.go('approvals'); } }),
+        ui.button('Reject', { onClick: () => LF.ui.formModal({ title: 'Reject correction', fields: [{ name: 'note', label: 'Note', maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('corrections.decide', { eventId: c.eventId, approve: false, note: v.note }); LF.go('approvals'); } }) })))));
+  });
+} });
+
+/* ------------------------------------------------------------------ Settings */
+LF.register({ role: 'admin', id: 'settings', label: 'Settings', icon: 'settings', render(root) {
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Settings'), out);
+  const groups = [['QR & attendance', ['qrTtlSeconds', 'exitGraceMinutes', 'autoCloseGraceMinutes', 'requireExitScan', 'credentialMaxActive', 'correctionApprovalAfterHours']], ['Rescans & spot checks', ['rescanMode', 'rescanWindowMinutes', 'rescanMinFraction', 'rescanMaxFraction', 'spotCheckDefaultCount']], ['Loans & bookings', ['loanDefaultDays', 'maxOpenLoansPerBorrower', 'blockLoansWhenOverdue', 'bookingMaxAdvanceDays', 'bookingMaxDays', 'bookingMaxActivePerRequester', 'bookingHoldPending']], ['Email & audit', ['emailEnabled', 'emailDailyReserve', 'reportRecipients', 'auditCheckpointEvery']]];
+  ui.loadInto(out, async () => {
+    const r = await api('settings.get'), by = {}; r.settings.forEach((s) => { by[s.key] = s; });
+    const inputs = {}; const msg = h('div', { class: 'err', role: 'alert', hidden: true });
+    const fieldFor = (s) => { const f = ui.field({ name: s.key, label: s.key, type: s.type === 'bool' ? 'checkbox' : s.type === 'enum' ? 'select' : s.type === 'int' ? 'number' : 'text', value: s.value, options: s.values, min: s.min, max: s.max, hint: s.desc + (s.type === 'int' ? ' (' + s.min + ' to ' + s.max + ', default ' + s.def + ')' : '') }); if (s.type === 'bool') f.el.querySelector('label').lastChild.textContent = ' ' + s.key; inputs[s.key] = { f, s }; return f.el; };
+    return h('form', { style: { display: 'grid', gap: '16px', maxWidth: '760px' }, onsubmit: async (e) => {
+      e.preventDefault(); msg.hidden = true; const values = {};
+      Object.keys(inputs).forEach((k) => { const { f, s } = inputs[k]; const v = f.get(); if (String(v) !== String(s.value)) values[k] = s.type === 'int' ? Number(v) : v; });
+      if (!Object.keys(values).length) { LF.toast('Nothing changed'); return; }
+      try { const x = await api('settings.set', { values }); LF.toast(x.changed.length + ' setting(s) saved', 'good'); LF.go('settings'); } catch (err) { msg.textContent = LF.errMsg(err); msg.hidden = false; }
+    } }, groups.map(([title, keys]) => h('section', { class: 'card', style: { display: 'grid', gap: '12px' } }, h('h2', { class: 't-h2' }, title), keys.filter((k) => by[k]).map((k) => fieldFor(by[k])))), msg, h('div', null, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save changes')));
+  });
+} });
+
+/* ------------------------------------------------------------------ Audit & system */
+LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Audit & system'), ui.tabs([{ id: 'audit', label: 'Audit trail', render: (p) => { p.appendChild(auditView()); } }, { id: 'system', label: 'System health', render: (p) => { ui.loadInto(p, systemView); } }, { id: 'tools', label: 'Reconcile', render: (p) => { p.appendChild(toolsView()); } }, { id: 'reports', label: 'Reports', render: (p) => { p.appendChild(LF.ui.reports(['daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'audit'])); } }]));
+  function auditView() {
+    const box = h('div', { style: { display: 'grid', gap: '12px' } }), list = h('div'), verify = h('div', { role: 'status' });
+    const action = h('input', { class: 'input', placeholder: 'Action starts with (e.g. loan, session, scan)', 'aria-label': 'Filter by action', style: { maxWidth: '280px' } }), actor = h('input', { class: 'input', placeholder: 'Actor contains', 'aria-label': 'Filter by actor', style: { maxWidth: '240px' } });
+    const load = () => ui.loadInto(list, async () => {
+      const r = await api('audit.list', { action: action.value.trim() || undefined, actor: actor.value.trim() || undefined, limit: 200 });
+      return ui.table({ caption: 'Audit trail', search: false, rows: r.events, pageSize: 25, empty: ui.empty('No matching events'), columns: [{ key: 'seq', label: '#', align: 'right' }, { key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'actor', label: 'Actor' }, { key: 'role', label: 'Role' }, { key: 'action', label: 'Action' }, { label: 'Target', text: (x) => x.entityType + ' ' + x.entityId, render: (x) => h('span', { class: 't-data' }, (x.entityType || '') + ' ' + (x.entityId || '')) }, { key: 'result', label: 'Result', render: (x) => ui.badge(x.result || 'ok', x.result === 'ok' || !x.result ? '' : 'warn'), text: (x) => x.result },
+        { label: 'Detail', sort: false, render: (x) => x.detail ? h('details', null, h('summary', { style: { cursor: 'pointer' } }, 'view'), h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', maxWidth: '360px' } }, typeof x.detail === 'string' ? x.detail : JSON.stringify(x.detail, null, 1))) : null }] }).el;
+    });
+    box.append(h('div', { class: 'toolbar' }, action, actor, ui.button('Filter', { onClick: load }), ui.button('Verify chain integrity', { icon: 'shield', onClick: async () => {
+      const r = await api('audit.verify'); clear(verify).append(h('div', { class: 'card ' + (r.ok ? 'good' : 'bad') }, h('strong', null, r.ok ? 'Chain is internally consistent. ' : 'PROBLEM FOUND. '), r.rows + ' events, head #' + r.headSeq + ' (' + r.headHash.slice(0, 16) + '...). ', r.chainProblems.concat(r.checkpointProblems).map((p) => h('div', null, '#' + p.seq + ': ' + p.problem)), r.storedHeadProblem ? h('div', null, r.storedHeadProblem) : null, h('div', { class: 'hint', style: { color: 'inherit' } }, r.note)));
+    } })), verify, list); load();
+    return box;
+  }
+  async function systemView() {
+    const s = await api('system.status');
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Triggers', s.triggers.ok ? 'OK' : 'Problem', s.triggers.summary, s.triggers.ok ? 'good' : 'bad'), ui.stat('Email today', s.mail.remainingToday === null ? 'n/a' : s.mail.remainingToday, s.mail.queued + ' queued · transport: ' + s.emailTransport), ui.stat('Time zone', s.timeZone, fmt.dt(s.serverNow)), ui.stat('Allowed domains', s.allowedDomains.length, s.allowedDomains.join(', '))),
+      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Background jobs'), s.latestJobs.length ? ui.table({ caption: 'Jobs', search: false, rows: s.latestJobs, columns: [{ key: 'job', label: 'Job' }, { key: 'at', label: 'Last run', render: (x) => fmt.dt(x.at) }, { key: 'status', label: 'Result', render: (x) => ui.badge(x.status, x.status === 'ok' ? 'good' : 'bad') }, { key: 'detail', label: 'Detail' }] }).el : ui.empty('No job has run yet', 'Install triggers from the Apps Script editor (see README).')),
+      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')));
+  }
+  function toolsView() {
+    const out = h('div', { role: 'status' }), sid = ui.field({ name: 'sid', label: 'Session id', placeholder: 'SES-...', maxlength: 40 });
+    return h('div', { class: 'split' },
+      h('section', { class: 'card', style: { display: 'grid', gap: '10px' } }, h('h2', { class: 't-h2' }, 'Inventory'), h('p', { class: 'hint', style: { margin: 0 } }, 'Rebuilds stock figures from the loan ledger and rolls back loans left half-written after a failure. Run a dry run first.'),
+        h('div', { class: 'toolbar' }, ui.button('Dry run', { onClick: async () => show(await api('system.reconcileInventory', { dryRun: true })) }), ui.button('Fix drift', { kind: 'primary', onClick: async () => { if (await LF.confirm({ title: 'Repair inventory figures?', message: 'Derived stock counts will be set to match the loan ledger.', confirmLabel: 'Repair' })) show(await api('system.reconcileInventory', {})); } }))),
+      h('section', { class: 'card', style: { display: 'grid', gap: '10px' } }, h('h2', { class: 't-h2' }, 'Attendance session'), h('p', { class: 'hint', style: { margin: 0 } }, 'Checks one session for duplicate or impossible records and rebuilds its summary from the scan log. Scans are never changed.'), sid.el, ui.button('Check session', { kind: 'primary', onClick: async () => { show(await api('system.reconcileSession', { sessionId: sid.get() })); } })),
+      h('div', { style: { gridColumn: '1 / -1' } }, out));
+    function show(r) { clear(out).append(h('pre', { class: 'card flat', style: { whiteSpace: 'pre-wrap', fontSize: '12px', overflow: 'auto' } }, JSON.stringify(r, null, 2))); }
+  }
+} });
+
+/* ------------------------------------------------------------------ reuse staff views */
+function reuse(id, label, iconName) { const v = (LF.routes.staff || []).find((x) => x.id === id); if (v) LF.register(Object.assign({}, v, { role: 'admin', label: label || v.label, icon: iconName || v.icon })); }
+reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings');
+})();
+</script>
