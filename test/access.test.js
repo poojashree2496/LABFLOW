@@ -34,7 +34,7 @@ test('permission table: every route points at a real handler and role set', () =
   const valid = new Set(['any', 'user', 'student', 'faculty', 'staff', 'admin', 'kiosk']);
   for (const r of routes) { assert.equal(r.fn, 'function', r.k); assert.ok(r.roles.length > 0, r.k); r.roles.forEach((x) => assert.ok(valid.has(x), r.k + ':' + x)); }
   // every write-ish admin route is admin only
-  for (const r of routes) if (/^(users|settings|kiosks|labs|timetable|audit|system)\./.test(r.k) && !/\.(list)$/.test(r.k)) assert.deepEqual(r.roles, ['admin'], r.k);
+  for (const r of routes) if (/^(users|settings|kiosks|labs|timetable|audit|system)\./.test(r.k) && !/\.(list|occupancy)$/.test(r.k)) assert.deepEqual(r.roles, ['admin'], r.k);
 });
 
 test('role matrix: every route denies roles not listed (backend enforcement, not UI)', () => {

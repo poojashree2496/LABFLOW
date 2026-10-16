@@ -31,14 +31,14 @@ test('selfTest passes on the fake platform (real-platform timings only come from
   assert.ok(r.checks.length >= 12);
 });
 
-test('triggers: install is idempotent, creates exactly our four, never touches foreign triggers', () => {
+test('triggers: install is idempotent, creates exactly our five, never touches foreign triggers', () => {
   const w = world({ students: 0 });
   w.e.run("ScriptApp.newTrigger('someoneElsesJob').timeBased().everyHours(1).create();");
-  assert.equal(w.eval('Triggers.install()').created.length, 4);
-  assert.equal(w.eval('Triggers.install()').removed, 4);
+  assert.equal(w.eval('Triggers.install()').created.length, 5);
+  assert.equal(w.eval('Triggers.install()').removed, 5);
   const st = w.eval('Triggers.status()');
   assert.equal(st.ok, true); assert.equal(st.otherTriggers, 1);
-  assert.equal(w.e.triggers.length, 5);
+  assert.equal(w.e.triggers.length, 6);
   w.eval('Triggers.remove()');
   assert.equal(w.e.triggers.length, 1);
   assert.equal(w.eval('Triggers.status()').ok, false);

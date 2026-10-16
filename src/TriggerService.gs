@@ -2,7 +2,7 @@
  * TriggerService.gs - the only place triggers are created, and the entry points they call.
  *
  * Safety rules
- *  - Exactly four LABFLOW triggers exist (see HANDLERS). install() removes ONLY triggers whose handler is one of
+ *  - Exactly five LABFLOW triggers exist (see HANDLERS). install() removes ONLY triggers whose handler is one of
  *    ours and recreates them, so running it twice never produces duplicates and never touches other projects' triggers.
  *  - Every entry point goes through Jobs.run(): it takes the script lock with a short wait and SKIPS the run if
  *    another execution holds it (no pile-up), logs a JobRuns row, catches and logs failures, and never throws, so Apps
@@ -13,10 +13,11 @@
  */
 var Triggers = {
   HANDLERS: {
-    trg_tickSessions: { every: 'minutes', n: 5, desc: 'Rescan windows, auto-close stale sessions, expire bookings' },
+    trg_tickSessions: { every: 'minutes', n: 5, desc: 'Open timetabled sessions, rescan windows, auto-close stale sessions, release no-show bookings, overstay alerts' },
     trg_sendEmails: { every: 'hours', n: 1, desc: 'Send queued notification emails as one digest per person' },
-    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint' },
-    trg_morning: { every: 'day', hour: 8, desc: 'Overdue reminders, daily report, audit anchor email' }
+    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint, monthly audit on the 1st' },
+    trg_morning: { every: 'day', hour: 8, desc: 'Overdue reminders, daily report, audit anchor email' },
+    trg_evening: { every: 'day', hour: 18, desc: 'Daily digest per lab to the lab incharges (FR-34)' }
   },
 
   install: function () {
@@ -56,7 +57,7 @@ var Jobs = {
   // Minimum seconds between runs of each job. Trigger entry points are global functions, so (like every global function in a
   // web-app project) a signed-in user could invoke them through google.script.run. They return nothing, are idempotent, and
   // this throttle caps the effect of repeated calls to at most one early run per interval.
-  MIN_GAP_SEC: { tickSessions: 120, sendEmails: 900, nightly: 3600, morning: 3600 },
+  MIN_GAP_SEC: { tickSessions: 120, sendEmails: 900, nightly: 3600, morning: 3600, evening: 3600 },
   run: function (name, fn) {
     var started = U.now(), deadline = started + Jobs.BUDGET_MS;
     var gap = Jobs.MIN_GAP_SEC[name] || 60, cache = CacheService.getScriptCache(), gk = 'job|' + name;
@@ -82,9 +83,11 @@ var Jobs = {
   tickSessions: function () {
     return Jobs.run('tickSessions', function () {
       var r = {};
+      Jobs.step(r, 'autoOpen', function () { return Sessions.autoOpenDue(); });
       Jobs.step(r, 'rescans', function () { return Attend.tickRescans(); });
       Jobs.step(r, 'autoClose', function () { return Sessions.autoCloseStale(); });
       Jobs.step(r, 'bookings', function () { return Booking.expireStale(); });
+      Jobs.step(r, 'overstay', function () { return Jobs.overstay(); });
       return r;
     });
   },
@@ -106,8 +109,48 @@ var Jobs = {
         return { fixed: rep.fixed, stale: rep.staleLoans.length };
       });
       Jobs.step(r, 'auditCheckpoint', function () { var c = Audit.checkpoint('nightly'); return c ? { seq: c.seq } : null; });
+      Jobs.step(r, 'monthlyAudit', function () {
+        if (U.local(U.now()).d !== 1) return { skipped: 'not the 1st' };
+        return Reports.runScheduledMonthly(U.local(U.dayStart(today) - 86400000).month);
+      });
       return r;
     });
+  },
+
+  evening: function () {
+    return Jobs.run('evening', function (deadline) {
+      var r = {}, today = U.local(U.now()).date;
+      Jobs.step(r, 'digest', function () { return Reports.runScheduledDigest(today, deadline); });
+      return r;
+    });
+  },
+
+  /**
+   * Students still inside a lab after its closing time (SRS B.3): one alert per lab per day to lab staff and the lab
+   * incharges, overstayAlertMinutes after closing.
+   */
+  overstay: function () {
+    var now = U.now(), today = U.local(now).date, alerts = 0, after = Settings.get('overstayAlertMinutes') * 60000;
+    Db.where('Labs', function (l) { return l.status === 'active' && l.closeTime; }).forEach(function (lab) {
+      var closes = Labs.closesAt(lab, today);
+      if (!closes || now < closes + after || now > closes + 6 * 3600000) return;
+      var marker = 'overstay:' + lab.labId + ':' + today;
+      if (Db.where('JobRuns', function (j) { return j.job === marker; }).length) return;
+      var occ = Occupancy.lab(lab.labId);
+      Db.insert('JobRuns', { runId: U.id('run'), job: marker, startedAt: now, finishedAt: now, status: 'ok', detail: { inside: occ.inside } });
+      if (!occ.inside) return;
+      var names = [];
+      Db.where('Sessions', function (s) { return s.labId === lab.labId && s.status === 'open'; }).forEach(function (s) {
+        var eff = Attend._effective(Attend._eventsFor(s));
+        Object.keys(eff).forEach(function (sid) { if (Attend._compute(s, eff[sid], [], now).inside) { var st = Db.cachedGet('StudentProfiles', 'studentId', sid, 300) || {}; names.push((st.name || sid) + ' (' + (st.rollNo || '') + ')'); } });
+      });
+      var title = lab.code + ' closed at ' + lab.closeTime + ': ' + occ.inside + ' still inside';
+      var body = names.slice(0, 30).join(', ') + (names.length > 30 ? ' and ' + (names.length - 30) + ' more' : '') + '. Ask them to scan out, or close the session.';
+      Notify.toRole('staff', 'overstay', title, body, marker);
+      Labs.incharges(lab).forEach(function (e) { Notify.toEmail(e, 'overstay', title, body, marker); });
+      alerts++;
+    });
+    return { alerts: alerts };
   },
 
   morning: function () {
@@ -143,3 +186,4 @@ function trg_tickSessions() { Jobs.tickSessions(); }
 function trg_sendEmails() { Jobs.sendEmails(); }
 function trg_nightly() { Jobs.nightly(); }
 function trg_morning() { Jobs.morning(); }
+function trg_evening() { Jobs.evening(); }

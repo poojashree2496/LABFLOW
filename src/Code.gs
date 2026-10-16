@@ -18,6 +18,7 @@ var ROUTES = {
   // identity / onboarding
   'me': { roles: ['any'], fn: function (c) { return Users.me(c); } },
   'onboard': { roles: ['any'], rl: [10, 300], fn: function (c, p) { return Users.onboard(c, p); } },
+  'profile.update': { roles: ['user'], rl: [20, 300], fn: function (c, p) { return Users.updateProfile(c, p); } },
   'notifications.list': { roles: ['user'], fn: function (c) { return Notify.list(c); } },
   'notifications.read': { roles: ['user'], fn: function (c, p) { return Notify.markRead(c, p); } },
 
@@ -45,23 +46,47 @@ var ROUTES = {
   'research.request': { roles: ['student'], rl: [10, 600], fn: function (c, p) { return Sessions.requestResearch(c, p); } },
   'photo.set': { roles: ['student'], rl: [10, 600], maxBytes: 700000, fn: function (c, p) { return Users.setPhoto(c, p); } },
 
-  // attendance: kiosk side
+  // attendance, Version A: kiosk shows a rotating QR, the student's phone opens it and sends its location
+  'checkin.open': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Checkin.open(c, p); } },
+  'checkin.submit': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Checkin.submit(c, p); } },
+  'kiosk.display': { roles: ['kiosk'], rl: [60, 60], fn: function (c) { return Checkin.display(c); } },
+
+  // attendance, Version B: the student's device-signed QR is scanned by the kiosk or by a teacher / staff / CR phone
   'kiosk.ping': { roles: ['kiosk'], rl: [60, 60], fn: function (c) { return Kiosks.ping(c); } },
   'kiosk.scan': { roles: ['kiosk'], rl: [400, 60], fn: function (c, p) { return Attend.kioskScan(c, p); } },
+  'scan.submit': { roles: ['user'], rl: [150, 60], fn: function (c, p) { return Attend.phoneScan(c, p); } },
+  'scan.photo': { roles: ['kiosk', 'user'], rl: [120, 60], fn: function (c, p) { return Attend.scanPhoto(c, p); } },
+  'student.identify': { roles: ['staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Attend.identify(c, p); } },
+  'labs.occupancy': { roles: ['user', 'kiosk'], rl: [90, 60], fn: function () { return Occupancy.list(); } },
 
   // faculty / sessions
   'sessions.day': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Sessions.listForDay(c, p); } },
   'sessions.get': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Sessions.get(c, p); } },
   'sessions.create': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.create(c, p); } },
-  'sessions.open': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.open(c, p); } },
-  'sessions.close': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.close(c, p); } },
+  'sessions.open': { roles: ['user'], fn: function (c, p) { return Sessions.open(c, p); } },   // owner, event coordinator or class rep (checked in Sessions)
+  'sessions.close': { roles: ['user'], fn: function (c, p) { return Sessions.close(c, p); } },
   'sessions.cancel': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.cancel(c, p); } },
   'research.pending': { roles: ['faculty', 'admin'], fn: function (c) { return Sessions.pendingResearch(c); } },
   'research.decide': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.decideResearch(c, p); } },
   'roster.session': { roles: ['faculty', 'admin'], maxBytes: 200000, fn: function (c, p) { return Roster.addToSession(c, p); } },
-  'attend.roster': { roles: ['faculty', 'staff', 'admin'], rl: [240, 60], fn: function (c, p) { return Attend.roster(c, p); } },
+  'attend.roster': { roles: ['user'], rl: [240, 60], fn: function (c, p) { return Attend.roster(c, p); } },
   'attend.studentEvents': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Attend.studentEvents(c, p); } },
-  'attend.openRescan': { roles: ['faculty', 'admin'], fn: function (c, p) { return Attend.openRescan(c, p); } },
+  'attend.openRescan': { roles: ['user'], fn: function (c, p) { return Attend.openRescan(c, p); } },
+  'flags.list': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Flags.list(c, p); } },
+  'flags.resolve': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Flags.resolve(c, p); } },
+
+  // events and class representatives
+  'events.create': { roles: ['faculty', 'admin'], rl: [20, 300], maxBytes: 200000, fn: function (c, p) { return Events.create(c, p); } },
+  'events.list': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Events.list(c, p); } },
+  'events.mine': { roles: ['user'], fn: function (c) { return Events.mine(c); } },
+  'events.register': { roles: ['user'], maxBytes: 200000, fn: function (c, p) { return Events.register(c, p); } },
+  'events.addGuest': { roles: ['user'], rl: [60, 300], fn: function (c, p) { return Events.addGuest(c, p); } },
+  'events.guests': { roles: ['user'], fn: function (c, p) { return Events.guests(c, p); } },
+  'events.cancel': { roles: ['faculty', 'admin'], fn: function (c, p) { return Events.cancel(c, p); } },
+  'classreps.list': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return ClassReps.list(c, p); } },
+  'classreps.set': { roles: ['faculty', 'admin'], fn: function (c, p) { return ClassReps.set(c, p); } },
+  'classreps.remove': { roles: ['faculty', 'admin'], fn: function (c, p) { return ClassReps.remove(c, p); } },
+  'cr.mine': { roles: ['student'], fn: function (c) { return ClassReps.mine(c); } },
   'spot.start': { roles: ['faculty', 'admin'], fn: function (c, p) { return Attend.startSpotCheck(c, p); } },
   'spot.list': { roles: ['faculty', 'admin'], fn: function (c, p) { return Attend.listSpotChecks(c, p); } },
   'spot.resolve': { roles: ['faculty', 'admin'], fn: function (c, p) { return Attend.resolveSpotCheck(c, p); } },
@@ -76,6 +101,12 @@ var ROUTES = {
   'students.unlink': { roles: ['admin'], fn: function (c, p) { return Users.unlinkStudent(c, p); } },
   'students.import': { roles: ['admin'], maxBytes: 400000, fn: function (c, p) { return Users.importStudents(c, p); } },
   'categories.list': { roles: ['user'], fn: function () { return Assets.listCategories(); } },
+  'catalog.list': { roles: ['user'], fn: function (c, p) { return Assets.catalog(c, p); } },
+  'equipment.request': { roles: ['student'], rl: [20, 300], fn: function (c, p) { return Requests.create(c, p); } },
+  'equipment.mine': { roles: ['student'], fn: function (c) { return Requests.mine(c); } },
+  'equipment.cancel': { roles: ['student'], fn: function (c, p) { return Requests.cancel(c, p); } },
+  'equipment.list': { roles: ['staff', 'admin'], fn: function (c, p) { return Requests.list(c, p); } },
+  'equipment.decide': { roles: ['staff', 'admin'], fn: function (c, p) { return Requests.decide(c, p); } },
   'categories.upsert': { roles: ['staff', 'admin'], fn: function (c, p) { return Assets.upsertCategory(c, p); } },
   'assets.list': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Assets.list(c, p); } },
   'assets.upsert': { roles: ['staff', 'admin'], fn: function (c, p) { return Assets.upsert(c, p); } },
@@ -128,6 +159,8 @@ var ROUTES = {
   'audit.list': { roles: ['admin'], fn: function (c, p) { return Admin.auditList(c, p); } },
   'audit.verify': { roles: ['admin'], rl: [10, 300], fn: function (c) { return Admin.auditVerify(c); } },
   'system.status': { roles: ['admin'], fn: function () { return Admin.systemStatus(); } },
+  'system.quota': { roles: ['admin'], rl: [20, 60], fn: function () { return Admin.quota(); } },
+  'activity.feed': { roles: ['staff', 'admin'], rl: [90, 60], fn: function () { return Dash.activity(); } },
   'system.reconcileInventory': { roles: ['admin'], rl: [10, 300], fn: function (c, p) { return Admin.reconcileInventory(c, p); } },
   'system.reconcileSession': { roles: ['admin'], rl: [10, 300], fn: function (c, p) { return Admin.reconcileSession(c, p); } },
 
@@ -137,10 +170,25 @@ var ROUTES = {
   'reports.pdf': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [5, 300], fn: function (c, p) { return Reports.pdf(c, p); } }
 };
 
-function doGet() {
+function doGet(e) {
   var t = HtmlService.createTemplateFromFile('Index');
+  t.launch = launchJson_(e && e.parameter);
   return t.evaluate().setTitle('LABFLOW').addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+}
+
+/**
+ * The app can be opened from a QR link: ?k=<kiosk code> (Version A: a student scanned the kiosk screen) or
+ * ?s=<student code> (Version B: a teacher / staff / CR phone scanned a student). The values are only passed through
+ * to the page, which sends them back to rpc() for verification; they are character-checked here and embedded as
+ * JSON with "<" escaped, so a crafted link cannot inject markup.
+ */
+function launchJson_(params) {
+  var out = {};
+  params = params || {};
+  if (typeof params.k === 'string' && /^[A-Za-z0-9._-]{10,200}$/.test(params.k)) out.k = params.k;
+  if (typeof params.s === 'string' && /^[A-Za-z0-9._~-]{40,600}$/.test(params.s)) out.s = params.s;
+  return JSON.stringify(out).replace(/</g, '\\u003c');
 }
 
 /** HTML template include. Whitelisted so the client cannot read arbitrary project files through it. */
@@ -169,6 +217,7 @@ function rpc(action, payload) {
     }
     var rl = route.rl || DEFAULT_RL, who = ctx.kiosk ? 'k:' + ctx.kiosk.kioskId : ctx.email;
     if (!Auth.rateLimit(action + '|' + who, rl[0], rl[1])) fail('RATE_LIMITED', 'Too many requests. Please slow down.');
+    Admin.countCall();
     var data = route.fn(ctx, body);
     return { ok: true, data: data === undefined ? null : data, ms: Date.now() - started };
   } catch (e) {
