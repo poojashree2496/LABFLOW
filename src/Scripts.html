@@ -65,7 +65,32 @@ LF.util.debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = 
 /* ------------------------------------------------------------------ API */
 class ApiError extends Error { constructor(code, message, extra) { super(message); this.code = code; this.extra = extra || null; } }
 LF.ApiError = ApiError;
+/* Two transports. The Apps Script page uses google.script.run (identity from the Google session). The hosted app
+   (window.LF_CONFIG from the build) POSTs text/plain JSON to the /exec URL with its LABFLOW session; text/plain keeps it
+   a CORS "simple" request, which Apps Script can serve, and credentials are omitted so Google cookies never ride along. */
+const CFG = window.LF_CONFIG || null;
+LF.hosted = !!(CFG && CFG.apiUrl);
+LF.session = {
+  get: () => { try { return localStorage.getItem('lf-session') || ''; } catch (e) { return ''; } },
+  set: (v) => { try { localStorage.setItem('lf-session', v); } catch (e) { /* ignore */ } },
+  clear: () => { try { localStorage.removeItem('lf-session'); } catch (e) { /* ignore */ } }
+};
+async function fetchCall(action, payload) {
+  let r;
+  try {
+    const res = await fetch(CFG.apiUrl, { method: 'POST', headers: { 'content-type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow',
+      body: JSON.stringify({ action, payload: payload === undefined ? {} : payload, session: LF.session.get() }) });
+    r = await res.json();
+  } catch (e) { throw new ApiError('NETWORK', 'Could not reach the server. Check your connection.'); }
+  if (r && r.ok) return r.data;
+  if (r && r.error) {
+    if (action !== 'auth.google' && (r.error.code === 'SESSION_EXPIRED' || r.error.code === 'NO_IDENTITY')) { LF.session.clear(); if (LF.me) setTimeout(() => signInScreen(r.error.message)); }
+    throw new ApiError(r.error.code, r.error.message, r.error.extra);
+  }
+  throw new ApiError('NETWORK', 'The server returned an unexpected response.');
+}
 function rawCall(action, payload) {
+  if (LF.hosted) return fetchCall(action, payload);
   return new Promise((resolve, reject) => {
     if (!(window.google && google.script && google.script.run)) return reject(new ApiError('NETWORK', 'This page must be opened from the LABFLOW web app link.'));
     google.script.run
@@ -398,7 +423,9 @@ function renderShell() {
   const top = h('header', { class: 'topbar' }, h('div', { class: 'wordmark', 'aria-hidden': 'true' }, 'Labflow'), h('div', { style: { flex: 1 } }),
     roleSel, bell,
     h('button', { class: 'btn btn-ghost', 'aria-label': currentThemeIsDark() ? 'Switch to light theme' : 'Switch to dark theme', onclick: () => { applyTheme(currentThemeIsDark() ? 'light' : 'dark'); renderShell(); } }, icon(currentThemeIsDark() ? 'sun' : 'moon')),
-    h('span', { class: 'hint', style: { maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: me.email }, me.displayName));
+    h('button', { class: 'btn btn-ghost', 'aria-label': 'Account: ' + me.email, title: me.email, onclick: accountMenu, style: { maxWidth: '220px', minWidth: '44px', flex: '0 1 auto', overflow: 'hidden', gap: '8px' } },
+      h('span', { 'aria-hidden': 'true', style: { flex: 'none', width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', fontWeight: 700, background: 'rgb(255 255 255 / .18)' } }, (me.displayName || me.email || '?').trim().charAt(0).toUpperCase()),
+      h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, me.displayName)));
   const brand = h('div', { class: 'side-brand' }, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya CSE laboratories'));
   const mobileNav = list.length > 5 ? list.slice(0, 4).concat([{ id: '__more', label: 'More', icon: 'list' }]) : list;
   const more = () => { const m = modal('Menu', h('div', { style: { display: 'grid', gap: '6px' } }, list.map((v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => { m.close(); LF.go(v.id); } }, icon(v.icon || 'list'), h('span', null, v.label))))); };
@@ -460,7 +487,61 @@ async function consentGate() {
     const m = modal(me.consentRequired ? 'Before you continue' : 'Add your mobile number', body, { sticky: true, onClose: () => resolve() });
   });
 }
+/* ------------------------------------------------------------------ hosted app: Google sign-in, install, sign out */
+function loadGis() {
+  if (window.google && google.accounts && google.accounts.id) return Promise.resolve();
+  return new Promise((resolve, reject) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = resolve; sc.onerror = reject; document.head.appendChild(sc); });
+}
+/* Local dev server only (LF_CONFIG.devSignIn): a Google-shaped token that its fake tokeninfo accepts. Google rejects it. */
+function devIdToken(email) {
+  const b = (o) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return b({ alg: 'none' }) + '.' + b({ iss: 'https://accounts.google.com', aud: CFG.clientId, exp: Math.floor(Date.now() / 1000) + 3600, email, email_verified: true }) + '.google-signed';
+}
+function signInScreen(note) {
+  runCleanups(); LF.me = null;
+  const err = h('div', { class: 'err', role: 'alert', hidden: true }), slot = h('div', { style: { minHeight: '44px' } });
+  const done = async (idToken) => {
+    err.hidden = true;
+    try { const r = await rawCall('auth.google', { idToken }); LF.session.set(r.session); await boot(); }
+    catch (e) { err.textContent = errMsg(e); err.hidden = false; }
+  };
+  if (CFG.devSignIn) {
+    const em = h('input', { class: 'input', type: 'email', 'aria-label': 'Email (dev server)', value: 'student1@karunya.edu' });
+    slot.append(h('form', { style: { display: 'grid', gap: '8px' }, onsubmit: (e) => { e.preventDefault(); done(devIdToken(em.value.trim().toLowerCase())); } }, em, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Sign in (dev server)')));
+  } else {
+    loadGis().then(() => {
+      google.accounts.id.initialize({ client_id: CFG.clientId, callback: (resp) => done(resp.credential), ux_mode: 'popup', itp_support: true, use_fedcm_for_button: true });
+      google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'pill', width: 280 });
+    }).catch(() => { err.textContent = 'Could not load Google sign-in. Check your connection and reload.'; err.hidden = false; });
+  }
+  clear(appRoot()).appendChild(authShell('Sign in', note || 'Use your @karunya.edu or @karunya.edu.in Google account.', h('div', { style: { display: 'grid', gap: '14px' } }, slot, err, installHint())));
+}
+LF.signInScreen = signInScreen;
+function signOut() {
+  LF.session.clear();
+  try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ }
+  signInScreen('You are signed out.');
+}
+LF.signOut = signOut;
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
+const standalone = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+/* "Install app" where the browser offers it (Android Chrome, desktop Chrome/Edge); the Share-menu steps on iPhone. */
+function installHint() {
+  if (!LF.hosted || standalone()) return null;
+  if (installEvt) return h('button', { class: 'btn', onclick: async () => { const e = installEvt; installEvt = null; e.prompt(); try { await e.userChoice; } catch (x) { /* ignore */ } } }, icon('download'), 'Install the LABFLOW app');
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return h('div', { class: 'notice hint' }, 'Install as an app: tap Share, then "Add to Home Screen". Register your device from inside the installed app: it keeps its own storage, separate from Safari.');
+  return null;
+}
+function accountMenu() {
+  const me = LF.me;
+  const m = modal('Account', h('div', { style: { display: 'grid', gap: '10px' } },
+    h('div', null, h('strong', null, me.displayName), h('div', { class: 'hint' }, me.email)), installHint(),
+    LF.hosted ? h('button', { class: 'btn', onclick: () => { m.close(); signOut(); } }, icon('logout'), 'Sign out') : h('div', { class: 'hint' }, 'To switch accounts, use the Google account menu and reload.')));
+}
+
 function blocked(e) {
+  if (LF.hosted && (e.code === 'NO_IDENTITY' || e.code === 'SESSION_EXPIRED')) return signInScreen(e.code === 'SESSION_EXPIRED' ? e.message : '');
   const reasons = {
     NO_IDENTITY: ['We could not see your Google identity', 'This usually means the web app was not opened with your @karunya.edu or @karunya.edu.in account, or the deployment does not share identity with your domain. Switch to your university account and reload. If this keeps happening, the administrator must follow the Authentication section of the README.'],
     DOMAIN_NOT_ALLOWED: ['This account cannot use LABFLOW', e.message],
@@ -468,7 +549,8 @@ function blocked(e) {
     NOT_INITIALISED: ['LABFLOW is not set up yet', e.message]
   };
   const r = reasons[e.code] || ['LABFLOW could not start', e.message];
-  clear(appRoot()).appendChild(authShell(r[0], r[1], h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { class: 'btn btn-primary', onclick: () => location.reload() }, icon('refresh'), 'Reload'))));
+  clear(appRoot()).appendChild(authShell(r[0], r[1], h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { class: 'btn btn-primary', onclick: () => location.reload() }, icon('refresh'), 'Reload'),
+    LF.hosted ? h('button', { class: 'btn', onclick: signOut }, icon('logout'), 'Use another account') : null)));
 }
 
 function onboarding() {
@@ -507,6 +589,7 @@ function onboarding() {
 
 /* ------------------------------------------------------------------ boot */
 async function boot() {
+  if (LF.hosted && !LF.session.get()) return signInScreen();
   let me;
   try { me = await api('me', {}, { retry: true }); } catch (e) { return blocked(e); }
   LF.me = me; LF.setServerNow(me.serverNow);
@@ -528,8 +611,15 @@ async function boot() {
 /* A QR link opened the app: ?k= (student scanned the kiosk screen, Version A) or ?s= (a teacher, staff member or
    class rep scanned a student's QR, Version B). The page only forwards the code; the server decides. Each link is
    handled once, then removed from the address bar. */
+/* The hosted app has no server template, so it reads the link itself, with the same character checks as launchJson_. */
+function launchFromUrl() {
+  const q = new URLSearchParams(location.search), out = {}, k = q.get('k'), s = q.get('s');
+  if (k && /^[A-Za-z0-9._-]{10,200}$/.test(k)) out.k = k;
+  if (s && /^[A-Za-z0-9._~-]{40,600}$/.test(s)) out.s = s;
+  return out;
+}
 function handleLaunch() {
-  const l = window.LF_LAUNCH || {}; window.LF_LAUNCH = {};
+  const l = window.LF_LAUNCH || (LF.hosted ? launchFromUrl() : {}); window.LF_LAUNCH = {};
   try { if (l.k || l.s) history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ }
   if (l.k) {
     if (!LF.me.roles.includes('student')) return toast('That code is for students checking in. Scan it with a student account.', 'bad');
@@ -539,7 +629,9 @@ function handleLaunch() {
 }
 function renderKiosk() { runCleanups(); const root = appRoot(); clear(root); const out = LF.current.render(root); if (typeof out === 'function') LF.onLeave(out); }
 LF.boot = boot;
-LF.start = () => { boot().catch((e) => { console.error(e); blocked(new ApiError('INTERNAL', 'LABFLOW failed to start. Reload the page.')); }); };
+LF.start = () => {
+  if (LF.hosted && /[?&]signout\b/.test(location.search)) { LF.session.clear(); try { history.replaceState(null, '', location.pathname); } catch (e) { /* ignore */ } }
+  boot().catch((e) => { console.error(e); blocked(new ApiError('INTERNAL', 'LABFLOW failed to start. Reload the page.')); }); };
 window.addEventListener('hashchange', () => { const hs = readHash(); if (hs && LF.me && hs.role === LF.role && (!LF.current || hs.id !== LF.current.id)) LF.go(hs.id, hs.role); });
 document.addEventListener('visibilitychange', () => { /* timers skip while hidden; nothing else needed */ });
 LF.on = { roleChange: (r) => { try { sessionStorage.setItem('lf-role', r); } catch (e) { /* ignore */ } } };

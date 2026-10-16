@@ -2,7 +2,8 @@
  * Code.gs - web app entry point and the single RPC gateway.
  *
  * Every browser call goes through rpc(action, payload). Authorisation is decided HERE and again inside the handlers:
- *  1. identity comes from Session.getActiveUser() only (Auth.resolve) - never from the payload;
+ *  1. identity comes from a verified LABFLOW session (hosted app, doPost) or Session.getActiveUser() (Apps Script
+ *     page), resolved by Auth.resolve - never from the payload;
  *  2. the ROUTES table lists the roles allowed for each action; anything not listed does not exist;
  *  3. handlers re-check ownership (a faculty member's own session, a student's own record, a group's membership).
  * Hiding a button in the UI is cosmetic; this table is the control.
@@ -170,12 +171,44 @@ var ROUTES = {
   'reports.pdf': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [5, 300], fn: function (c, p) { return Reports.pdf(c, p); } }
 };
 
+/**
+ * The Apps Script page is served only to a visitor Google identifies (same Workspace domain as the owner, or the
+ * owner). Everyone else gets a short JSON pointer to the hosted app: on an "Anyone" deployment an HTML page here
+ * would expose google.script.run to anonymous visitors.
+ */
 function doGet(e) {
+  if (!Auth.rawEmail()) return json_({ ok: true, data: { app: 'LABFLOW', open: Setup.webAppUrl(), api: 'POST {action, payload, session} as text/plain' } });
   var t = HtmlService.createTemplateFromFile('Index');
   t.launch = launchJson_(e && e.parameter);
   return t.evaluate().setTitle('LABFLOW').addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
+
+/**
+ * JSON API for the hosted app. The browser POSTs text/plain (a "simple" request, so no CORS preflight, which Apps
+ * Script cannot answer) with body {action, payload, session}. Identity comes ONLY from the session: a call without
+ * one is refused even if the browser happens to carry Google cookies for the owner (no cross-site request forgery).
+ * 'auth.google' is the one action that runs without a session; it exchanges a Google ID token for one.
+ */
+function doPost(e) {
+  var body = null;
+  try { body = JSON.parse(e && e.postData && e.postData.contents || ''); } catch (x) { body = null; }
+  if (!body || typeof body !== 'object' || typeof body.action !== 'string') return json_({ ok: false, error: { code: 'BAD_INPUT', message: 'Invalid request.' } });
+  if (body.action === 'auth.google') return json_(signIn_(body.payload));
+  return json_(rpc(body.action, body.payload, typeof body.session === 'string' ? body.session : '', true));
+}
+
+function signIn_(payload) {
+  try { return { ok: true, data: Auth.signIn(payload || {}) }; }
+  catch (e) {
+    if (e instanceof AppError) return { ok: false, error: { code: e.code, message: e.message, extra: e.extra || null } };
+    var ref = 'E' + Utilities.getUuid().slice(0, 8).toUpperCase();
+    try { Syslog.error('auth', 'UNEXPECTED', String(e && e.message), { ref: ref }); } catch (x) { console.error(ref + ' ' + e); }
+    return { ok: false, error: { code: 'INTERNAL', message: 'Something went wrong. Reference ' + ref + '.', ref: ref } };
+  }
+}
+
+function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 /**
  * The app can be opened from a QR link: ?k=<kiosk code> (Version A: a student scanned the kiosk screen) or
@@ -201,7 +234,7 @@ function include(name) {
  * The only client-callable gateway. Always returns { ok:true, data } or { ok:false, error:{ code, message, extra, ref } }
  * (never throws), so the UI can show a precise message and never sees a stack trace.
  */
-function rpc(action, payload) {
+function rpc(action, payload, session, apiCall) {
   var started = Date.now();
   try {
     var route = (typeof action === 'string' && Object.prototype.hasOwnProperty.call(ROUTES, action)) ? ROUTES[action] : null;
@@ -209,7 +242,7 @@ function rpc(action, payload) {
     var body = payload === undefined || payload === null ? {} : payload;
     var size = 0; try { size = JSON.stringify(body).length; } catch (e) { fail('BAD_INPUT', 'Invalid request.'); }
     if (size > (route.maxBytes || 100000)) fail('TOO_LARGE', 'The request is too large.');
-    var ctx = Auth.resolve();
+    var ctx = Auth.resolve(session, apiCall === true);
     var allowed = route.roles.some(function (r) { return r === 'any' || (r === 'user' && !!ctx.user) || ctx.has(r); });
     if (!allowed) {
       if (Auth.rateLimit('deny|' + ctx.email, 5, 60)) Audit.tryLog({ actor: ctx.email, role: ctx.roles.join(','), action: 'rpc.denied', entityType: 'Action', entityId: action, result: 'denied', detail: { roles: ctx.roles } });
@@ -239,3 +272,5 @@ function setupInitialise() { ownerOnly_(); return Setup.initialise({}); }
 function setupSelfTest() { ownerOnly_(); return Setup.selfTest(); }
 function setupInstallTriggers() { ownerOnly_(); return Triggers.install(); }
 function setupBootstrapAdmin(email) { ownerOnly_(); return Setup.setBootstrapAdmin(email); }
+function setupGoogleSignIn(clientId) { ownerOnly_(); return Setup.setGoogleSignIn(clientId); }
+function setupAppUrl(url) { ownerOnly_(); return Setup.setAppUrl(url); }

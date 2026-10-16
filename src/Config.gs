@@ -163,7 +163,7 @@ var Cfg = (function () {
     /** Script-property keys (secrets and deployment configuration; never stored in a sheet). */
     PROP: { DB_ID: 'DB_SPREADSHEET_ID', HMAC: 'QR_HMAC_SECRET', BOOTSTRAP_ADMIN: 'BOOTSTRAP_ADMIN_EMAIL', DOMAINS: 'ALLOWED_DOMAINS',
             AUDIT_HEAD: 'AUDIT_HEAD', PHOTO_FOLDER: 'PHOTO_FOLDER_ID', REPORT_FOLDER: 'REPORT_FOLDER_ID', EMAIL_TRANSPORT: 'EMAIL_TRANSPORT',
-            WEBAPP_URL: 'WEBAPP_URL' }
+            WEBAPP_URL: 'WEBAPP_URL', SESSION: 'SESSION_SECRET', GOOGLE_CLIENT_ID: 'GOOGLE_CLIENT_ID' }
   };
 })();
 

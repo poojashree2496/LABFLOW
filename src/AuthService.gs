@@ -4,10 +4,13 @@
  * Identity comes ONLY from Session.getActiveUser().getEmail() on the server. Nothing the browser sends
  * (email, role, roll number, student id) is ever used to decide who the caller is.
  *
- * PLATFORM CAVEAT (verified against Google's documentation, see README "Authentication"): for a web app that
- * executes as its owner, getActiveUser().getEmail() returns "" unless the visitor is in the owner's Google
- * Workspace domain. If Karunya's two domains are separate Workspace organisations, visitors from the other one
- * will be refused with NO_IDENTITY. There is deliberately no fallback that trusts a client-supplied identity.
+ * Two ways in, both decided on the server:
+ *  - the hosted app (doPost): "Sign in with Google" gives the browser an ID token; signIn() checks it with Google
+ *    (tokeninfo), then issues a LABFLOW session signed with SESSION_SECRET. Every later call carries that session,
+ *    and resolve() trusts nothing else on this path - not even Session.getActiveUser().
+ *  - the Apps Script page (google.script.run): Session.getActiveUser(). For a web app that executes as its owner
+ *    this is "" unless the visitor is in the owner's Workspace domain (see docs/deployment.md).
+ * There is deliberately no fallback that trusts a client-supplied email.
  */
 var Auth = {
   allowedDomains: function () {
@@ -26,8 +29,8 @@ var Auth = {
    * user === null means "authenticated Google account from an allowed domain with no LABFLOW account yet"; such a
    * caller may only use the onboarding actions.
    */
-  resolve: function () {
-    var email = Auth.rawEmail();
+  resolve: function (session, apiCall) {
+    var email = apiCall || session ? Auth.sessionEmail(session) : Auth.rawEmail();
     if (!email) {
       fail('NO_IDENTITY', 'Google did not share your identity with this app. Sign in with your @karunya.edu or @karunya.edu.in account. ' +
         'If you are signed in, the administrator must check that the web app is deployed for your domain (see README, Authentication).');
@@ -106,6 +109,79 @@ var Auth = {
     if (Events.isCoordinator(ctx, session)) return 'coordinator';
     if (ctx.student && ClassReps.isRepFor(ctx.student.studentId, session)) return 'cr';
     return ctx.roles[0] || 'user';
+  },
+
+  SESSION_DAYS: 30,
+  TOKENINFO_URL: 'https://oauth2.googleapis.com/tokeninfo?id_token=',
+
+  _sessionSecret: function () {
+    var props = PropertiesService.getScriptProperties(), s = props.getProperty(Cfg.PROP.SESSION);
+    if (s) return s;
+    return Locks.with(function () {
+      var again = props.getProperty(Cfg.PROP.SESSION);
+      if (again) return again;
+      var fresh = Setup._newSecret();
+      props.setProperty(Cfg.PROP.SESSION, fresh);
+      return fresh;
+    });
+  },
+
+  /** A session is "<b64u(JSON {e, x})>.<HMAC>". Returns the email, or fails with SESSION_EXPIRED / NO_IDENTITY. */
+  sessionEmail: function (token) {
+    if (typeof token !== 'string' || !token) fail('NO_IDENTITY', 'Please sign in.');
+    var parts = token.split('.');
+    if (parts.length !== 2 || parts[0].length > 400 || !U.safeEq(U.hmacB64u(Auth._sessionSecret(), parts[0]), parts[1])) fail('NO_IDENTITY', 'Your sign-in is not valid. Please sign in again.');
+    var claims = null;
+    try { claims = JSON.parse(Auth._ascii(U.b64uDecode(parts[0]))); } catch (e) { fail('NO_IDENTITY', 'Your sign-in is not valid. Please sign in again.'); }
+    if (!claims || typeof claims.e !== 'string' || typeof claims.x !== 'number') fail('NO_IDENTITY', 'Your sign-in is not valid. Please sign in again.');
+    if (claims.x <= U.now()) fail('SESSION_EXPIRED', 'Your sign-in has expired. Please sign in again.');
+    return claims.e.toLowerCase();
+  },
+
+  _issueSession: function (email) {
+    var exp = U.now() + Auth.SESSION_DAYS * 86400000;
+    var body = U.b64uEncode(JSON.stringify({ e: email, x: exp }));
+    return { session: body + '.' + U.hmacB64u(Auth._sessionSecret(), body), email: email, expiresAt: exp };
+  },
+
+  _ascii: function (bytes) { var s = ''; for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return s; },
+
+  /**
+   * Exchange a Google ID token for a LABFLOW session. The claims are pre-checked locally (shape, audience, issuer,
+   * expiry) so junk never costs a UrlFetch; then Google's tokeninfo endpoint verifies the signature and we check the
+   * claims it returns, which are the only ones trusted.
+   */
+  signIn: function (p) {
+    var clientId = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.GOOGLE_CLIENT_ID);
+    if (!clientId) fail('NOT_CONFIGURED', 'Google sign-in is not set up on the server yet (run setupGoogleSignIn).');
+    var idToken = p && p.idToken;
+    if (typeof idToken !== 'string' || idToken.length > 4096 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(idToken)) fail('BAD_INPUT', 'Sign-in failed. Please try again.');
+    var pre = null;
+    try { pre = JSON.parse(Auth._ascii(U.b64uDecode(idToken.split('.')[1]))); } catch (e) { pre = null; }
+    if (!Auth._claimsOk(pre, clientId)) fail('BAD_INPUT', 'Sign-in failed. Please try again.');
+    if (!Auth.rateLimit('signin|all', 120, 60)) fail('RATE_LIMITED', 'Too many sign-ins right now. Try again in a minute.');
+    var res = UrlFetchApp.fetch(Auth.TOKENINFO_URL + encodeURIComponent(idToken), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) fail('NO_IDENTITY', 'Google could not confirm this sign-in. Please try again.');
+    var claims = null;
+    try { claims = JSON.parse(res.getContentText()); } catch (e) { claims = null; }
+    if (!Auth._claimsOk(claims, clientId)) fail('NO_IDENTITY', 'Google could not confirm this sign-in. Please try again.');
+    if (String(claims.email_verified) !== 'true') fail('NO_IDENTITY', 'Your Google account email is not verified.');
+    var email = String(claims.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) fail('NO_IDENTITY', 'Google did not share an email address.');
+    if (Auth.allowedDomains().indexOf(email.split('@')[1]) < 0) {
+      fail('DOMAIN_NOT_ALLOWED', 'Only ' + Auth.allowedDomains().map(function (d) { return '@' + d; }).join(' and ') + ' accounts can use LABFLOW.');
+    }
+    if (!Auth.rateLimit('signin|' + email, 20, 600)) fail('RATE_LIMITED', 'Too many sign-ins. Try again in a few minutes.');
+    Audit.tryLog({ actor: email, role: 'user', action: 'auth.signin', entityType: 'Session', entityId: email, result: 'ok', detail: { via: 'google' } });
+    return Auth._issueSession(email);
+  },
+
+  _claimsOk: function (c, clientId) {
+    if (!c || typeof c !== 'object') return false;
+    if (c.aud !== clientId) return false;
+    if (c.iss !== 'accounts.google.com' && c.iss !== 'https://accounts.google.com') return false;
+    var exp = Number(c.exp);
+    return isFinite(exp) && exp * 1000 > U.now();
   },
 
   /** Simple fixed-window rate limiter on CacheService (approximate under concurrency; see SECURITY.md). */

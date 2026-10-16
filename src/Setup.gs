@@ -146,6 +146,8 @@ var Setup = {
     check('LockService acquire/release', function () { var t = Date.now(); Locks.with(function () {}); return (Date.now() - t) + ' ms'; });
     check('CacheService round-trip', function () { var c = CacheService.getScriptCache(); c.put('st', 'x', 10); if (c.get('st') !== 'x') throw new Error('cache miss'); });
     check('QR secret present', function () { if (!PropertiesService.getScriptProperties().getProperty(Cfg.PROP.HMAC)) throw new Error('missing - run Setup.initialise()'); });
+    check('Google sign-in client ID', function () { var id = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.GOOGLE_CLIENT_ID); return id || 'NOT SET - the hosted app cannot sign anyone in until you run setupGoogleSignIn(clientId)'; });
+    check('App URL for links and QR codes', function () { return Setup.webAppUrl() || '(none)'; });
     check('Mail quota available', function () { return MailApp.getRemainingDailyQuota() + ' messages left today'; });
     check('Allowed domains', function () { return Auth.allowedDomains().join(', '); });
     check('Triggers installed', function () { return Triggers.status().summary; });
@@ -159,7 +161,42 @@ var Setup = {
     return r;
   },
 
-  /** The deployed /exec URL. A script property can pin it (the local dev server sets one). */
+  /** The OAuth Web client ID that "Sign in with Google" tokens must be issued for (aud). It is public, not a secret. */
+  setGoogleSignIn: function (clientId) {
+    clientId = String(clientId || '').trim();
+    if (!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId)) throw new Error('Expected a client ID like 1234-abcd.apps.googleusercontent.com');
+    PropertiesService.getScriptProperties().setProperty(Cfg.PROP.GOOGLE_CLIENT_ID, clientId);
+    Audit.tryLog({ actor: 'script-owner', role: 'owner', action: 'config.googleSignIn', entityType: 'Setting', entityId: 'GOOGLE_CLIENT_ID', result: 'ok', detail: { clientId: clientId } });
+    return 'Google sign-in accepts tokens for ' + clientId;
+  },
+
+  /** The hosted app's address. QR codes and links in emails point here instead of the /exec URL. */
+  setAppUrl: function (url) {
+    url = String(url || '').trim();
+    if (!/^https:\/\/[a-z0-9.-]+(:[0-9]+)?\/?$/i.test(url)) throw new Error('Expected an https origin like https://labflow.vercel.app/');
+    if (url.slice(-1) !== '/') url += '/';
+    PropertiesService.getScriptProperties().setProperty(Cfg.PROP.WEBAPP_URL, url);
+    Audit.tryLog({ actor: 'script-owner', role: 'owner', action: 'config.appUrl', entityType: 'Setting', entityId: 'WEBAPP_URL', result: 'ok', detail: { url: url } });
+    return 'Links and QR codes now open ' + url;
+  },
+
+  /** Which Google account domains may sign in (script property ALLOWED_DOMAINS; default karunya.edu, karunya.edu.in). */
+  setAllowedDomains: function (list) {
+    var domains = (Array.isArray(list) ? list : String(list || '').split(',')).map(function (d) { return String(d).trim().toLowerCase().replace(/^@/, ''); }).filter(Boolean);
+    if (!domains.length || domains.some(function (d) { return !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d); })) throw new Error('Expected domains like karunya.edu, karunya.edu.in');
+    PropertiesService.getScriptProperties().setProperty(Cfg.PROP.DOMAINS, U.uniq(domains).join(','));
+    Audit.tryLog({ actor: 'script-owner', role: 'owner', action: 'config.domains', entityType: 'Setting', entityId: 'ALLOWED_DOMAINS', result: 'ok', detail: { domains: domains } });
+    return 'Allowed domains: ' + U.uniq(domains).join(', ');
+  },
+
+  /** Sign everyone out of the hosted app (new session secret). */
+  rotateSessions: function () {
+    PropertiesService.getScriptProperties().setProperty(Cfg.PROP.SESSION, Setup._newSecret());
+    Audit.tryLog({ actor: 'script-owner', role: 'owner', action: 'secret.rotate', entityType: 'SESSION_SECRET', result: 'ok' });
+    return 'All hosted-app sessions are now invalid.';
+  },
+
+  /** The app URL used in QR codes and emails: the hosted app if set (setupAppUrl), else the /exec URL. */
   webAppUrl: function () {
     var pinned = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.WEBAPP_URL);
     if (pinned) return pinned;

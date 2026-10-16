@@ -4,6 +4,7 @@
  *
  *   npm run dev            http://localhost:8787/lab   (Test Lab)
  *                          http://localhost:8787/?as=student1@karunya.edu   (the app as any seeded account)
+ *                          http://localhost:8787/app   (the hosted-app build: sign-in screen, fetch transport, doPost)
  *
  * The app pages are the real src/Index.html + Scripts*.html with a mock google.script.run that calls the real server
  * code (src/*.gs) running on in-memory Apps Script fakes. `?as=` picks the identity here only; production has no such
@@ -16,15 +17,13 @@ const fs = require('fs');
 const path = require('path');
 const { createLab, describePipelines, runJob, PRESETS } = require('./world');
 const scenarios = require('./scenarios');
+const { render, page: hostedPage } = require('../scripts/build-web');
 
-const SRC = path.join(__dirname, '..', 'src');
 const LAB_DIR = path.join(__dirname, 'lab');
 const ID_OK = /^[a-z0-9._%+'-]+@karunya\.edu(\.in)?$/;
 
-function render(file) {
-  const read = (n) => fs.readFileSync(path.join(SRC, n + '.html'), 'utf8');
-  return read(file).replace(/<\?!= include\('([A-Za-z_]+)'\) \?>/g, (_, n) => read(n));
-}
+const WEB_DIR = path.join(__dirname, '..', 'web');
+const DEV_CLIENT_ID = '000000000000-labflowdev.apps.googleusercontent.com';
 /** Same filtering as launchJson_ in Code.gs: only well-formed codes reach the page. */
 function launchJson(q) {
   const out = {};
@@ -35,14 +34,14 @@ function launchJson(q) {
 }
 
 /** Injected into app pages served here: the google.script.run mock and the Test Lab hooks. */
-function devScript(as) {
+function devScript(as, hosted) {
   return `<script>
 (function () {
-  var as = ${JSON.stringify(as)};
+  var as = ${JSON.stringify(as)}, hosted = ${hosted ? 'true' : 'false'};
   function chain(ok, bad) { return { withSuccessHandler: function (f) { return chain(f, bad); }, withFailureHandler: function (f) { return chain(ok, f); },
     rpc: function (action, payload) { fetch('/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ as: as, action: action, payload: payload }) })
       .then(function (r) { return r.json(); }).then(function (r) { if (ok) ok(r); }).catch(function (e) { if (bad) bad(e); }); } }; }
-  window.google = { script: { run: chain(null, null) } };
+  if (!hosted) window.google = { script: { run: chain(null, null) } };
   window.LF_DEV = { as: as };
   // Simulated location: the Test Lab decides where this "phone" is (inside, outside, spoofed accuracy, denied, or real GPS).
   var realGeo = navigator.geolocation;
@@ -80,6 +79,7 @@ function devScript(as) {
 }
 
 function send(res, code, body, type) { res.writeHead(code, { 'content-type': type || 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); }
+function readRaw(req) { return new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; if (b.length > 2e6) req.destroy(); }); req.on('end', () => resolve(b)); }); }
 function readBody(req) { return new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; if (b.length > 2e6) req.destroy(); }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch (e) { resolve({}); } }); }); }
 const STATIC = { '/lab': 'index.html', '/lab/': 'index.html', '/lab/lab.js': 'lab.js', '/lab/lab.css': 'lab.css' };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
@@ -100,6 +100,24 @@ function start(port, opts) {
         if (!ID_OK.test(as)) return send(res, 400, 'Bad ?as identity', 'text/plain');
         const html = render('Index').replace('<?!= launch ?>', launchJson(url.searchParams)).replace('<body>', '<body>' + devScript(as));
         return send(res, 200, html, 'text/html; charset=utf-8');
+      }
+      // The hosted app: the build's page with the dev sign-in, talking to the real doPost exactly as it would to /exec.
+      if (req.method === 'GET' && p === '/app') {
+        const html = hostedPage({ apiUrl: '/exec', clientId: DEV_CLIENT_ID, devSignIn: true }, { sw: false }).replace('<body>', '<body>' + devScript('hosted', true));
+        return send(res, 200, html, 'text/html; charset=utf-8');
+      }
+      if (req.method === 'POST' && p === '/exec') {
+        const raw = await readRaw(req);
+        lab.sync();
+        const e = lab.w.e;
+        e.state.activeUser = '';
+        e.run("PropertiesService.getScriptProperties().setProperty('GOOGLE_CLIENT_ID', " + JSON.stringify(DEV_CLIENT_ID) + ')');
+        return send(res, 200, e.run('doPost({ postData: { contents: ' + JSON.stringify(raw) + ' } }).getContent()'));
+      }
+      if (req.method === 'GET' && (p === '/manifest.webmanifest' || p === '/sw.js' || /^\/icons\/[a-z0-9-]+\.(png|svg)$/.test(p))) {
+        const f = path.join(WEB_DIR, p);
+        const type = { '.webmanifest': 'application/manifest+json', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml' }[path.extname(f)];
+        return send(res, 200, fs.readFileSync(f), type);
       }
       if (req.method === 'POST' && p === '/rpc') {
         const j = await readBody(req);

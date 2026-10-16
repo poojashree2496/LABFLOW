@@ -165,6 +165,26 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     await L.goto(base + '/lab#scenarios'); await L.waitForSelector('text=Attack: screenshot of a QR sent to a friend');
     await L.locator('.result', { hasText: 'Attack: screenshot of a QR sent to a friend' }).getByRole('button', { name: 'Run' }).click();
     await L.waitForSelector('.result.ok'); check('a scenario runs from the Test Lab', true);
+
+    // ---------------- the hosted app (what Vercel serves): sign-in, a LABFLOW session, fetch to doPost, QR links, sign-out
+    const hctx = await browser.newContext(mobile), H = await hctx.newPage();
+    H.on('pageerror', (e) => errors.push('hosted pageerror: ' + e.message));
+    await H.goto(base + '/app'); await H.waitForSelector('text=Sign in (dev server)'); await shot(H, '21-hosted-sign-in');
+    check('hosted app opens at the sign-in screen', await H.locator('text=Today\'s lab sessions').count() === 0);
+    await H.getByLabel('Email (dev server)').fill('student3@karunya.edu'); await H.getByRole('button', { name: 'Sign in (dev server)' }).click();
+    await H.waitForSelector('text=Today\'s lab sessions'); await shot(H, '22-hosted-student-home');
+    check('hosted app signs in through doPost and keeps a LABFLOW session', await H.evaluate(() => /\./.test(localStorage.getItem('lf-session') || '')));
+    const hDenied = await H.evaluate(async () => { try { await LF.api('users.list'); return 'allowed'; } catch (e) { return e.code; } });
+    check('hosted app: a student calling an admin action is denied by the server', hDenied === 'FORBIDDEN', hDenied);
+    const bare = await H.evaluate(async () => (await (await fetch('/exec', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ action: 'me', payload: {} }) })).json()).error.code);
+    check('hosted API refuses a call without a session', bare === 'NO_IDENTITY', bare);
+    await H.goto(base + '/app?k=' + encodeURIComponent(kioskCode('kiosk1@karunya.edu')));
+    await H.waitForSelector('.modal >> text=Time left');
+    check('hosted app: a kiosk QR link opens the check-in pass and leaves the address bar', !/[?&]k=/.test(H.url()), H.url());
+    await H.keyboard.press('Escape');
+    await H.getByRole('button', { name: /^Account:/ }).click(); await H.getByRole('button', { name: 'Sign out' }).click();
+    await H.waitForSelector('text=You are signed out.');
+    check('hosted app signs out and forgets the session', await H.evaluate(() => !localStorage.getItem('lf-session')));
   } catch (e) {
     check('e2e flow completed without exception', false, e.message.split('\n')[0]);
     console.error(e);

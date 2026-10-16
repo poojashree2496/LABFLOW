@@ -86,7 +86,7 @@ function createEnv(opts = {}) {
   const clock = () => (typeof ctxRef.ctx.__testNow === 'number' ? ctxRef.ctx.__testNow : Date.now());
   const ctxRef = {};
   const folders = {}, trashed = [], docs = [], triggers = [];
-  const state = { activeUser: opts.activeUser === undefined ? '' : opts.activeUser, lockHeld: false, lockTimeouts: 0, mailQuota: 1500 };
+  const state = { activeUser: opts.activeUser === undefined ? '' : opts.activeUser, lockHeld: false, lockTimeouts: 0, mailQuota: 1500, fetches: [] };
 
   const env = {
     console,
@@ -135,6 +135,20 @@ function createEnv(opts = {}) {
     },
     MailApp: { getRemainingDailyQuota: () => state.mailQuota, sendEmail: (o) => { sentMail.push({ to: o.to, subject: o.subject, body: o.body, via: 'mail' }); state.mailQuota--; } },
     MimeType: { CSV: 'text/csv' },
+    // Google's tokeninfo endpoint, faked: an ID token is "<header>.<b64u claims>.<sig>" and only sig "google-signed"
+    // verifies (a real token's signature is checked by Google). Expired tokens are refused, as Google does.
+    UrlFetchApp: { fetch: (url, o) => {
+      state.fetches.push(url);
+      const m = /^https:\/\/oauth2\.googleapis\.com\/tokeninfo\?id_token=(.+)$/.exec(url);
+      if (!m) throw new Error('UrlFetchApp: unexpected URL ' + url);
+      const parts = decodeURIComponent(m[1]).split('.');
+      let claims = null; try { claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')); } catch (e) { claims = null; }
+      const ok = parts[2] === 'google-signed' && claims && Number(claims.exp) * 1000 > clock();
+      const body = ok ? JSON.stringify(Object.fromEntries(Object.entries(claims).map(([k, v]) => [k, String(v)]))) : '{"error":"invalid_token"}';
+      if (!ok && !(o && o.muteHttpExceptions)) throw new Error('Request failed with code 400');
+      return { getResponseCode: () => (ok ? 200 : 400), getContentText: () => body };
+    } },
+    ContentService: { MimeType: { JSON: 'JSON' }, createTextOutput: (t) => { const o = { text: t, getContent: () => t, setMimeType: (m) => { o.mime = m; return o; } }; return o; } },
     HtmlService: { XFrameOptionsMode: { DEFAULT: 'DEFAULT' }, createHtmlOutputFromFile: (n) => ({ getContent: () => '<!-- ' + n + ' -->' }),
       createTemplateFromFile: (n) => ({ evaluate: () => { const o = { setTitle: () => o, addMetaTag: () => o, setXFrameOptionsMode: () => o, template: n }; return o; } }) },
     DriveApp: {
