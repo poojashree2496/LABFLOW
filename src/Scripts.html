@@ -33,6 +33,9 @@ function append(el, kids) {
   return el;
 }
 function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+/* Views pass optional children (cond ? node : null) to Element.append, which would print "null" as text. Skip them. */
+const nativeAppend = Element.prototype.append;
+Element.prototype.append = function (...kids) { return nativeAppend.apply(this, kids.filter((k) => k !== null && k !== undefined && k !== false)); };
 function icon(name, cls) {
   const s = document.createElementNS(SVGNS, 'svg'); s.setAttribute('class', 'icon' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true');
   const u = document.createElementNS(SVGNS, 'use'); u.setAttribute('href', '#i-' + name); s.appendChild(u); return s;
@@ -308,7 +311,7 @@ LF.ui.barChart = barChart;
 LF.util.download = (name, content, mime, isBase64) => {
   let blob;
   if (isBase64) { const bin = atob(content), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); blob = new Blob([a], { type: mime }); }
-  else blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8' });
+  else blob = new Blob(['﻿' + String(content).replace(/^﻿/, '')], { type: mime + ';charset=utf-8' });
   const url = URL.createObjectURL(blob), a = h('a', { href: url, download: name }); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
 };
 LF.util.parseCsv = (text) => {
@@ -365,8 +368,10 @@ function currentThemeIsDark() { const t = document.documentElement.getAttribute(
 try { const t = localStorage.getItem('lf-theme'); if (t) applyTheme(t); } catch (e) { /* ignore */ }
 
 /* ------------------------------------------------------------------ routing & shell */
-/** Views register themselves: LF.register({ role, id, label, icon, render(root) -> optional cleanup }). */
+/** Views register themselves: LF.register({ role, id, label, icon, when?(me), render(root) -> optional cleanup }).
+    `when` hides a view unless it applies to this account (for example the class representative page). */
 LF.register = (v) => { (LF.routes[v.role] = LF.routes[v.role] || []).push(v); };
+const visible = (role) => (LF.routes[role] || []).filter((v) => !v.when || v.when(LF.me));
 const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', kiosk: 'Kiosk' };
 const ROLE_ORDER = ['admin', 'staff', 'faculty', 'student'];
 
@@ -376,7 +381,7 @@ function readHash() { const m = /^#\/([a-z]+)\/([\w-]+)/.exec(location.hash || '
 
 LF.go = (id, role) => {
   role = role || LF.role;
-  const list = LF.routes[role] || [], v = list.find((x) => x.id === id) || list[0];
+  const list = visible(role), v = list.find((x) => x.id === id) || list[0];
   if (!v) return;
   LF.role = role; LF.current = v; setHash(role, v.id); renderShell();
 };
@@ -385,16 +390,20 @@ let unreadCount = 0;
 function renderShell() {
   runCleanups();
   const me = LF.me, roles = ROLE_ORDER.filter((r) => me.roles.includes(r));
-  const list = LF.routes[LF.role] || [];
+  const list = visible(LF.role);
   const navBtn = (v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => LF.go(v.id) }, icon(v.icon || 'list'), h('span', null, v.label));
   const main = h('main', { id: 'main', class: 'main', tabindex: '-1' });
-  const bell = h('button', { class: 'btn btn-ghost', 'aria-label': 'Notifications', onclick: openNotifications }, icon('bell'), h('span', { id: 'unread', class: 'badge lime', hidden: unreadCount === 0 }, String(unreadCount)));
+  const bell = h('button', { class: 'btn btn-ghost', 'aria-label': 'Notifications', onclick: openNotifications }, icon('bell'), h('span', { id: 'unread', class: 'badge gold', hidden: unreadCount === 0 }, String(unreadCount)));
   const roleSel = roles.length > 1 ? h('select', { class: 'input', 'aria-label': 'Switch role', style: { width: 'auto', minHeight: '36px' }, onchange: (e) => LF.go(undefined, e.target.value) }, roles.map((r) => h('option', { value: r, selected: r === LF.role }, ROLE_LABEL[r]))) : badge(ROLE_LABEL[LF.role]);
-  const top = h('header', { class: 'topbar' }, h('div', { class: 't-display', style: { fontSize: '26px' }, 'aria-label': 'LABFLOW' }, 'Labflow'), h('div', { style: { flex: 1 } }),
+  const top = h('header', { class: 'topbar' }, h('div', { class: 'wordmark', 'aria-hidden': 'true' }, 'Labflow'), h('div', { style: { flex: 1 } }),
     roleSel, bell,
     h('button', { class: 'btn btn-ghost', 'aria-label': currentThemeIsDark() ? 'Switch to light theme' : 'Switch to dark theme', onclick: () => { applyTheme(currentThemeIsDark() ? 'light' : 'dark'); renderShell(); } }, icon(currentThemeIsDark() ? 'sun' : 'moon')),
     h('span', { class: 'hint', style: { maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: me.email }, me.displayName));
-  const shell = h('div', { class: 'shell' }, h('nav', { class: 'sidebar', 'aria-label': 'Main' }, list.map(navBtn)), h('div', null, top, main), h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, list.slice(0, 5).map(navBtn)));
+  const brand = h('div', { class: 'side-brand' }, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya CSE laboratories'));
+  const mobileNav = list.length > 5 ? list.slice(0, 4).concat([{ id: '__more', label: 'More', icon: 'list' }]) : list;
+  const more = () => { const m = modal('Menu', h('div', { style: { display: 'grid', gap: '6px' } }, list.map((v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => { m.close(); LF.go(v.id); } }, icon(v.icon || 'list'), h('span', null, v.label))))); };
+  const shell = h('div', { class: 'shell' }, h('nav', { class: 'sidebar', 'aria-label': 'Main' }, brand, list.map(navBtn)), h('div', null, top, main),
+    h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, mobileNav.map((v) => v.id === '__more' ? h('button', { class: 'nav-item', onclick: more }, icon('list'), h('span', null, 'More')) : navBtn(v))));
   clear(appRoot()).appendChild(shell);
   if (roleSel.tagName === 'SELECT') roleSel.addEventListener('change', () => {}, { once: true });
   const cleanup = LF.current.render(main);
@@ -419,8 +428,37 @@ async function openNotifications() {
 /* ------------------------------------------------------------------ gate screens */
 function authShell(title, lead, content) {
   return h('div', { class: 'auth-wrap' },
-    h('section', { class: 'auth-art' }, h('div', { class: 't-display' }, 'Labflow'), h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('p', null, 'Attendance, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint', style: { color: 'inherit' } }, 'Sign in with your university Google account.')),
-    h('main', { id: 'main', style: { padding: '32px 20px', display: 'grid', alignContent: 'center', maxWidth: '520px', width: '100%', margin: '0 auto', gap: '12px' } }, h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
+    h('section', { class: 'auth-art' }, h('div', null, h('div', { class: 'wordmark', style: { fontSize: '34px' } }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya Institute of Technology and Sciences · CSE')),
+      h('div', null, h('h1', { class: 't-h1', style: { color: 'inherit' } }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' }, 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
+    h('main', { id: 'main', style: { padding: '32px 20px', display: 'grid', alignContent: 'center', maxWidth: '540px', width: '100%', margin: '0 auto', gap: '12px' } }, h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
+}
+
+/* ------------------------------------------------------------------ privacy notice (DPDP Act, SRS section 13) */
+const PRIVACY = [
+  ['What we collect', 'Your university email, name, roll number or employee code, mobile number, an optional reference photo, and the time and place (which lab) of each check-in.'],
+  ['Location', 'When you check in by scanning the lab screen, your phone sends its location once. LABFLOW works out the distance to the lab and keeps only the result (inside or outside, the distance and the reported accuracy). Your coordinates are never stored.'],
+  ['Device key', 'If your lab uses device QR codes, your phone creates a signing key. Only its public half is stored. It identifies your phone, not you, and you can revoke it at any time.'],
+  ['Why', 'To record lab attendance and hours, manage borrowed equipment, and detect proxy attendance. Data stays in the university\'s Google Workspace and is visible only to the staff who need it.'],
+  ['Your choices', 'You can see your own records under History. Ask the lab office to correct anything that is wrong.']
+];
+LF.privacyNotice = () => h('div', { class: 'notice', style: { display: 'grid', gap: '6px' } }, h('div', { class: 't-h3' }, 'Privacy notice'), PRIVACY.map(([k, v]) => h('div', { class: 'hint', style: { color: 'var(--ink)' } }, h('strong', null, k + '. '), v)));
+
+async function consentGate() {
+  return new Promise((resolve) => {
+    const me = LF.me, mob = h('input', { class: 'input', id: 'cg-mobile', inputmode: 'tel', autocomplete: 'tel', placeholder: '10-digit mobile number', value: me.mobile || '' });
+    const ok = h('input', { type: 'checkbox', id: 'cg-ok', style: { width: '20px', height: '20px' } }), err = h('div', { class: 'err', role: 'alert', hidden: true });
+    const needMobile = me.settings.requireMobile && !me.mobile;
+    const body = h('div', { style: { display: 'grid', gap: '12px' } }, LF.privacyNotice(),
+      needMobile ? h('div', { class: 'field' }, h('label', { for: 'cg-mobile' }, 'Mobile number *'), mob, h('div', { class: 'hint' }, 'Used only by the lab office to reach you about equipment and attendance.')) : null,
+      me.consentRequired ? h('label', { for: 'cg-ok', style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 600 } }, ok, 'I have read the privacy notice') : null, err,
+      button('Continue', { kind: 'primary', block: true, onClick: async () => {
+        err.hidden = true;
+        if (me.consentRequired && !ok.checked) { err.textContent = 'Tick the box to continue.'; err.hidden = false; return; }
+        try { await api('profile.update', Object.assign({}, me.consentRequired ? { consent: true } : {}, needMobile ? { mobile: mob.value } : {})); me.consentRequired = false; me.profileIncomplete = false; if (needMobile) me.mobile = mob.value; m.close(); resolve(); }
+        catch (e) { err.textContent = errMsg(e); err.hidden = false; }
+      } }));
+    const m = modal(me.consentRequired ? 'Before you continue' : 'Add your mobile number', body, { sticky: true, onClose: () => resolve() });
+  });
 }
 function blocked(e) {
   const reasons = {
@@ -436,7 +474,9 @@ function blocked(e) {
 function onboarding() {
   const me = LF.me, err = h('div', { class: 'err', role: 'alert', hidden: true });
   let photo = null;
-  const roll = h('input', { class: 'input', id: 'ob-roll', required: true, autocomplete: 'off', maxlength: 20, placeholder: 'e.g. URK23CS1001' });
+  const roll = h('input', { class: 'input', id: 'ob-roll', required: true, autocomplete: 'off', maxlength: 20, placeholder: 'e.g. URK23CS1001', value: me.derivedRollNo || '', readOnly: !!me.derivedRollNo });
+  const mobile = h('input', { class: 'input', id: 'ob-mobile', inputmode: 'tel', autocomplete: 'tel', maxlength: 16, placeholder: '10-digit mobile number', required: !!me.settings.requireMobile });
+  const consent = h('input', { type: 'checkbox', id: 'ob-consent', style: { width: '20px', height: '20px' } });
   const name = h('input', { class: 'input', id: 'ob-name', required: true, value: me.displayName && !/@/.test(me.displayName) ? me.displayName : '', autocomplete: 'name' });
   const dept = h('input', { class: 'input', id: 'ob-dept', value: 'CSE' }), section = h('input', { class: 'input', id: 'ob-sec', maxlength: 10, placeholder: 'A' });
   const year = h('select', { class: 'input', id: 'ob-year' }, [1, 2, 3, 4].map((y) => h('option', { value: y, selected: y === 2 }, 'Year ' + y)));
@@ -446,16 +486,21 @@ function onboarding() {
   const form = h('form', { novalidate: true, style: { display: 'grid', gap: '12px' }, onsubmit: async (e) => {
     e.preventDefault(); err.hidden = true;
     if (!roll.value.trim() || !name.value.trim()) { err.textContent = 'Roll number and name are required.'; err.hidden = false; return; }
+    if (me.settings.requireMobile && !mobile.value.trim()) { err.textContent = 'Enter your mobile number.'; err.hidden = false; return; }
+    if (!consent.checked) { err.textContent = 'Read the privacy notice and tick the box to continue.'; err.hidden = false; return; }
     btn.disabled = true;
     try {
-      await api('onboard', { rollNo: roll.value, name: name.value, department: dept.value, section: section.value, year: Number(year.value), photo: photo || undefined });
+      await api('onboard', { rollNo: roll.value, name: name.value, mobile: mobile.value || undefined, consent: true, department: dept.value, section: section.value, year: Number(year.value), photo: photo || undefined });
       await boot();
     } catch (x) { err.textContent = errMsg(x); err.hidden = false; btn.disabled = false; }
   } },
-    h('div', { class: 'field' }, h('label', { for: 'ob-roll' }, 'Roll number *'), roll, h('div', { class: 'hint' }, 'Exactly as printed on your ID card.')),
+    h('div', { class: 'field' }, h('label', { for: 'ob-roll' }, 'Roll number *'), roll, h('div', { class: 'hint' }, me.derivedRollNo ? 'Taken from your university email and locked, so nobody can claim someone else\'s roll number.' : 'Exactly as printed on your ID card.')),
     h('div', { class: 'field' }, h('label', { for: 'ob-name' }, 'Full name *'), name),
+    h('div', { class: 'field' }, h('label', { for: 'ob-mobile' }, 'Mobile number' + (me.settings.requireMobile ? ' *' : '')), mobile),
     h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' } }, h('div', { class: 'field' }, h('label', { for: 'ob-dept' }, 'Department'), dept), h('div', { class: 'field' }, h('label', { for: 'ob-sec' }, 'Section'), section), h('div', { class: 'field' }, h('label', { for: 'ob-year' }, 'Year'), year)),
     h('div', { class: 'field' }, h('label', { for: 'ob-photo' }, 'Photo (optional, used only for lab spot checks)'), file, prev),
+    LF.privacyNotice(),
+    h('label', { for: 'ob-consent', style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 600 } }, consent, 'I have read the privacy notice'),
     err, btn);
   clear(appRoot()).appendChild(authShell('Set up your student profile', 'Signed in as ' + me.email + '. Your profile is checked against the official student list; if it does not match, lab staff will verify your ID card in person.', form));
 }
@@ -472,10 +517,25 @@ async function boot() {
   const hsh = readHash(); let saved = null; try { saved = sessionStorage.getItem('lf-role'); } catch (e) { /* ignore */ }
   LF.role = hsh && roles.includes(hsh.role) ? hsh.role : (saved && roles.includes(saved) ? saved : roles[roles.length > 1 ? 0 : 0]);
   if (!hsh && roles.includes('student') && roles.length === 1) LF.role = 'student';
-  const list = LF.routes[LF.role] || [];
+  const list = visible(LF.role);
   LF.current = (hsh && list.find((v) => v.id === hsh.id)) || list[0];
   renderShell(); refreshUnread();
   LF.every(60000, refreshUnread);
+  if (me.consentRequired || me.profileIncomplete) await consentGate();
+  handleLaunch();
+}
+
+/* A QR link opened the app: ?k= (student scanned the kiosk screen, Version A) or ?s= (a teacher, staff member or
+   class rep scanned a student's QR, Version B). The page only forwards the code; the server decides. Each link is
+   handled once, then removed from the address bar. */
+function handleLaunch() {
+  const l = window.LF_LAUNCH || {}; window.LF_LAUNCH = {};
+  try { if (l.k || l.s) history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ }
+  if (l.k) {
+    if (!LF.me.roles.includes('student')) return toast('That code is for students checking in. Scan it with a student account.', 'bad');
+    if (LF.role !== 'student') LF.go('today', 'student');
+    if (LF.kioskCheckin) LF.kioskCheckin(l.k);
+  } else if (l.s && LF.scanLink) LF.scanLink(l.s);
 }
 function renderKiosk() { runCleanups(); const root = appRoot(); clear(root); const out = LF.current.render(root); if (typeof out === 'function') LF.onLeave(out); }
 LF.boot = boot;
@@ -488,43 +548,162 @@ LF.on = { roleChange: (r) => { try { sessionStorage.setItem('lf-role', r); } cat
 const goBase = LF.go;
 LF.go = (id, role) => { if (role) LF.on.roleChange(role); goBase(id, role); };
 
+/* ------------------------------------------------------------------ scanning (phone scanner, kiosk scanner, desk identification) */
+/** A QR input: a USB/Bluetooth keyboard-wedge scanner or a paste (Enter submits), plus the camera where the browser has
+    BarcodeDetector. opts: { onCode(code), title, label } -> { el, focus(), stop(), cameraOn() } */
+LF.ui.scanner = (opts) => {
+  let camStream = null, camTimer = null, last = '', lastAt = 0;
+  const input = h('input', { class: 'input', autocomplete: 'off', autocapitalize: 'off', spellcheck: false, 'aria-label': opts.label || 'Scanner input. Scan a code or paste it and press Enter.', placeholder: 'Scan, or paste a code and press Enter', style: { fontFamily: 'ui-monospace, monospace' } });
+  const video = h('video', { class: 'scanbox', playsinline: true, muted: true, hidden: true, 'aria-label': 'Camera preview' });
+  const submit = (raw) => { const code = String(raw || '').trim(); if (!code) return; if (code === last && Date.now() - lastAt < 5000) return; last = code; lastAt = Date.now(); opts.onCode(code); };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = input.value; input.value = ''; submit(v); } });
+  input.addEventListener('paste', () => setTimeout(() => { const v = input.value; if (v.length > 30 && (v.indexOf('~') > 0 || v.indexOf('?') > 0 || /^k1\./.test(v))) { input.value = ''; submit(v); } }, 0));
+  const camBtn = button('Use camera', { icon: 'camera', onClick: async () => { if (camStream) return stopCam(); await startCam(); } });
+  async function startCam() {
+    if (!('BarcodeDetector' in window)) { toast('This browser cannot read QR codes from the camera. Use a scanner, or the phone camera app to open the code\'s link.', 'bad'); return; }
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { toast('Camera access is not available here.', 'bad'); return; }
+    try {
+      const det = new window.BarcodeDetector({ formats: ['qr_code'] });
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      video.srcObject = camStream; video.hidden = false; await video.play(); camBtn.lastChild.textContent = 'Stop camera';
+      camTimer = setInterval(async () => { try { const r = await det.detect(video); if (r.length) submit(r[0].rawValue); } catch (e) { /* frame not ready */ } }, 300);
+    } catch (e) { stopCam(); toast(e && e.name === 'NotAllowedError' ? 'Camera permission was denied.' : 'Could not start the camera.', 'bad'); }
+  }
+  function stopCam() { clearInterval(camTimer); if (camStream) camStream.getTracks().forEach((t) => t.stop()); camStream = null; video.hidden = true; camBtn.lastChild.textContent = 'Use camera'; }
+  LF.onLeave(stopCam);
+  return { el: h('div', { style: { display: 'grid', gap: '10px' } }, h('div', { class: 'field' }, h('label', null, opts.title || 'Scan a code'), input), video, h('div', { class: 'toolbar' }, camBtn)),
+    input, focus: () => input.focus({ preventScroll: true }), stop: stopCam, cameraOn: () => !!camStream, submit };
+};
+
+const SCAN_LABEL = { IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed' };
+LF.SCAN_LABEL = SCAN_LABEL;
+/** Accepted scan: name, roll number, direction, and the photo on file so a mismatch is obvious to anyone watching. */
+LF.ui.scanResult = (r) => {
+  const photo = h('div', { class: 'photo', style: { display: 'grid', placeItems: 'center', fontSize: '12px', textAlign: 'center' } }, r.student.hasPhoto ? h('span', { class: 'spin' }) : 'No photo on file');
+  if (r.student.hasPhoto) api('scan.photo', { eventId: r.eventId }).then((p) => { if (p.dataUrl) photo.replaceWith(h('img', { class: 'photo', src: p.dataUrl, alt: 'Photo of ' + r.student.name })); else photo.textContent = 'No photo on file'; }).catch(() => { photo.textContent = 'Photo unavailable'; });
+  return h('div', { class: 'result good', role: 'status' }, photo, h('div', null, h('div', { class: 't-big', style: { fontSize: '30px' } }, SCAN_LABEL[r.type] || r.type), h('div', { class: 't-h3' }, r.student.name + ' · ' + r.student.rollNo),
+    h('div', { class: 'hint' }, r.session.title + ' · ' + LF.fmt.time(r.at) + (r.assurance ? ' · ' + r.assurance + ' assurance' : ''))));
+};
+LF.ui.scanError = (e) => h('div', { class: 'result bad', role: 'alert' }, h('div', { class: 'bad-big', style: { width: '64px', height: '64px' } }, icon('x')), h('div', null, h('div', { class: 't-h3' }, e.extra && e.extra.student ? e.extra.student + ': not accepted' : 'Not accepted'), h('div', null, errMsg(e))));
+
+/**
+ * The phone scanner (Version B) for a teacher, lab staff, an event coordinator or a class representative. Scans with
+ * the in-app camera or a connected scanner; a code opened from the phone's own camera app arrives through scanLink().
+ */
+LF.openPhoneScanner = (title, first) => {
+  const results = h('div', { style: { display: 'grid', gap: '8px' } }), count = h('span', { class: 'badge info' }, '0 scanned');
+  let n = 0, busy = Promise.resolve();
+  const sc = LF.ui.scanner({ title: 'Student QR', onCode: (code) => { busy = busy.then(() => run(code)); } });
+  async function run(code) {
+    try { const r = await api('scan.submit', { qr: code }); n++; count.textContent = n + ' scanned'; results.prepend(LF.ui.scanResult(r)); }
+    catch (e) { results.prepend(LF.ui.scanError(e)); }
+    while (results.children.length > 8) results.lastChild.remove();
+  }
+  const m = modal(title || 'Scan students', h('div', { style: { display: 'grid', gap: '12px' } },
+    h('p', { class: 'hint', style: { margin: 0 } }, 'Point the camera at the student\'s phone, or open their QR with your phone\'s camera app. Check that the photo matches the person in front of you.'),
+    sc.el, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('strong', null, 'Results'), count), results), { wide: true, onClose: () => sc.stop() });
+  if (first) busy = busy.then(() => run(first)); else sc.focus();
+  return m;
+};
+LF.scanLink = (code) => LF.openPhoneScanner('Scanned from a QR link', code);
+
+/* ------------------------------------------------------------------ live occupancy (FR-16) */
+LF.ui.occupancy = (opts) => {
+  opts = opts || {};
+  const box = h('div', { class: 'occ', 'aria-live': 'polite', 'aria-label': 'Live lab occupancy' });
+  const draw = (r) => {
+    const labs = r.labs.filter((l) => !opts.labId || l.labId === opts.labId);
+    clear(box).append(...(labs.length ? labs.map((l) => {
+      const cap = l.capacity || 0, pct = cap ? Math.min(100, Math.round(l.inside * 100 / cap)) : 0;
+      return h('div', { class: 'occ-card' + (l.overCapacity ? ' over' : '') }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('span', { class: 't-label' }, l.code), l.overCapacity ? badge('over capacity', 'bad') : null),
+        h('div', { class: 't-h3' }, l.name), h('div', null, h('span', { class: 't-big', style: { fontSize: '30px' } }, String(l.inside)), cap ? h('span', { class: 'hint' }, ' inside of ' + cap) : h('span', { class: 'hint' }, ' inside')),
+        h('div', { class: 'meter' }, h('i', { style: { width: pct + '%' } })), h('div', { class: 'hint' }, l.sessions.length ? l.sessions.map((s) => s.title + (s.onBreak ? ' (break)' : '')).join(', ') : 'No session open'));
+    }) : [h('div', { class: 'hint' }, 'No labs yet.')]));
+  };
+  const load = () => api('labs.occupancy').then(draw).catch(() => {});
+  load(); LF.every(Math.max(3, (LF.me && LF.me.settings.occupancyRefreshSeconds) || 5) * 1000, load);
+  return box;
+};
+
+/* ------------------------------------------------------------------ flags review (faculty, staff, admin) */
+LF.ui.flagsView = () => {
+  const out = h('div'), status = h('select', { class: 'input', 'aria-label': 'Flag status', style: { maxWidth: '200px' } }, [['open', 'Open'], ['resolved', 'Resolved'], ['dismissed', 'Dismissed'], ['all', 'All']].map(([v, l]) => h('option', { value: v }, l)));
+  const detailText = (f) => { const d = f.detail || {}; return Object.keys(d).map((k) => k + ': ' + (Array.isArray(d[k]) ? d[k].join(' ') : d[k])).join(' · '); };
+  const load = () => ui.loadInto(out, async () => {
+    const r = await api('flags.list', { status: status.value });
+    return table({ caption: 'Flags', rows: r.flags, pageSize: 25, searchPlaceholder: 'Search student or flag', empty: empty('No flags', 'Anomalies such as impossible GPS readings, replayed codes or two students scanned on one phone appear here.'),
+      filters: [{ label: 'Severity', options: ['high', 'medium', 'low'], get: (x) => x.severity }],
+      columns: [{ key: 'createdAt', label: 'When', render: (x) => LF.fmt.dt(x.createdAt), text: (x) => x.createdAt }, { key: 'severity', label: 'Severity', render: (x) => h('span', { class: 'sev-' + x.severity }, x.severity) },
+        { key: 'label', label: 'Flag' }, { label: 'Student', text: (x) => (x.rollNo || '') + ' ' + (x.name || ''), render: (x) => x.rollNo ? h('span', null, h('strong', null, x.rollNo), ' ' + (x.name || '')) : '-' },
+        { label: 'Session', text: (x) => x.sessionTitle || '', render: (x) => (x.sessionTitle || '-') + (x.labCode ? ' · ' + x.labCode : '') }, { label: 'Detail', sort: false, render: (x) => h('span', { class: 'hint' }, detailText(x)) },
+        { key: 'status', label: 'Status', render: (x) => x.status === 'open' ? badge('open', 'warn') : h('span', { title: x.note || '' }, badge(x.status, x.status === 'resolved' ? 'good' : '')) },
+        { label: '', sort: false, render: (x) => x.status === 'open' ? h('span', { class: 'toolbar' }, ['resolved', 'dismissed'].map((o) => button(o === 'resolved' ? 'Resolve' : 'Dismiss', { size: 'sm', kind: o === 'resolved' ? 'primary' : '', onClick: () => ui.formModal({ title: (o === 'resolved' ? 'Resolve: ' : 'Dismiss: ') + x.label, intro: x.rollNo ? x.rollNo + ' ' + (x.name || '') : '', fields: [{ name: 'note', label: 'What you found', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: o === 'resolved' ? 'Resolve' : 'Dismiss', onSubmit: async (v) => { await api('flags.resolve', { flagId: x.flagId, outcome: o, note: v.note }); toast('Saved', 'good'); load(); } }) }))) : null }] }).el;
+  });
+  status.addEventListener('change', load); load();
+  return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'A flag never changes attendance. It marks something a person should look at; resolve it with a note.'), h('div', { class: 'toolbar' }, status), out);
+};
+
 /* ------------------------------------------------------------------ generic reports view (all roles) */
+const REPORT_LABEL = { digest: 'Daily digest (per lab)', monthlyAudit: 'Monthly audit', custom: 'Custom date range', session: 'Session log', erp: 'ERP export (fixed columns)', daily: 'Daily sessions table', monthly: 'Monthly summary',
+  faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail' };
 LF.ui.reports = (allowed) => {
-  const labels = { daily: 'Daily lab report', monthly: 'Monthly report', faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail' };
   const box = h('div', { style: { display: 'grid', gap: '16px' } }), out = h('div');
-  const type = h('select', { class: 'input', id: 'rp-type', style: { maxWidth: '260px' } }, allowed.map((t) => h('option', { value: t }, labels[t])));
+  const type = h('select', { class: 'input', id: 'rp-type', style: { maxWidth: '280px' } }, allowed.map((t) => h('option', { value: t }, REPORT_LABEL[t])));
   const date = h('input', { class: 'input', type: 'date', id: 'rp-date', value: LF.fmt.todayIst() });
   const month = h('input', { class: 'input', type: 'month', id: 'rp-month', value: LF.fmt.todayIst().slice(0, 7) });
   const from = h('input', { class: 'input', type: 'date', id: 'rp-from', value: new Date(Date.now() - 30 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) });
   const to = h('input', { class: 'input', type: 'date', id: 'rp-to', value: LF.fmt.todayIst() });
-  const who = h('input', { class: 'input', id: 'rp-who', placeholder: 'Student roll number', hidden: true });
+  const who = h('input', { class: 'input', id: 'rp-who', placeholder: 'Student roll number' });
   const fac = h('select', { class: 'input', id: 'rp-fac', 'aria-label': 'Faculty member' }); let facLoaded = false;
+  const lab = h('select', { class: 'input', id: 'rp-lab', 'aria-label': 'Lab' }, h('option', { value: '' }, 'All labs')); let labsLoaded = false;
+  const ses = h('select', { class: 'input', id: 'rp-ses', 'aria-label': 'Session' }); let sesLoaded = '';
   const wrap = (lbl, el, id) => h('div', { class: 'field', dataset: { k: id } }, h('label', { for: el.id }, lbl), el);
-  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac');
+  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses');
+  const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp'];
   let last = null;
-  function sync() { const t = type.value; fDate.hidden = t !== 'daily'; fMonth.hidden = t !== 'monthly'; const ranged = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit'].includes(t); fFrom.hidden = fTo.hidden = !ranged; const priv = LF.me.roles.includes('admin') || LF.me.roles.includes('staff'); fFac.hidden = !(t === 'faculty' && priv); if (!fFac.hidden && !facLoaded) { facLoaded = true; api('directory.faculty').then((r) => { r.faculty.forEach((f) => fac.appendChild(h('option', { value: f.facultyId }, f.name))); }).catch(fail); } fWho.hidden = !(t === 'student' && (LF.me.roles.includes('admin') || LF.me.roles.includes('staff') || LF.me.roles.includes('faculty'))); who.hidden = fWho.hidden; }
-  type.addEventListener('change', sync); sync();
+  const priv = () => LF.me.roles.includes('admin') || LF.me.roles.includes('staff');
+  function loadSessions() {
+    const d = date.value; if (sesLoaded === d) return; sesLoaded = d; clear(ses);
+    api('sessions.day', { date: d }).then((r) => { const xs = r.sessions.filter((s) => s.status === 'open' || s.status === 'closed'); if (!xs.length) ses.append(h('option', { value: '' }, 'No sessions held that day')); xs.forEach((s) => ses.append(h('option', { value: s.sessionId }, LF.fmt.time(s.scheduledStart) + ' ' + s.title + ' · ' + (s.labCode || '')))); }).catch(fail);
+  }
+  function sync() {
+    const t = type.value;
+    fDate.hidden = !(t === 'daily' || t === 'digest' || t === 'session'); fMonth.hidden = !(t === 'monthly' || t === 'monthlyAudit');
+    fFrom.hidden = fTo.hidden = RANGED.indexOf(t) < 0;
+    fFac.hidden = !(t === 'faculty' && priv()); if (!fFac.hidden && !facLoaded) { facLoaded = true; api('directory.faculty').then((r) => { r.faculty.forEach((f) => fac.appendChild(h('option', { value: f.facultyId }, f.name))); }).catch(fail); }
+    fWho.hidden = !(t === 'student' && (priv() || LF.me.roles.includes('faculty')));
+    fLab.hidden = !(t === 'digest' || t === 'custom'); if (!fLab.hidden && !labsLoaded) { labsLoaded = true; api('labs.list').then((r) => r.labs.forEach((l) => lab.appendChild(h('option', { value: l.labId }, l.code + ' ' + l.name)))).catch(fail); }
+    fSes.hidden = t !== 'session'; if (!fSes.hidden) loadSessions();
+  }
+  type.addEventListener('change', sync); date.addEventListener('change', () => { if (type.value === 'session') loadSessions(); }); sync();
   async function params() {
     const t = type.value, p = { type: t };
-    if (t === 'daily') p.date = date.value; if (t === 'monthly') p.month = month.value;
-    if (['faculty', 'student', 'utilisation', 'assetUsage', 'audit'].includes(t)) { p.from = from.value; p.to = to.value; }
+    if (t === 'daily' || t === 'digest') p.date = date.value;
+    if (t === 'monthly' || t === 'monthlyAudit') p.month = month.value;
+    if (RANGED.indexOf(t) >= 0) { p.from = from.value; p.to = to.value; }
+    if ((t === 'digest' || t === 'custom') && lab.value) p.labId = lab.value;
+    if (t === 'session') { if (!ses.value) throw new ApiError('BAD_INPUT', 'Choose a session.'); p.sessionId = ses.value; }
     if (t === 'faculty' && !fFac.hidden) p.facultyId = fac.value;
     if (t === 'student' && who.value.trim()) { const r = await api('students.list', { q: who.value.trim(), limit: 5 }); const s = r.students.find((x) => x.rollNo.toLowerCase() === who.value.trim().toLowerCase()) || r.students[0]; if (!s) throw new ApiError('NOT_FOUND', 'No student matches that roll number.'); p.studentId = s.studentId; }
     return p;
   }
+  const sectionTable = (s, title) => table({ columns: s.columns.map((c, i) => ({ key: 'c' + i, label: c, text: (row) => row[i] === null || row[i] === undefined ? '' : String(row[i]), render: (row) => (row[i] === null || row[i] === undefined ? '' : String(row[i])), align: typeof (s.rows[0] || [])[i] === 'number' ? 'right' : 'left' })), rows: s.rows, pageSize: 50, caption: title || s.title, search: s.rows.length > 10 }).el;
   const run = button('Run report', { kind: 'primary', icon: 'chart', onClick: async () => {
     const p = await params(); clear(out).appendChild(skeleton(5));
     try {
       const r = await api('reports.run', p); last = p; clear(out);
-      const t = table({ columns: r.columns.map((c, i) => ({ key: 'c' + i, label: c, text: (row) => row[i] === null || row[i] === undefined ? '' : String(row[i]), render: (row) => (row[i] === null || row[i] === undefined ? '' : String(row[i])), align: typeof (r.rows[0] || [])[i] === 'number' ? 'right' : 'left' })), rows: r.rows, pageSize: 50, caption: r.title });
-      append(out, [h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' } }, h('h3', { class: 't-h2' }, r.title),
-        h('div', { style: { display: 'flex', gap: '8px' } }, button('CSV', { icon: 'download', size: 'sm', onClick: async () => { const c = await api('reports.csv', last); LF.util.download(c.filename, c.csv, 'text/csv'); } }),
+      const sections = r.sections || [{ title: '', columns: r.columns, rows: r.rows }];
+      append(out, [h('div', { class: 'toolbar', style: { justifyContent: 'space-between', marginBottom: '8px' } }, h('h3', { class: 't-h2' }, r.title),
+        h('div', { class: 'toolbar' }, button('CSV', { icon: 'download', size: 'sm', onClick: async () => { const c = await api('reports.csv', last); LF.util.download(c.filename, c.csv, 'text/csv'); } }),
           button('PDF', { icon: 'download', size: 'sm', onClick: async () => { toast('Preparing PDF...'); const c = await api('reports.pdf', last); LF.util.download(c.filename, c.base64, 'application/pdf', true); if (c.truncated) toast('PDF shows the first 1000 rows. Use CSV for everything.'); } }))),
-        r.truncated ? h('div', { class: 'card warn', style: { marginBottom: '8px' } }, 'Showing the first 5000 rows only. Narrow the date range for the full data.') : null, t.el]);
+        r.summary && r.summary.length ? h('div', { class: 'grid-stats', style: { marginBottom: '12px' } }, r.summary.map(([k, v]) => stat(k, String(v)))) : null,
+        r.truncated ? h('div', { class: 'card warn', style: { marginBottom: '8px' } }, 'Showing the first 5000 rows only. Narrow the date range for the full data.') : null,
+        h('div', { style: { display: 'grid', gap: '16px' } }, sections.map((s) => h('section', null, s.title ? h('h4', { class: 't-h3', style: { margin: '0 0 6px' } }, s.title) : null, sectionTable(s, r.title))))]);
     } catch (e) { clear(out).appendChild(errorBox(e)); }
   } });
-  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fWho, fFac, run), out]);
+  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fLab, fSes, fWho, fFac, run), out]);
   return box;
 };
+const ui = LF.ui;
 })();
 </script>

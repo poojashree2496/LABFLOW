@@ -7,19 +7,28 @@ LF.sel = LF.sel || { sessionId: null };
 
 const times = (s) => fmt.time(s.scheduledStart) + ' - ' + fmt.time(s.scheduledEnd);
 const TYPE_LABEL = { class: 'Class', event: 'Event', research: 'Research' };
+/** How a student was checked in: kiosk or phone scan, who scanned (class rep / coordinator are tagged), GPS result. */
+function howCell(x) {
+  if (!x.method) return '-';
+  return h('span', { class: 'pill-row' }, ui.badge(x.method === 'kiosk' ? 'kiosk' : x.method === 'scanner' ? 'phone scan' : x.method, ''),
+    x.scannerRole === 'cr' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by CR', 'warn')) : x.scannerRole === 'coordinator' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by coordinator', 'info')) : null,
+    x.geofence === 'pass' ? ui.badge('GPS ok', 'good') : x.geofence === 'na' ? ui.badge('no GPS', 'warn') : null, x.assurance === 'lower' ? ui.badge('lower assurance', 'warn') : null);
+}
 
 /** Shared by faculty and admin. */
 LF.sessionCard = function (s, reload) {
   const c = s.counts;
   const actions = [];
   if (s.status === 'scheduled') actions.push(ui.button('Open session', { kind: 'primary', icon: 'check', onClick: () => openFlow(s, reload) }), ui.button('Cancel', { size: 'sm', onClick: () => cancelFlow(s, reload) }));
-  if (s.status === 'open') actions.push(ui.button('Live roster', { kind: 'primary', icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }), ui.button('Close session', { icon: 'x', onClick: () => closeFlow(s, reload) }));
+  if (s.status === 'open') actions.push(ui.button('Live roster', { kind: 'primary', icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }),
+    String(s.labMode || '').indexOf('B') >= 0 ? ui.button('Scan students', { icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }) : null,
+    ui.button('Close session', { icon: 'x', onClick: () => closeFlow(s, reload) }));
   if (s.status === 'closed') actions.push(ui.button('View roster', { icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }));
   return h('article', { class: 'card', 'aria-label': s.title },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
       h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + times(s) + (s.section ? ' · Section ' + s.section : '') + (s.facultyName ? ' · ' + s.facultyName : ''))),
-      h('div', { class: 'pill-row' }, ui.badge(TYPE_LABEL[s.type] || s.type, ''), ui.status(s.status))),
-    c ? h('div', { class: 'pill-row', style: { marginTop: '10px' } }, ui.badge('Inside ' + c.inside, 'good'), ui.badge('Left ' + c.left, ''), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : ui.badge('Open to all', 'info'), c.absent !== null ? ui.badge('Absent ' + c.absent, c.absent ? 'warn' : '') : null, c.unverifiedExits ? ui.badge('Exit not scanned ' + c.unverifiedExits, 'warn') : null, c.flagged ? ui.badge('Flagged ' + c.flagged, 'bad') : null) : null,
+      h('div', { class: 'pill-row' }, ui.badge(TYPE_LABEL[s.type] || s.type, ''), s.labMode ? ui.badge(s.labMode === 'A' ? 'kiosk QR + GPS' : s.labMode === 'B' ? 'device QR' : 'both modes', 'info') : null, ui.status(s.status))),
+    c ? h('div', { class: 'pill-row', style: { marginTop: '10px' } }, ui.badge('Inside ' + c.inside + (c.capacity ? ' / ' + c.capacity : ''), c.overCapacity ? 'bad' : 'good'), c.onBreak ? ui.badge('on break', 'warn') : null, ui.badge('Left ' + c.left, ''), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : ui.badge('Open to all', 'info'), c.absent !== null ? ui.badge('Absent ' + c.absent, c.absent ? 'warn' : '') : null, c.unverifiedExits ? ui.badge('Exit not scanned ' + c.unverifiedExits, 'warn') : null, c.flagged ? ui.badge('Flagged ' + c.flagged, 'bad') : null) : null,
     s.notes ? h('div', { class: 'hint', style: { marginTop: '6px' } }, s.notes) : null,
     actions.length ? h('div', { class: 'toolbar', style: { marginTop: '12px' } }, actions) : null);
 };
@@ -49,7 +58,7 @@ LF.register({ role: 'faculty', id: 'today', label: 'Today', icon: 'home', render
   root.append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h1', { class: 't-h1' }, 'Today\'s labs'), date), top, list);
   const reload = () => ui.loadInto(list, async () => {
     const [r, d] = await Promise.all([api('sessions.day', { date: date.value }), api('dash.faculty').catch(() => null)]);
-    if (d) clear(top).append(ui.stat('Sessions today', d.sessions), ui.stat('Open now', d.open, null, d.open ? 'good' : ''), ui.stat('Research requests', d.pendingResearch, d.pendingResearch ? 'Waiting for your decision' : 'None pending', d.pendingResearch ? 'warn' : ''));
+    if (d) clear(top).append(ui.stat('Sessions today', d.sessions), ui.stat('Open now', d.open, null, d.open ? 'good' : ''), ui.stat('Research requests', d.pendingResearch, d.pendingResearch ? 'Waiting for your decision' : 'None pending', d.pendingResearch ? 'warn' : ''), ui.stat('Open flags', d.openFlags, d.openFlags ? 'Review under Flags' : 'Nothing to review', d.openFlags ? 'warn' : ''));
     if (!r.sessions.length) return ui.empty('No sessions on this date', 'Your timetable classes and events appear here. Create an event or research visit from the Plan tab.');
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => LF.sessionCard(s, reload)));
   });
@@ -96,16 +105,21 @@ function liveRoster(root) {
           { key: 'status', label: 'Status', render: (x) => h('span', { class: 'pill-row' }, x.status === 'absent' && session && session.status === 'open' ? ui.badge('not arrived yet', '') : ui.status(x.status), (x.flags || []).filter((f) => f === 'late' || f === 'corrected').map((f) => ui.badge(f)), x.enrolled === false ? ui.badge('not enrolled', 'warn') : null, x.spotCheck && x.spotCheck !== 'pending' ? ui.badge('spot: ' + x.spotCheck, x.spotCheck === 'confirmed' ? 'good' : 'bad') : null, x.spotCheck === 'pending' ? ui.badge('spot check pending', 'info') : null), text: (x) => x.status },
           { key: 'firstIn', label: 'In', render: (x) => x.firstIn ? fmt.time(x.firstIn) : '-', text: (x) => x.firstIn || 0 }, { key: 'lastOut', label: 'Out', render: (x) => x.lastOut ? fmt.time(x.lastOut) : '-', text: (x) => x.lastOut || 0 },
           { key: 'verifiedMinutes', label: 'Verified', align: 'right', render: (x) => fmt.mins(x.verifiedMinutes) },
+          { key: 'method', label: 'How', text: (x) => [x.method, x.scannerRole, x.geofence, x.assurance].join(' '), render: howCell },
           { label: '', sort: false, render: (x) => h('button', { class: 'btn btn-sm', 'aria-label': 'Actions for ' + x.name, onclick: () => rowActions(x) }, 'Actions') }],
         rows: [], empty: ui.empty('Nobody enrolled yet', 'Students appear here once enrolled or after they scan in.') });
       clear(body).append(banner, countsEl, actionsEl, panelSpot, tbl.el);
     }
     const open = s.status === 'open';
-    clear(countsEl).append(ui.stat('Inside', c.inside, null, 'good'), ui.stat('Left', c.left), ui.stat('Attended', c.attended, c.enrolled !== null ? 'of ' + c.enrolled + ' enrolled' : 'open to all'), ui.stat(open ? 'Not arrived yet' : 'Absent', c.absent === null ? '-' : c.absent), ui.stat('Exit not scanned', c.unverifiedExits, null, c.unverifiedExits ? 'warn' : ''), ui.stat('Flagged', c.flagged, null, c.flagged ? 'bad' : ''));
+    clear(countsEl).append(ui.stat('Inside', c.inside, c.capacity ? 'of ' + c.capacity + ' seats' + (c.overCapacity ? ' (over capacity)' : '') : null, c.overCapacity ? 'bad' : 'good'), ui.stat('Left', c.left), ui.stat('Attended', c.attended, c.enrolled !== null ? 'of ' + c.enrolled + ' enrolled' : 'open to all'), ui.stat(open ? 'Not arrived yet' : 'Absent', c.absent === null ? '-' : c.absent), ui.stat('Exit not scanned', c.unverifiedExits, null, c.unverifiedExits ? 'warn' : ''), ui.stat('Flagged', c.flagged, null, c.flagged ? 'bad' : ''));
     clear(banner);
     if (c.rescanWindow) { const left = c.rescanWindow.closesAt - LF.now(); banner.append(h('div', { class: 'card sky', role: 'status' }, h('strong', null, 'Presence rescan in progress. '), 'Closes at ' + fmt.time(c.rescanWindow.closesAt) + ' (' + fmt.countdown(left) + ' left). Students inside must scan again.')); }
     if (!open) banner.append(h('div', { class: 'card flat' }, 'This session is ' + s.status + '. ', s.status === 'closed' ? 'Records are kept as scanned; use Actions for audited corrections.' : ''));
+    if (c.onBreak) banner.append(h('div', { class: 'card sky' }, h('strong', null, 'Break. '), 'Attendance is paused until ' + fmt.time(s.breakEnd) + '; nobody needs to scan out for it.'));
+    if (r.openFlags) banner.append(h('div', { class: 'card warn toolbar' }, h('strong', null, r.openFlags + ' open flag(s) for this session.'), h('button', { class: 'btn btn-sm', onclick: () => LF.go('flags') }, 'Review flags')));
+    if (r.guests) banner.append(h('div', { class: 'hint' }, r.guests + ' guest(s) added by the coordinator.'));
     clear(actionsEl);
+    if (open && String(s.labMode || '').indexOf('B') >= 0) actionsEl.append(ui.button('Scan students', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }));
     if (open) actionsEl.append(ui.button('Request rescan now', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); refresh(); } }),
       ui.button('Random spot check', { icon: 'camera', onClick: async () => { const out = await api('spot.start', { sessionId: s.sessionId }); LF.toast(out.checks.length + ' student(s) selected for a spot check', 'good'); await drawSpot(s); } }),
       ui.button('Close session', { icon: 'x', onClick: async () => { await closeFlow({ sessionId: s.sessionId, title: s.title }, () => LF.go('live')); } }));
@@ -175,7 +189,7 @@ function newSessionForm() {
     const labs = await api('labs.list'); const isAdmin = LF.me.roles.includes('admin');
     const fac = isAdmin ? await api('directory.faculty') : null;
     if (!labs.labs.length) return ui.empty('No labs configured', 'An administrator must add labs first.');
-    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'event', label: 'Event / workshop / extra lab' }, { value: 'research', label: 'Research visit (authorised)' }] });
+    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'research', label: 'Research visit (authorised)' }, { value: 'event', label: 'Extra lab session (no break or coordinator)' }] });
     const title = ui.field({ name: 'title', label: 'Title', required: true, maxlength: 100 });
     const lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.labs.map((l) => ({ value: l.labId, label: l.name })) });
     const date = ui.field({ name: 'date', label: 'Date', type: 'date', required: true, value: fmt.todayIst() });
@@ -199,7 +213,8 @@ LF.newSessionForm = newSessionForm;
 /* ------------------------------------------------------------------ Plan: events, research, approvals */
 LF.register({ role: 'faculty', id: 'plan', label: 'Plan', icon: 'calendar', render(root) {
   root.append(h('h1', { class: 't-h1' }, 'Events & research'), ui.tabs([
-    { id: 'new', label: 'New event / research visit', render: (p) => { p.appendChild(newSessionForm()); } },
+    { id: 'events', label: 'Events', render: (p) => { p.appendChild(LF.eventsView()); } },
+    { id: 'new', label: 'Research visit / extra session', render: (p) => { p.appendChild(newSessionForm()); } },
     { id: 'approvals', label: 'Research requests', render: (p) => { ui.loadInto(p, approvalsView); } },
     { id: 'add', label: 'Add participants', render: (p) => { p.appendChild(addParticipants()); } }]));
   async function approvalsView() {
@@ -233,13 +248,84 @@ LF.register({ role: 'faculty', id: 'plan', label: 'Plan', icon: 'calendar', rend
 
 /* ------------------------------------------------------------------ Students */
 LF.register({ role: 'faculty', id: 'students', label: 'Students', icon: 'inbox', render(root) {
-  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'My students'), h('p', { class: 't-muted' }, 'Students in your courses and sessions.'), out);
-  ui.loadInto(out, async () => {
-    const r = await api('students.list', { limit: 500 });
-    return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', rows: r.students, pageSize: 30, empty: ui.empty('No students yet', 'Students appear once an administrator maps you to a course roster.'),
-      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'year', label: 'Year' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }] }).el;
-  });
+  root.append(h('h1', { class: 't-h1' }, 'My students'), ui.tabs([
+    { id: 'list', label: 'Students', render: (p) => { ui.loadInto(p, async () => {
+      const r = await api('students.list', { limit: 500 });
+      return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', rows: r.students, pageSize: 30, empty: ui.empty('No students yet', 'Students appear once an administrator maps you to a course roster.'),
+        columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'year', label: 'Year' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }] }).el;
+    }); } },
+    { id: 'reps', label: 'Class representatives', render: (p) => { p.appendChild(LF.classRepsView()); } }]));
 } });
+
+/** Class representatives for the courses this person teaches (admins: all courses). */
+LF.classRepsView = function () {
+  const box = h('div');
+  const load = () => ui.loadInto(box, async () => {
+    const [reps, maps] = await Promise.all([api('classreps.list'), api('facultycourses.list')]);
+    const isAdmin = LF.me.roles.includes('admin');
+    const add = ui.button('Assign a class representative', { kind: 'primary', size: 'sm', icon: 'plus', onClick: async () => {
+      const courses = isAdmin ? (await api('courses.list')).courses.filter((c) => c.status === 'active').map((c) => ({ value: c.courseId + '|', label: c.code + ' ' + c.name })) : maps.mappings.map((m) => ({ value: m.courseId + '|' + (m.section || ''), label: m.courseCode + ' ' + m.courseName + (m.section ? ' · section ' + m.section : '') }));
+      if (!courses.length) throw new LF.ApiError('NOT_FOUND', 'You are not mapped to any course yet.');
+      ui.formModal({ title: 'Assign a class representative', intro: 'At most two per section. They can run the class session and, in device-QR labs, scan classmates while it is open.',
+        fields: [{ name: 'course', label: 'Course', type: 'select', options: courses }, { name: 'section', label: 'Section (if not fixed above)', maxlength: 10 }, { name: 'roll', label: 'Student roll number', required: true, maxlength: 20 }], submitLabel: 'Assign',
+        onSubmit: async (v) => {
+          const parts = v.course.split('|'), section = parts[1] || v.section || '';
+          const found = await api('students.list', { q: v.roll.trim(), limit: 5 }), st = found.students.find((x) => x.rollNo.toLowerCase() === v.roll.trim().toLowerCase());
+          if (!st) throw new LF.ApiError('NOT_FOUND', 'No student with that roll number in your courses.');
+          await api('classreps.set', { courseId: parts[0], section, studentId: st.studentId }); LF.toast(st.name + ' is now a class representative', 'good'); load();
+        } });
+    } });
+    return ui.table({ caption: 'Class representatives', rows: reps.reps, search: false, toolbar: add, empty: ui.empty('None assigned', 'A class representative helps run the session; they never record attendance outside it.'),
+      columns: [{ key: 'courseCode', label: 'Course' }, { key: 'section', label: 'Section' }, { key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'assignedAt', label: 'Since', render: (x) => fmt.date(x.assignedAt) },
+        { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove ' + x.name + '?', message: 'They lose class representative rights at once.', confirmLabel: 'Remove', danger: true })) return; await api('classreps.remove', { repId: x.repId }); load(); } }) }] }).el;
+  });
+  load(); return box;
+};
+
+/** Events and workshops (SRS appendix B.2): registration list or open to all, lunch break, capacity, coordinator. */
+LF.eventsView = function () {
+  const box = h('div', { style: { display: 'grid', gap: '16px' } }), list = h('div');
+  const load = () => ui.loadInto(list, async () => {
+    const r = await api('events.list', {});
+    if (!r.events.length) return ui.empty('No events', 'Create a workshop, hackathon or seminar below.');
+    return h('div', { style: { display: 'grid', gap: '10px' } }, r.events.map((e) => {
+      const c = e.counts;
+      return h('article', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name),
+        h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + '-' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : '') + (e.coordinatorEmail ? ' · coordinator ' + e.coordinatorEmail : ''))),
+        ui.status(e.status === 'cancelled' ? 'cancelled' : e.session ? e.session.status : 'scheduled')),
+        h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Registered ' + e.registered, 'info'), ui.badge('Guests ' + e.guests, ''), ui.badge('Capacity ' + e.capacity, ''), c ? ui.badge('Inside ' + c.inside, c.overCapacity ? 'bad' : 'good') : null),
+        e.status === 'active' && e.session && e.session.status === 'scheduled' ? h('div', { class: 'toolbar', style: { marginTop: '10px' } }, ui.button('Cancel event', { size: 'sm', onClick: () => ui.formModal({ title: 'Cancel ' + e.name, fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Cancel event', onSubmit: async (v) => { await api('events.cancel', { labEventId: e.labEventId, reason: v.reason }); load(); } }) })) : null);
+    }));
+  });
+  const form = h('section', { class: 'card', style: { maxWidth: '760px' } });
+  ui.loadInto(form, async () => {
+    const labs = await api('labs.list'), isAdmin = LF.me.roles.includes('admin'), fac = isAdmin ? await api('directory.faculty') : null;
+    const f = ui.field;
+    const name = f({ name: 'name', label: 'Event name', required: true, maxlength: 100, placeholder: 'e.g. Saturday IoT workshop' }), lab = f({ name: 'labId', label: 'Lab', type: 'select', options: labs.labs.map((l) => ({ value: l.labId, label: l.name + ' (' + l.capacity + ' seats)' })) });
+    const date = f({ name: 'date', label: 'Date', type: 'date', required: true, value: fmt.todayIst() }), st = f({ name: 'startTime', label: 'From', type: 'time', value: '09:00' }), en = f({ name: 'endTime', label: 'Until', type: 'time', value: '16:00' });
+    const bs = f({ name: 'breakStart', label: 'Lunch break from', type: 'time', value: '' }), be = f({ name: 'breakEnd', label: 'Lunch break until', type: 'time', value: '' });
+    const cap = f({ name: 'capacity', label: 'Capacity (blank = lab seats)', type: 'number', min: 1 });
+    const coord = f({ name: 'coordinatorEmail', label: 'Coordinator email (optional)', type: 'email', hint: 'A student or staff member who runs the event. Their rights end with the event.' });
+    const all = f({ name: 'openToAll', label: 'Open to anyone with a student account', type: 'checkbox' }), rolls = f({ name: 'rolls', label: 'Registered participants (roll numbers)', type: 'textarea', rows: 4, hint: 'One per line or comma separated. Leave empty if the event is open to all.' });
+    const desc = f({ name: 'description', label: 'Description', maxlength: 300 }), fsel = fac ? f({ name: 'facultyId', label: 'Responsible faculty', type: 'select', options: fac.faculty.map((x) => ({ value: x.facultyId, label: x.name })) }) : null;
+    const ov = isAdmin ? f({ name: 'override', label: 'Override a lab conflict', type: 'checkbox' }) : null, msg = h('div', { role: 'alert' });
+    const grid = (...k) => h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px' } }, ...k);
+    return h('div', { style: { display: 'grid', gap: '12px' } }, h('h2', { class: 't-h2' }, 'Create an event'), name.el, fsel ? fsel.el : null, lab.el, grid(date.el, st.el, en.el), grid(bs.el, be.el, cap.el), coord.el, all.el, rolls.el, desc.el, ov ? ov.el : null, msg,
+      ui.button('Create event', { kind: 'primary', icon: 'plus', onClick: async () => {
+        clear(msg);
+        const p = { name: name.get(), labId: lab.get(), date: date.get(), startTime: st.get(), endTime: en.get(), breakStart: bs.get() || undefined, breakEnd: be.get() || undefined, capacity: cap.get() === '' ? undefined : Number(cap.get()),
+          coordinatorEmail: coord.get() || undefined, openToAll: all.get(), rollNos: rolls.get().split(/[\s,;]+/).filter(Boolean), description: desc.get(), facultyId: fsel ? fsel.get() : undefined, override: ov ? ov.get() : false };
+        try {
+          const r = await api('events.create', p); LF.toast('Event created: ' + r.registered + ' registered', 'good');
+          if (r.errors.length) msg.append(h('div', { class: 'card warn' }, 'Not registered: ' + r.errors.slice(0, 8).map((x) => x.message).join('; ')));
+          name.input.value = ''; load();
+        } catch (x) { msg.append(h('div', { class: 'err' }, LF.errMsg(x) + (x.code === 'CONFLICT' && x.extra && x.extra.overridable ? ' (Tick "Override a lab conflict" to book anyway.)' : ''))); }
+      } }));
+  });
+  load();
+  box.append(list, form);
+  return box;
+};
 
 /* ------------------------------------------------------------------ Equipment */
 LF.register({ role: 'faculty', id: 'equipment', label: 'Equipment', icon: 'box', render(root) {
@@ -263,6 +349,7 @@ LF.register({ role: 'faculty', id: 'equipment', label: 'Equipment', icon: 'box',
 } });
 
 /* ------------------------------------------------------------------ Reports */
-LF.register({ role: 'faculty', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['faculty', 'student'])); } });
+LF.register({ role: 'faculty', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
+LF.register({ role: 'faculty', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['session', 'custom', 'faculty', 'student'])); } });
 })();
 </script>

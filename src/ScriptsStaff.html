@@ -52,15 +52,24 @@ LF.showStudent = showStudent;
 
 /* ------------------------------------------------------------------ Desk (queues) */
 LF.register({ role: 'staff', id: 'queue', label: 'Desk', icon: 'home', render(root) {
-  const stats = h('div', { class: 'grid-stats' }), body = h('div', { style: { display: 'grid', gap: '20px' } });
-  root.append(h('h1', { class: 't-h1' }, 'Lab desk'), stats, body);
+  const stats = h('div', { class: 'grid-stats' }), body = h('div', { style: { display: 'grid', gap: '20px' } }), feed = h('div', { class: 'feed', 'aria-live': 'polite' });
+  root.append(h('h1', { class: 't-h1' }, 'Lab desk'), h('h2', { class: 't-h2' }, 'Live occupancy'), ui.occupancy(), stats, h('div', { class: 'split' }, body, h('section', { class: 'card', 'aria-label': 'Live activity' }, h('h2', { class: 't-h2' }, 'Live activity'), h('p', { class: 'hint' }, 'Latest check-ins and equipment movements across labs.'), feed)));
+  const loadFeed = async () => {
+    try {
+      const r = await api('activity.feed');
+      clear(feed).append(...(r.items.length ? r.items.map((x) => h('div', { class: 'row' }, h('span', null, x.kind === 'scan' ? [h('strong', null, x.name || '-'), ' ' + (x.rollNo || '') + ' · ' + (LF.SCAN_LABEL[x.type] || x.type.replace('CORR_', 'manual ').toLowerCase())] : [h('strong', null, x.name || '-'), ' · ' + x.type + ' ' + Math.abs(x.qty || 0)]),
+        h('span', { class: 'toolbar' }, x.labCode ? ui.badge(x.labCode, '') : null, x.method ? ui.badge(x.method === 'scanner' ? 'phone scan' : x.method, x.assurance === 'lower' ? 'warn' : '') : null, h('span', { class: 'hint t-data' }, fmt.time(x.at))))) : [h('div', { class: 'hint' }, 'Nothing yet today.')]));
+    } catch (e) { /* the feed is informational */ }
+  };
   const reload = () => { ui.loadInto(stats, async () => {
     const d = await api('dash.staff');
-    return h('div', { class: 'grid-stats' }, ui.stat('Students to verify', d.pendingStudents, null, d.pendingStudents ? 'warn' : ''), ui.stat('Device requests', d.pendingCredentials, null, d.pendingCredentials ? 'warn' : ''), ui.stat('Booking requests', d.pendingBookings, null, d.pendingBookings ? 'warn' : ''),
-      ui.stat('Loans out', d.activeLoans), ui.stat('Overdue', d.overdueLoans, null, d.overdueLoans ? 'bad' : ''), ui.stat('Damaged / missing', d.damaged + ' / ' + d.missing, null, d.damaged + d.missing ? 'warn' : ''));
+    return h('div', { class: 'grid-stats' }, ui.stat('Equipment requests', d.pendingEquipment, 'From students inside a lab', d.pendingEquipment ? 'warn' : ''), ui.stat('Students to verify', d.pendingStudents, null, d.pendingStudents ? 'warn' : ''), ui.stat('Device requests', d.pendingCredentials, null, d.pendingCredentials ? 'warn' : ''), ui.stat('Booking requests', d.pendingBookings, null, d.pendingBookings ? 'warn' : ''),
+      ui.stat('Loans out', d.activeLoans), ui.stat('Overdue', d.overdueLoans, null, d.overdueLoans ? 'bad' : ''), ui.stat('Open flags', d.openFlags, null, d.openFlags ? 'warn' : ''), ui.stat('Damaged / missing', d.damaged + ' / ' + d.missing, null, d.damaged + d.missing ? 'warn' : ''));
   }, 1); ui.loadInto(body, async () => {
-    const [pc, ps, pb, ov] = await Promise.all([api('cred.pending'), api('students.list', { status: 'pending', limit: 50 }), api('booking.list', { status: 'pending' }), api('loans.list', { status: 'overdue' })]);
+    const [eq, pc, ps, pb, ov] = await Promise.all([api('equipment.list', { status: 'pending' }), api('cred.pending'), api('students.list', { status: 'pending', limit: 50 }), api('booking.list', { status: 'pending' }), api('loans.list', { status: 'overdue' })]);
     return h('div', { style: { display: 'grid', gap: '20px' } },
+      section('Equipment requests', 'Students who are checked in asked for these. Hand them over on the issue screen; the request closes with the loan.', eq.requests.length ? eq.requests.map((q) => h('div', { class: 'row' }, h('div', null, h('strong', null, q.name), ' ' + q.rollNo + ' wants ' + q.resourceName + ' × ' + q.quantity, h('div', { class: 'hint' }, q.labName + ' · ' + fmt.time(q.requestedAt) + (q.note ? ' · ' + q.note : ''))),
+        h('div', { class: 'toolbar' }, ui.button('Issue', { kind: 'primary', size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.request = q; LF.go('desk'); } }), ui.button('Cannot fill', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Cannot fill this request', fields: [{ name: 'note', label: 'Reason (shown to the student)', required: true, maxlength: 200 }], submitLabel: 'Send', onSubmit: async (v) => { await api('equipment.decide', { requestId: q.requestId, note: v.note }); reload(); } }) })))) : null),
       section('Device replacement requests', 'Check the student\'s ID card in person before approving. The old device stops working at once.', pc.pending.length ? pc.pending.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.studentName), ' ' + c.rollNo, h('div', { class: 'hint' }, c.label + ' · requested ' + fmt.dt(c.createdAt))),
         h('div', { class: 'toolbar' }, ui.button('Approve', { kind: 'primary', size: 'sm', onClick: () => LF.ui.formModal({ title: 'Approve new device for ' + c.studentName, fields: [{ name: 'idChecked', label: 'I have checked the student\'s ID card in person', type: 'checkbox' }], submitLabel: 'Approve device', onSubmit: async (v) => { if (!v.idChecked) throw new LF.ApiError('BAD_INPUT', 'Confirm the ID check first.'); await api('cred.approve', { credentialId: c.credentialId, idChecked: true }); LF.toast('Device approved', 'good'); reload(); } }) }),
           ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject device request', fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('cred.reject', { credentialId: c.credentialId, reason: v.reason }); reload(); } }) })))) : null),
@@ -71,6 +80,7 @@ LF.register({ role: 'staff', id: 'queue', label: 'Desk', icon: 'home', render(ro
       section('Overdue loans', null, ov.loans.length ? ov.loans.map((l) => h('div', { class: 'row' }, h('div', null, h('strong', null, l.borrowerName), h('div', { class: 'hint' }, 'Due ' + fmt.dt(l.dueAt))), ui.button('Open return', { size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.loanId = l.loanId; LF.go('desk'); } }))) : null));
   }); };
   loadMeta().then(reload).catch(reload);
+  loadFeed(); LF.every(8000, loadFeed);
   LF.every(30000, () => { if (!document.querySelector('.modal-back')) reload(); });
   function section(title, lead, rows) { return h('section', { 'aria-label': title }, h('h2', { class: 't-h2' }, title), lead ? h('p', { class: 'hint' }, lead) : null, rows ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '8px' } }, rows) : h('div', { class: 'hint', style: { marginTop: '6px' } }, 'Nothing waiting.')); }
 } });
@@ -84,6 +94,7 @@ function bookingRow(b, reload) {
 /* ------------------------------------------------------------------ Issue / Return */
 LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', render(root) {
   const wanted = LF.sel && LF.sel.loanId; if (LF.sel) LF.sel.loanId = null;
+  const request = LF.sel && LF.sel.request; if (LF.sel) LF.sel.request = null;
   root.append(h('h1', { class: 't-h1' }, 'Issue & return'), h('div', { id: 'desk-body' }));
   const body = root.querySelector('#desk-body');
   ui.loadInto(body, async () => { await loadMeta(); return ui.tabs([
@@ -99,10 +110,19 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const days = ui.field({ name: 'days', label: 'Loan period (days)', type: 'number', min: 1, max: 120, value: LF.me.settings.loanDefaultDays });
     const notes = ui.field({ name: 'notes', label: 'Notes', maxlength: 300 });
     const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
-    let kitId = '', kitPicks = [], reservationId = '';
+    let kitId = '', kitPicks = [], reservationId = '', requestId = request ? request.requestId : '';
+    if (request) lab.input.value = request.labId;
     function drawWho() {
       clear(who); borrower = null; group = null; reservationId = '';
-      if (kind.get() === 'student') who.append(studentPicker('Student', (s) => { borrower = s; loadBookings(); }, { status: 'verified' }).el);
+      if (kind.get() === 'student') {
+        const picker = studentPicker('Student', (s) => { borrower = s; loadBookings(); }, { status: 'verified' });
+        const idBtn = ui.button('Identify by the student\'s QR', { size: 'sm', icon: 'qr', onClick: () => {
+          let m; const sc = ui.scanner({ title: 'Student QR', onCode: async (code) => { try { const r = await api('student.identify', { qr: code }); m.close(); borrower = r.student; picker.set(r.student); loadBookings(); LF.toast('Identified ' + r.student.name, 'good'); } catch (e) { LF.fail(e); } } });
+          m = LF.modal('Identify the borrower', h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Ask the student to open their live QR. This ties the loan to the person holding the registered phone.'), sc.el), { onClose: () => sc.stop() }); sc.focus();
+        } });
+        who.append(picker.el, idBtn);
+        if (request && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
+      }
       else api('groups.list').then((r) => { const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
       clear(bookingBox);
     }
@@ -154,12 +174,12 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
       if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
       try {
-        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
-        idem = LF.util.uuid(); lines = []; kitPicks = []; drawCart(); drawKits();
+        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
+        idem = LF.util.uuid(); lines = []; kitPicks = []; requestId = ''; drawCart(); drawKits();
         result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
     } });
-    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, lab.el, kind.el, who, bookingBox, days.el, notes.el),
+    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null, lab.el, kind.el, who, bookingBox, days.el, notes.el),
       h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, msg, submit, result));
     return root;
   }
@@ -306,7 +326,7 @@ LF.register({ role: 'staff', id: 'bookings', label: 'Bookings', icon: 'calendar'
   ui.loadInto(out, async () => {
     await loadMeta(); const r = await api('booking.list', {});
     const reload = () => LF.go('bookings');
-    return ui.table({ caption: 'Bookings', searchPlaceholder: 'Search requester or item', pageSize: 20, rows: r.reservations, filters: [{ label: 'Status', options: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled'], get: (x) => x.status }, { label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }],
+    return ui.table({ caption: 'Bookings', searchPlaceholder: 'Search requester or item', pageSize: 20, rows: r.reservations, filters: [{ label: 'Status', options: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed'], get: (x) => x.status }, { label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }],
       columns: [{ key: 'requesterName', label: 'Requester' }, { key: 'resourceName', label: 'Item' }, { key: 'quantity', label: 'Qty', align: 'right' }, { key: 'startAt', label: 'From', render: (x) => fmt.dt(x.startAt) }, { key: 'endAt', label: 'To', render: (x) => fmt.dt(x.endAt) }, { key: 'purpose', label: 'Purpose' },
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },
         { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, x.status === 'pending' ? [ui.button('Approve', { size: 'sm', kind: 'primary', onClick: async () => { await api('booking.decide', { reservationId: x.reservationId, approve: true }); LF.toast('Approved', 'good'); reload(); } }), ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject booking', fields: [{ name: 'note', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('booking.decide', { reservationId: x.reservationId, approve: false, note: v.note }); reload(); } }) })] : null,
@@ -326,6 +346,13 @@ LF.register({ role: 'staff', id: 'people', label: 'Students', icon: 'users', ren
   });
 } });
 
-LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue'])); } });
+/* ------------------------------------------------------------------ Scanning self-work and research visits (Version B) */
+LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Scan visitors'), h('p', { class: 't-muted' }, 'For self-work and research visits when no teacher is present (SRS 7.2). Open the scanner, then point it at the student\'s live QR, or open their QR link with your phone camera.'),
+    h('div', { class: 'toolbar' }, ui.button('Open scanner', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan visitors') })), h('h2', { class: 't-h2', style: { marginTop: '16px' } }, 'Live occupancy'), ui.occupancy());
+} });
+
+LF.register({ role: 'staff', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
+LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue'])); } });
 })();
 </script>

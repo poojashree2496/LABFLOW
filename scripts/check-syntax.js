@@ -9,7 +9,7 @@ for (const f of fs.readdirSync(src)) {
   else if (f.endsWith('.html')) {
     const html = fs.readFileSync(p, 'utf8'); const parts = [];
     html.replace(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g, (m, c) => { if (c.trim() && !/src=/.test(m)) parts.push(c); });
-    code = parts.join('\n;\n');
+    code = parts.join('\n;\n').replace(/<\?!?=?[\s\S]*?\?>/g, 'null'); // HtmlService template tags stand for a value
   }
   if (code === null || !code.trim()) continue;
   try { new vm.Script(code, { filename: f }); console.log('ok  ', f); }

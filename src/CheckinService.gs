@@ -56,7 +56,8 @@ var Checkin = {
   },
   /** The last few accepted scans in this lab, for the kiosk screen (name, roll number, direction). */
   _recent: function (labId) {
-    var rows = Db.tail('AttendanceEvents', 60).filter(function (e) { return e.labId === labId && (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN'); }).slice(-6).reverse();
+    var since = U.dayStart(U.local(U.now()).date);
+    var rows = Db.tail('AttendanceEvents', 60).filter(function (e) { return e.labId === labId && e.at >= since && (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN'); }).slice(-6).reverse();
     return rows.map(function (e) { var st = Db.cachedGet('StudentProfiles', 'studentId', e.studentId, 300) || {}; return { name: st.name, rollNo: st.rollNo, type: e.type, at: e.at, eventId: e.eventId, method: e.method }; });
   },
 

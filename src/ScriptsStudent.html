@@ -25,12 +25,14 @@ const Device = LF.device = {
     const raw = await crypto.subtle.exportKey('raw', pair.publicKey);
     const begin = await api('cred.begin');
     const sig = await crypto.subtle.sign(SIG, pair.privateKey, utf8(begin.challenge));
-    const out = await api('cred.complete', { challenge: begin.challenge, publicKey: LF.util.b64u(raw), signature: LF.util.b64u(sig), label: label || 'My phone' });
+    const out = await api('cred.complete', { challenge: begin.challenge, publicKey: LF.util.b64u(raw), signature: LF.util.b64u(sig), label: label || 'My phone', desktop: Device.isDesktop() });
     await idbPut(Device.keyName(), { credentialId: out.credentialId, privateKey: pair.privateKey, publicKey: LF.util.b64u(raw), label: label || 'My phone', createdAt: Date.now() });
     return out;
   },
   async sign(text) { const k = await Device.load(); if (!k) throw new LF.ApiError('NO_KEY', 'This phone does not hold your device key. Register this device first.'); return { credentialId: k.credentialId, signature: LF.util.b64u(await crypto.subtle.sign(SIG, k.privateKey, utf8(text))) }; },
   async forget() { try { await idbDel(Device.keyName()); } catch (e) { /* ignore */ } },
+  /** Students are expected to register phones; a desktop registration is allowed but flagged for review. */
+  isDesktop() { try { if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') return !navigator.userAgentData.mobile; } catch (e) { /* ignore */ } return !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || ''); },
   /** Can this browser sign with ECDSA P-256 and keep a CryptoKey across a read-back? */
   async probeStorage() {
     try {
@@ -55,7 +57,8 @@ const Device = LF.device = {
     }
     const st = await Device.probeStorage(); add('Key storage (IndexedDB)', st.ok ? 'pass' : 'fail', st.ok ? 'A non-extractable key survived a save and read-back' : 'Cannot keep the key: ' + st.why);
     try { const pers = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; add('Persistent storage', pers ? 'pass' : 'warn', pers ? 'The browser will not evict the key under storage pressure' : 'Not guaranteed: the browser may delete site data (for example Safari after about a week of non-use). If that happens, ask the lab desk to approve a new registration.'); } catch (e) { add('Persistent storage', 'warn', 'Could not be determined'); }
-    add('Camera access', navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'pass' : 'warn', navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'Available (only needed for kiosks and spot checks)' : 'Not available. Students do not need a camera; the kiosk scans your screen.');
+    add('Camera access', navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'pass' : 'warn', navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'Available (the phone camera app can also open the lab screen code)' : 'Not available here. Use your phone camera app to scan the lab screen.');
+    add('Location', navigator.geolocation ? 'pass' : 'warn', navigator.geolocation ? 'This browser can share a location when you check in from the lab screen' : 'No location support: check-ins from the lab screen are marked "not available"');
     add('Screen brightness / wake lock', 'wake' in navigator || 'wakeLock' in navigator ? 'pass' : 'warn', 'wakeLock' in navigator ? 'The QR screen can keep the display on' : 'Raise your screen brightness manually when showing the QR');
     let has = null; try { has = await Device.load(); } catch (e) { /* ignore */ }
     add('Device key on this phone', has ? 'pass' : 'warn', has ? 'Registered as ' + has.credentialId : 'No key stored here yet');
@@ -63,9 +66,11 @@ const Device = LF.device = {
   }
 };
 
+
 /* ------------------------------------------------------------------ helpers */
 const stateBadge = (m) => m.state === 'in' ? ui.badge('Inside', 'good') : m.state === 'out' ? ui.badge('Left', '') : ui.badge('Not arrived', 'info');
 function sessionTimes(s) { return fmt.time(s.scheduledStart) + ' - ' + fmt.time(s.scheduledEnd); }
+const hasMode = (s, m) => String(s.labMode || 'A').indexOf(m) >= 0;
 function deviceGate(me) {
   const st = me.student;
   if (!st) return null;
@@ -73,55 +78,145 @@ function deviceGate(me) {
   return null;
 }
 
-/* ------------------------------------------------------------------ QR screen */
+/* ------------------------------------------------------------------ Version B: the rotating device-signed QR */
+/**
+ * The phone fetches a server nonce (valid qrTtlSeconds) and, every studentQrRotateSeconds, signs "token.timestamp" with
+ * its non-extractable key and redraws the QR. The QR is a link, so a teacher's phone camera opens it directly. A
+ * screenshot is refused after qrFreshSeconds; a new nonce is fetched before the old one runs out.
+ */
 function openQr(session, purpose, onDone) {
-  let timer = null, poll = null, stopped = false, issued = null;
-  const qrBox = h('div', { class: 'qr-frame', 'aria-live': 'polite' }), count = h('div', { class: 't-big', 'aria-live': 'off' }, ''), msg = h('div', { class: 'hint', role: 'status' }, 'Preparing your code...');
-  const label = purpose === 'in' ? 'Check in' : purpose === 'out' ? 'Check out' : 'Rescan confirmation';
-  let wake = null; try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then((w) => { wake = w; }).catch(() => {}); } catch (e) { /* optional */ }
+  let stopped = false, issued = null, rot = null, poll = null, refetch = null, wake = null;
+  const qrBox = h('div', { class: 'qr-frame', 'aria-live': 'off' }), bar = h('div', { class: 'progress gold', style: { width: 'min(76vw, 340px)' } }, h('i', { style: { width: '100%' } }));
+  const msg = h('div', { class: 'hint', role: 'status' }, 'Preparing your code...');
+  const label = purpose === 'in' ? 'Check in' : purpose === 'out' ? 'Check out' : 'Confirm presence';
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then((w) => { wake = w; }).catch(() => {}); } catch (e) { /* optional */ }
   const body = h('div', { style: { display: 'grid', gap: '12px', justifyItems: 'center', textAlign: 'center' } },
-    h('div', { class: 'hint' }, 'Hold this screen up to the lab scanner. Turn your brightness up.'), qrBox, count, msg);
-  const m = LF.modal(label + ': ' + (session.title || 'lab session'), body, { sticky: true, onClose: () => { stopped = true; clearTimeout(timer); clearInterval(poll); try { if (wake) wake.release(); } catch (e) { /* ignore */ } } });
-  async function issue() {
+    h('div', { class: 'hint' }, 'Show this to your teacher, the lab staff, your class rep or the lab scanner. It changes every few seconds, so a screenshot will not work.'), qrBox, bar, msg);
+  const m = LF.modal(label + ': ' + (session.title || 'lab session'), body, { sticky: true, onClose: () => { stopped = true; clearInterval(rot); clearInterval(poll); clearTimeout(refetch); try { if (wake) wake.release(); } catch (e) { /* ignore */ } } });
+  async function fetchNonce() {
     if (stopped) return;
     try {
       const k = await Device.load();
       if (!k) throw new LF.ApiError('NO_KEY', 'This phone has no device key. Open the Device tab and register it.');
       const ch = await api('attend.challenge', { sessionId: session.sessionId, purpose, credentialId: k.credentialId });
-      const sig = await crypto.subtle.sign(SIG, k.privateKey, utf8(ch.token));
       if (stopped) return;
-      issued = ch; clear(qrBox).appendChild(LF.util.qrSvg(ch.token + '~' + LF.util.b64u(sig)));
-      msg.textContent = 'Valid for a short time. It refreshes by itself.';
-      tick();
+      issued = { ch, key: k }; msg.textContent = 'Live code. Keep this screen open.'; msg.className = 'hint';
+      await draw();
+      clearInterval(rot); rot = setInterval(draw, (ch.rotateSeconds || 3) * 1000);
+      clearTimeout(refetch); refetch = setTimeout(fetchNonce, Math.max(10, (ch.ttl || 60) / 2) * 1000);
     } catch (e) {
       if (stopped) return;
-      clear(qrBox); msg.textContent = LF.errMsg(e); msg.className = 'err'; count.textContent = '';
-      if (e.code === 'RATE_LIMITED' || e.code === 'NETWORK' || e.code === 'BUSY') timer = setTimeout(issue, 4000);
+      clearInterval(rot); clear(qrBox); msg.textContent = LF.errMsg(e); msg.className = 'err';
+      if (e.code === 'RATE_LIMITED' || e.code === 'NETWORK' || e.code === 'BUSY') refetch = setTimeout(fetchNonce, 4000);
     }
   }
-  function tick() {
-    clearTimeout(timer);
+  async function draw() {
     if (stopped || !issued) return;
-    const left = issued.expiresAt - LF.now();
-    count.textContent = fmt.countdown(left);
-    if (left <= 8000) { issued = null; msg.textContent = 'Refreshing...'; issue(); return; }
-    timer = setTimeout(tick, 500);
+    const ts = Math.round(LF.now()), t = issued.ch.token + '.' + ts;
+    const sig = LF.util.b64u(await crypto.subtle.sign(SIG, issued.key.privateKey, utf8(t)));
+    const payload = issued.ch.token + '~' + ts + '~' + sig, link = (issued.ch.url || LF.me.webAppUrl || '') + (issued.ch.url && issued.ch.url.indexOf('?') >= 0 ? '&' : '?') + 's=' + payload;
+    clear(qrBox).appendChild(LF.util.qrSvg(link));
+    const rotate = (issued.ch.rotateSeconds || 3) * 1000, bi = bar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
+    requestAnimationFrame(() => { bi.style.transition = 'width ' + rotate + 'ms linear'; bi.style.width = '0%'; });
   }
   poll = setInterval(async () => {
     try {
       const r = await api('sessions.mine'); const cur = r.sessions.find((x) => x.sessionId === session.sessionId); if (!cur) return;
       const done = (purpose === 'in' && cur.mine.state === 'in') || (purpose === 'out' && cur.mine.state === 'out') || (purpose === 'rescan' && cur.mine.rescan && cur.mine.rescan.done);
-      if (done) { stopped = true; clearInterval(poll); clearTimeout(timer); clear(qrBox).appendChild(h('div', { class: 'ok-big' }, icon('check'))); count.textContent = ''; msg.textContent = 'Recorded at ' + fmt.time(LF.now()) + '. You can close this.'; msg.className = 'hint'; LF.toast(label + ' recorded', 'good'); if (onDone) onDone(); setTimeout(() => m.close(), 1800); }
+      if (done) { stopped = true; clearInterval(poll); clearInterval(rot); clearTimeout(refetch); clear(qrBox).appendChild(h('div', { class: 'ok-big' }, icon('check'))); msg.textContent = 'Recorded at ' + fmt.time(LF.now()) + '. You can close this.'; msg.className = 'hint'; LF.toast(label + ' recorded', 'good'); if (onDone) onDone(); setTimeout(() => m.close(), 1800); }
     } catch (e) { /* transient; keep polling */ }
   }, 3500);
-  issue();
+  fetchNonce();
 }
+
+/* ------------------------------------------------------------------ Version A: the kiosk QR + GPS check-in */
+/** Read the phone's location once (high accuracy, no cached fix). Resolves null when it is not available. */
+function readLocation(onStatus) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { onStatus('This browser cannot share a location.'); return resolve(null); }
+    let best = null, done = false;
+    const finish = () => { if (done) return; done = true; try { navigator.geolocation.clearWatch(id); } catch (e) { /* ignore */ } resolve(best); };
+    const id = navigator.geolocation.watchPosition((p) => {
+      const c = p.coords; if (!best || c.accuracy < best.accuracy) best = { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy };
+      onStatus('Location found, accurate to about ' + Math.round(best.accuracy) + ' m' + (best.accuracy > 25 ? '. Improving...' : '.'));
+      if (best.accuracy <= 20) setTimeout(finish, 400);
+    }, (err) => { onStatus(err.code === 1 ? 'Location permission was refused.' : 'Could not get a location fix.'); finish(); }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    setTimeout(finish, 12000);
+  });
+}
+
+/**
+ * The student scanned the code on the lab screen with the phone camera (the link opened LABFLOW with ?k=...), or
+ * used "Scan the lab screen" inside the app. The code is checked the moment the page opens; the student then has a
+ * couple of minutes to choose what they are here for and send one location reading.
+ */
+LF.kioskCheckin = (code) => {
+  const body = h('div', { style: { display: 'grid', gap: '12px' } }, ui.skeleton(3));
+  let timer = null, stopped = false;
+  const m = LF.modal('Lab check-in', body, { sticky: true, onClose: () => { stopped = true; clearInterval(timer); } });
+  (async () => {
+    let op;
+    try { op = await api('checkin.open', { code }); }
+    catch (e) { clear(body).append(LF.ui.scanError(e), h('p', { class: 'hint' }, e.code === 'CODE_EXPIRED' || e.code === 'REPLAY' ? 'Scan the code that is on the lab screen right now.' : 'Ask the lab staff if this keeps happening.'), ui.button('Close', { onClick: () => m.close() })); return; }
+    const left = h('span', { class: 't-data' }), pass = h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, op.lab.name), h('div', { class: 'hint' }, op.lab.code + (op.lab.hasGeofence ? ' · within ' + op.lab.radiusM + ' m of the lab' : ''))), h('span', { class: 'badge info' }, 'Time left ', left));
+    const tick = () => { const ms = op.passExpiresAt - LF.now(); left.textContent = fmt.countdown(ms); if (ms <= 0) { clearInterval(timer); clear(body).append(LF.ui.scanError(new LF.ApiError('PASS_EXPIRED', 'Time is up. Scan the code on the lab screen again.')), ui.button('Close', { onClick: () => m.close() })); } };
+    tick(); timer = setInterval(tick, 500);
+    const status = h('div', { class: 'hint', role: 'status' }), err = h('div', { role: 'alert' });
+    let action = op.actions[0], choice = op.prefill;
+    const actLabel = { in: 'Check in', out: 'Check out', rescan: 'Confirm I am still here' };
+    const actions = op.actions.length > 1 ? h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'What do you want to do?' }, op.actions.map((a) => h('label', null, h('input', { type: 'radio', name: 'kc-act', value: a, checked: a === action, onchange: () => { action = a; draw(); } }), h('span', null, h('strong', null, actLabel[a]), a === 'out' && op.inside ? h('div', { class: 'hint' }, op.inside.title + (op.inside.closed ? ' (session closed, exit still accepted)' : '')) : null)))) : null;
+    const reasonText = { 'class': 'Regular lab course', event: 'Event or workshop', research: 'Individual research' };
+    const sessionsBox = h('div');
+    function draw() {
+      clear(sessionsBox);
+      if (action !== 'in') { if (op.inside) sessionsBox.append(h('div', { class: 'row' }, h('span', null, h('strong', null, op.inside.title), h('span', { class: 'hint' }, ' · inside since ' + fmt.time(op.inside.since))), ui.badge('inside', 'good'))); return; }
+      if (!op.candidates.length) { sessionsBox.append(ui.empty('Nothing to check in to', 'No session you are part of is open in this lab right now. For self-work, book a workstation or request a research visit first.')); return; }
+      sessionsBox.append(h('div', { class: 't-label', style: { marginBottom: '6px' } }, 'What are you here for?'), h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'Entry reason' }, op.candidates.map((c) => {
+        const id = c.sessionId || c.reservationId;
+        return h('label', { class: c.eligible ? '' : 'disabled' }, h('input', { type: 'radio', name: 'kc-ses', value: id, checked: id === choice, disabled: !c.eligible, onchange: () => { choice = id; } }),
+          h('span', null, h('strong', null, c.title), h('div', { class: 'hint' }, reasonText[c.reason] + ' · ' + fmt.time(c.scheduledStart) + ' - ' + fmt.time(c.scheduledEnd) + (c.eligible ? '' : ' · you are not on this roster'))));
+      })));
+    }
+    draw();
+    const go = ui.button('Send location and ' + (op.actions[0] === 'in' ? 'check in' : 'continue'), { kind: 'primary', block: true, icon: 'pin', onClick: async () => {
+      clear(err);
+      if (action === 'in' && !choice) { err.append(h('div', { class: 'err' }, 'Choose what you are here for.')); return; }
+      status.textContent = 'Getting your location...';
+      const geo = await readLocation((t) => { status.textContent = t; });
+      if (stopped) return;
+      if (!geo && op.geoUnavailablePolicy === 'reject') { err.append(h('div', { class: 'err' }, 'LABFLOW needs your location to check you in. Allow location for this page and try again.')); return; }
+      const c = op.candidates.find((x) => (x.sessionId || x.reservationId) === choice) || {};
+      try {
+        const r = await api('checkin.submit', { pass: op.pass, action, sessionId: action === 'in' ? c.sessionId || undefined : (op.inside ? op.inside.sessionId : undefined), reservationId: action === 'in' ? c.reservationId || undefined : undefined, reason: action === 'in' ? c.reason : undefined, geo: geo || undefined });
+        clearInterval(timer);
+        clear(body).append(h('div', { style: { display: 'grid', justifyItems: 'center', gap: '10px', textAlign: 'center' } }, h('div', { class: 'ok-big' }, icon('check')), h('div', { class: 't-h2' }, LF.SCAN_LABEL[r.type] || r.type),
+          h('div', null, r.session.title + ' · ' + fmt.time(r.at)), r.geofence === 'na' ? h('div', { class: 'card warn' }, 'Recorded without a location check. Your faculty may verify you in person.') : h('div', { class: 'hint' }, 'Location check passed.'),
+          ui.button('Done', { kind: 'primary', onClick: () => { m.close(); if (LF.current && LF.current.id === 'today') LF.go('today'); } })));
+      } catch (e) {
+        status.textContent = '';
+        err.append(LF.ui.scanError(e));
+        if (e.code === 'PASS_EXPIRED' || e.code === 'REPLAY') { clearInterval(timer); go.disabled = true; }
+      }
+    } });
+    clear(body).append(pass, op.consentRequired ? LF.privacyNotice() : null, actions, sessionsBox, h('p', { class: 'hint', style: { margin: 0 } }, 'Your phone sends its location once. LABFLOW keeps only whether you were inside the lab and how far away, never your coordinates.'), status, err, go);
+  })();
+};
+
+/** In-app camera / paste for the kiosk code, when the phone camera app is not convenient. */
+function scanLabScreen() {
+  let m;
+  const sc = ui.scanner({ title: 'Code on the lab screen', onCode: (code) => { m.close(); LF.kioskCheckin(code); } });
+  m = LF.modal('Scan the lab screen', h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Easiest: open your phone\'s camera app and point it at the QR on the lab screen, then tap the link. Or use the camera here.'), sc.el), { onClose: () => sc.stop() });
+}
+LF.scanLabScreen = scanLabScreen;
 
 /* ------------------------------------------------------------------ Today */
 LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render(root) {
   const me = LF.me, st = me.student;
   const stats = h('div', { class: 'grid-stats' }), list = h('div', { style: { display: 'grid', gap: '12px' } });
-  append(root, [h('h1', { class: 't-h1' }, 'Hello, ' + (me.displayName || '').split(' ')[0]), h('p', { class: 't-muted' }, fmt.date(LF.now()) + ' · ' + st.rollNo), deviceGate(me), stats, h('h2', { class: 't-h2', style: { marginTop: '8px' } }, 'Today\'s lab sessions'), list]);
+  append(root, [h('h1', { class: 't-h1' }, 'Hello, ' + (me.displayName || '').split(' ')[0]), h('p', { class: 't-muted', style: { marginTop: 0 } }, fmt.date(LF.now()) + ' · ' + st.rollNo), deviceGate(me), stats,
+    h('h2', { class: 't-h2', style: { marginTop: '8px' } }, 'Live lab count'), ui.occupancy(),
+    h('h2', { class: 't-h2', style: { marginTop: '8px' } }, 'Today\'s lab sessions'), list]);
   function append(el, kids) { kids.forEach((k) => { if (k) el.appendChild(k); }); }
   let reload;
   const loadStats = async () => {
@@ -130,7 +225,7 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
       ui.stat('Verified time', fmt.mins(d.attendance.verifiedMinutes || 0), (d.attendance.present || 0) + ' sessions present'),
       ui.stat('Unverified exits', String(d.attendance.unverifiedExits || 0), 'No exit scan recorded', d.attendance.unverifiedExits ? 'warn' : ''),
       ui.stat('Equipment on loan', String(d.activeLoans), d.overdueLoans ? d.overdueLoans + ' overdue' : 'None overdue', d.overdueLoans ? 'bad' : ''),
-      ui.stat('Device', cred.hasActive ? 'Active' : cred.pending ? 'Waiting' : 'None', cred.hasActive ? cred.active[0].label : cred.pending ? 'Needs approval at the lab desk' : 'Register in the Device tab', cred.hasActive ? 'good' : 'warn'));
+      ui.stat('Device', cred.hasActive ? 'Active' : cred.pending ? 'Waiting' : 'None', cred.hasActive ? cred.active[0].label : cred.pending ? 'Needs approval at the lab desk' : 'Needed only in device-QR labs', cred.hasActive ? 'good' : ''));
   };
   reload = ui.loadInto(list, async () => {
     const [r] = await Promise.all([api('sessions.mine'), loadStats().catch(() => {})]);
@@ -138,20 +233,22 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
     const hasKey = await Device.load();
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => {
       const m = s.mine, canIn = s.status === 'open' && m.state !== 'in', canOut = (s.status === 'open' || s.status === 'closed') && m.state === 'in', resc = s.status === 'open' && m.rescan && !m.rescan.done;
-      const warn = !hasKey && me.student.status === 'verified' ? h('div', { class: 'hint err' }, 'This phone has no device key yet. Use the Device tab first.') : null;
+      const a = hasMode(s, 'A'), b = hasMode(s, 'B'), need = canIn || canOut || resc;
+      const warn = b && !a && !hasKey && me.student.status === 'verified' && need ? h('div', { class: 'hint err' }, 'This lab uses device QR codes and this phone has no device key yet. Use the Device tab first.') : null;
       return h('article', { class: 'card', 'aria-label': s.title }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s) + (s.facultyName ? ' · ' + s.facultyName : ''))), h('div', { style: { display: 'flex', gap: '6px', alignItems: 'start', flexWrap: 'wrap' } }, ui.status(s.status), stateBadge(m))),
-        resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Scan at the kiosk before ' + fmt.time(m.rescan.closesAt) + ' to stay verified.') : null,
+        resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Scan again before ' + fmt.time(m.rescan.closesAt) + ' to stay verified.') : null,
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
-        s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. Your faculty opens the session when class starts.') : null, warn,
+        s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,
+        need && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Check in by scanning the QR on the lab screen with your phone camera.') : null, warn,
         h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' } },
-          canIn ? ui.button('Show check-in QR', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'in', () => reload()) }) : null,
-          resc ? ui.button('Confirm presence (QR)', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'rescan', () => reload()) }) : null,
-          canOut ? ui.button('Show exit QR', { icon: 'qr', onClick: () => openQr(s, 'out', () => reload()) }) : null));
+          need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => scanLabScreen() }) : null,
+          canIn && b ? ui.button('Show my QR', { kind: a ? '' : 'primary', icon: 'qr', onClick: () => openQr(s, 'in', () => reload()) }) : null,
+          resc && b ? ui.button('Confirm presence (QR)', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'rescan', () => reload()) }) : null,
+          canOut && b ? ui.button('Show exit QR', { icon: 'qr', onClick: () => openQr(s, 'out', () => reload()) }) : null));
     }));
   });
   LF.every(15000, () => { if (!document.querySelector('.modal-back')) reload(); });
 } });
-
 /* ------------------------------------------------------------------ History */
 LF.register({ role: 'student', id: 'history', label: 'History', icon: 'clock', render(root) {
   const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Attendance history'), out);
@@ -176,10 +273,11 @@ LF.register({ role: 'student', id: 'history', label: 'History', icon: 'clock', r
   }
 } });
 
+
 /* ------------------------------------------------------------------ Device & profile */
 LF.register({ role: 'student', id: 'device', label: 'Device', icon: 'phone', render(root) {
   const me = LF.me, st = me.student, box = h('div', { style: { display: 'grid', gap: '16px' } });
-  root.append(h('h1', { class: 't-h1' }, 'My device'), box);
+  root.append(h('h1', { class: 't-h1' }, 'My device and profile'), box);
   async function draw() {
     clear(box).append(ui.skeleton(3));
     let creds, local;
@@ -191,40 +289,72 @@ LF.register({ role: 'student', id: 'device', label: 'Device', icon: 'phone', ren
     clear(box).append(
       gate,
       h('section', { class: 'card', 'aria-label': 'Registered devices' }, h('h2', { class: 't-h2' }, 'Registered devices'),
+        h('p', { class: 'hint' }, 'Labs that use device QR codes need this. In labs that show a QR on a screen, you scan that instead and do not need a registered device.'),
         live.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '10px' } }, live.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), c.credentialId === thisId ? h('span', { style: { marginLeft: '8px' } }, ui.badge('this phone', 'info')) : null, h('div', { class: 'hint' }, 'Registered ' + fmt.dt(c.createdAt))), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, ui.status(c.status),
           ui.button('Revoke', { size: 'sm', kind: 'danger', onClick: async () => { if (!await LF.confirm({ title: 'Revoke this device?', message: 'It stops working immediately. A replacement phone must then be approved in person at the lab desk.', confirmLabel: 'Revoke', danger: true })) return; await api('cred.revoke', { credentialId: c.credentialId, reason: 'revoked by student' }); if (c.credentialId === thisId) await Device.forget(); LF.toast('Device revoked', 'good'); draw(); } }))))) : ui.empty('No device registered', 'Register this phone once. After that your phone proves it is yours every time it shows a QR.'),
         mismatch ? h('div', { class: 'card warn', style: { marginTop: '10px' } }, 'The key stored on this phone no longer matches an active registration. Register this phone again.') : null,
         !local && hasActive ? h('div', { class: 'card sky', style: { marginTop: '10px' } }, 'You have an active device, but it is not this phone. Registering this phone as a replacement needs approval at the lab desk (bring your ID card).') : null,
         st && st.status === 'verified' && !local ? h('div', { style: { marginTop: '12px' } }, ui.button(anyHistory ? 'Request this phone as my device' : 'Register this phone', { kind: 'primary', icon: 'phone', onClick: async () => {
-          const out = await Device.register('My phone'); LF.toast(out.status === 'active' ? 'Device registered' : 'Request sent. Visit the lab desk with your ID.', 'good'); await refreshMe(); draw(); } })) : null),
+          const out = await Device.register(Device.isDesktop() ? 'Desktop browser' : 'My phone'); LF.toast(out.status === 'active' ? 'Device registered' : 'Request sent. Visit the lab desk with your ID.', 'good'); await refreshMe(); draw(); } })) : null),
       h('section', { class: 'card', 'aria-label': 'Profile' }, h('h2', { class: 't-h2' }, 'Profile'),
-        h('dl', { class: 'dl' }, ...[['Name', st.name], ['Roll number', st.rollNo], ['Email', st.email], ['Department', st.department], ['Section', st.section || '-'], ['Year', st.year || '-'], ['Verification', st.status]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))])),
-        h('div', { class: 'hint' }, st.hasPhoto ? 'A reference photo is on file (used only for lab spot checks).' : 'No photo on file. Lab staff can add one at the desk.'),
+        h('dl', { class: 'dl' }, ...[['Name', st.name], ['Roll number', st.rollNo], ['Email', st.email], ['Mobile', me.mobile || '-'], ['Department', st.department], ['Section', st.section || '-'], ['Year', st.year || '-'], ['Verification', st.status]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))])),
+        h('div', { class: 'toolbar' }, ui.button('Change mobile number', { size: 'sm', onClick: () => ui.formModal({ title: 'Mobile number', fields: [{ name: 'mobile', label: 'Mobile number', type: 'tel', required: true, value: me.mobile, inputmode: 'tel' }], submitLabel: 'Save', onSubmit: async (v) => { await api('profile.update', { mobile: v.mobile }); await refreshMe(); LF.toast('Saved', 'good'); draw(); } }) }),
+          ui.button('Privacy notice', { size: 'sm', onClick: () => LF.modal('Privacy notice', LF.privacyNotice()) })),
+        h('div', { class: 'hint', style: { marginTop: '10px' } }, st.hasPhoto ? 'A reference photo is on file (used only for lab spot checks and on the scanner screen).' : 'No photo on file. Lab staff can add one at the desk.'),
         h('div', { style: { marginTop: '10px' } }, photoControl())),
       h('section', { class: 'card', 'aria-label': 'Compatibility check' }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('h2', { class: 't-h2' }, 'Phone compatibility check'), ui.button('Run check', { icon: 'refresh', onClick: async () => { clear(diag).append(ui.skeleton(4)); const rows = await Device.diagnostics(); renderDiag(rows); } })),
-        h('p', { class: 'hint' }, 'Checks that this browser can create and keep the device key. Run it once on the phone you will use.'), diag));
+        h('p', { class: 'hint' }, 'Checks that this browser can create and keep the device key and share a location. Run it once on the phone you will use.'), diag));
   }
   const diag = h('div');
   function renderDiag(rows) {
     clear(diag).append(h('div', { style: { display: 'grid', gap: '8px' } }, rows.map((r) => h('div', { class: 'row' }, h('div', null, h('strong', null, r.name), h('div', { class: 'hint' }, r.detail)), ui.badge(r.state === 'pass' ? 'OK' : r.state === 'warn' ? 'Note' : 'Problem', r.state === 'pass' ? 'good' : r.state === 'warn' ? 'warn' : 'bad')))),
-      rows.some((r) => r.state === 'fail') ? h('div', { class: 'card bad', style: { marginTop: '10px' } }, 'This browser cannot be used for QR attendance. Open LABFLOW in Chrome or Safari directly (not inside another app). If it still fails, ask your faculty to record your attendance manually; the correction is audited.') : null);
+      rows.some((r) => r.state === 'fail') ? h('div', { class: 'card bad', style: { marginTop: '10px' } }, 'This browser cannot be used for device QR attendance. Open LABFLOW in Chrome or Safari directly (not inside another app). If it still fails, ask your faculty to record your attendance manually; the correction is audited.') : null);
   }
   function photoControl() {
     if (st.hasPhoto && st.status === 'verified') return null;
     const input = h('input', { type: 'file', accept: 'image/*', capture: 'user', class: 'input', 'aria-label': 'Upload a photo', onchange: async (e) => { try { const data = await LF.util.photoFromFile(e.target.files[0]); await api('photo.set', { photo: data }); LF.toast('Photo saved', 'good'); await refreshMe(); draw(); } catch (x) { LF.fail(x); } } });
     return h('div', { class: 'field' }, h('label', null, 'Add or replace my photo'), input);
   }
-  async function refreshMe() { try { const m = await api('me'); LF.me = m; Object.assign(me, m); Object.assign(st, m.student); } catch (e) { /* keep old */ } }
+  async function refreshMe() { try { const m = await api('me'); Object.assign(me, m); Object.assign(st, m.student); } catch (e) { /* keep old */ } }
   draw();
 } });
 
 /* ------------------------------------------------------------------ Equipment */
 LF.register({ role: 'student', id: 'equipment', label: 'Equipment', icon: 'box', render(root) {
   root.append(h('h1', { class: 't-h1' }, 'Equipment'), ui.tabs([
+    { id: 'available', label: 'Available now', render: (p) => { ui.loadInto(p, catalogView); } },
+    { id: 'request', label: 'Request in the lab', render: (p) => { ui.loadInto(p, requestView); } },
     { id: 'loans', label: 'My loans', render: (p) => { ui.loadInto(p, loansView); } },
     { id: 'book', label: 'Book in advance', render: (p) => { p.appendChild(bookingForm(() => LF.go('equipment'))); } },
     { id: 'bookings', label: 'My bookings', render: (p) => { ui.loadInto(p, bookingsView); } },
     { id: 'groups', label: 'My groups', render: (p) => { ui.loadInto(p, groupsView); } }]));
+  async function catalogView() {
+    const r = await api('catalog.list');
+    if (!r.labs.length) return ui.empty('No labs yet');
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'What each lab has and what is free in the next hour. You do not need to be in the lab to look.'),
+      r.labs.map((l) => h('section', { class: 'card' }, h('h2', { class: 't-h2' }, l.name), h('div', { class: 'hint' }, l.code),
+        l.categories.length ? h('div', { class: 'tbl-wrap', style: { marginTop: '10px' } }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Item'), h('th', { style: { textAlign: 'right' } }, 'Free'), h('th', { style: { textAlign: 'right' } }, 'Total'))),
+          h('tbody', null, l.categories.map((c) => h('tr', null, h('td', null, c.name), h('td', { style: { textAlign: 'right' } }, c.free ? ui.badge(String(c.free), 'good') : ui.badge('0', 'bad')), h('td', { style: { textAlign: 'right' } }, String(c.total))))))) : h('div', { class: 'hint' }, 'No equipment listed.'),
+        l.kits.length ? h('div', { style: { marginTop: '10px' } }, h('div', { class: 't-label' }, 'Kits'), h('div', { class: 'pill-row', style: { marginTop: '6px' } }, l.kits.map((k) => ui.badge(k.name + ': ' + k.available + ' ready', k.available ? 'info' : '')))) : null)));
+  }
+  async function requestView() {
+    const [cat, occ, mine] = await Promise.all([api('catalog.list'), api('labs.occupancy'), api('equipment.mine')]);
+    const myList = h('div', { style: { display: 'grid', gap: '8px' } }, mine.requests.length ? mine.requests.map((q) => h('div', { class: 'row' }, h('div', null, h('strong', null, q.resourceName + ' × ' + q.quantity), h('div', { class: 'hint' }, q.labName + ' · ' + fmt.dt(q.requestedAt) + (q.decisionNote ? ' · ' + q.decisionNote : ''))),
+      h('div', { class: 'toolbar' }, ui.status(q.status), q.status === 'pending' ? ui.button('Cancel', { size: 'sm', onClick: async () => { await api('equipment.cancel', { requestId: q.requestId }); LF.go('equipment'); } }) : null))) : h('div', { class: 'hint' }, 'No requests yet.'));
+    const labs = cat.labs, lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', options: labs.map((l) => ({ value: l.labId, label: l.name })) });
+    const item = ui.field({ name: 'item', label: 'What do you need?', type: 'select', options: [] }), qty = ui.field({ name: 'quantity', label: 'Quantity', type: 'number', min: 1, max: 50, value: 1 });
+    const note = ui.field({ name: 'note', label: 'Note for the desk', maxlength: 200, placeholder: 'e.g. for the LED blink experiment' });
+    const fill = () => { const l = labs.find((x) => x.labId === lab.get()); clear(item.input); if (!l) return; l.kits.forEach((k) => item.input.append(h('option', { value: 'kit:' + k.kitId }, 'Kit: ' + k.name + ' (' + k.available + ' ready)'))); l.categories.forEach((c) => item.input.append(h('option', { value: 'category:' + c.categoryId }, c.name + ' (' + c.free + ' free)'))); };
+    lab.input.addEventListener('change', fill); fill();
+    const insideNow = occ.labs.filter((l) => l.inside > 0).map((l) => l.labId);
+    return h('div', { class: 'split' }, h('section', { class: 'card', style: { display: 'grid', gap: '12px' } }, h('h2', { class: 't-h2' }, 'Ask the lab desk'),
+      LF.me.settings.requireCheckinForRequests ? h('p', { class: 'hint', style: { margin: 0 } }, 'You need to be checked in to the lab. Staff hand over the item and record the loan; to reserve something for later, use "Book in advance".') : null,
+      lab.el, item.el, qty.el, note.el, ui.button('Send request', { kind: 'primary', icon: 'inbox', onClick: async () => {
+        const [rt, rid] = String(item.get()).split(':'); if (!rid) throw new LF.ApiError('BAD_INPUT', 'Choose an item.');
+        await api('equipment.request', { labId: lab.get(), resourceType: rt, resourceId: rid, quantity: Number(qty.get()) || 1, note: note.get() }); LF.toast('Request sent to the lab desk', 'good'); LF.go('equipment'); } }),
+        insideNow.length ? null : h('div', { class: 'hint' }, 'Nobody is checked in to any lab right now, so the desk can only fill a request once you have checked in.')),
+      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'My requests'), myList));
+  }
   async function loansView() {
     const r = await api('loans.mine');
     if (!r.loans.length) return ui.empty('Nothing borrowed', 'Items issued to you or your group show here, with due dates.');
@@ -233,10 +363,10 @@ LF.register({ role: 'student', id: 'equipment', label: 'Equipment', icon: 'box',
       h('ul', { style: { margin: '10px 0 0', paddingLeft: '18px' } }, l.items.map((i) => h('li', null, i.name + (i.assetTag ? ' (' + i.assetTag + ')' : '') + ' × ' + i.qtyIssued + (i.outstanding ? ' · ' + i.outstanding + ' still out' : ' · returned'))))))); }
   async function bookingsView() {
     const r = await api('booking.mine');
-    if (!r.reservations.length) return ui.empty('No bookings', 'Book equipment ahead of time from the "Book in advance" tab.');
+    if (!r.reservations.length) return ui.empty('No bookings', 'Book equipment or a workstation slot from the "Book in advance" tab.');
     return ui.table({ caption: 'My bookings', columns: [
       { key: 'resourceName', label: 'Item' }, { key: 'quantity', label: 'Qty', align: 'right' }, { key: 'startAt', label: 'From', render: (x) => fmt.dt(x.startAt) }, { key: 'endAt', label: 'To', render: (x) => fmt.dt(x.endAt) },
-      { key: 'status', label: 'Status', render: (x) => ui.status(x.status) }, { key: 'requesterName', label: 'For' },
+      { key: 'status', label: 'Status', render: (x) => h('span', { title: x.decisionNote || '' }, ui.status(x.status)) }, { key: 'requesterName', label: 'For' },
       { label: '', sort: false, render: (x) => (x.status === 'pending' || x.status === 'approved') ? ui.button('Cancel', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Cancel this booking?', message: x.resourceName + ' on ' + fmt.dt(x.startAt), confirmLabel: 'Cancel booking', cancelLabel: 'Keep', danger: true })) return; await api('booking.cancel', { reservationId: x.reservationId }); LF.toast('Booking cancelled', 'good'); LF.go('equipment'); } }) : null }], rows: r.reservations, pageSize: 15 }).el;
   }
   async function groupsView() {
@@ -245,7 +375,6 @@ LF.register({ role: 'student', id: 'equipment', label: 'Equipment', icon: 'box',
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.groups.map((g) => h('article', { class: 'card' }, h('strong', null, g.name), h('ul', { style: { margin: '8px 0 0', paddingLeft: '18px' } }, g.members.map((m) => h('li', null, m.name + ' (' + m.rollNo + ')' + (m.isLeader ? ' · leader' : '')))))));
   }
 } });
-
 /** Shared advance-booking form (students and faculty). */
 LF.bookingForm = bookingForm;
 function bookingForm(onDone) {
@@ -254,7 +383,7 @@ function bookingForm(onDone) {
     const [labs, cats, groups] = await Promise.all([api('labs.list'), api('categories.list'), LF.me.student ? api('groups.list') : Promise.resolve({ groups: [] })]);
     if (!labs.labs.length) return ui.empty('No labs configured', 'An administrator must add labs first.');
     const lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.labs.map((l) => ({ value: l.labId, label: l.name })) });
-    const kind = ui.field({ name: 'kind', label: 'What do you need?', type: 'select', options: [{ value: 'category', label: 'Equipment type (any unit)' }, { value: 'kit', label: 'A kit' }] });
+    const kind = ui.field({ name: 'kind', label: 'What do you need?', type: 'select', options: [{ value: 'category', label: 'Equipment type (any unit)' }, { value: 'kit', label: 'A kit' }, { value: 'asset', label: 'A specific workstation or unit (time slot)' }] });
     const res = ui.field({ name: 'res', label: 'Item', type: 'select', required: true, options: [] });
     const qty = ui.field({ name: 'quantity', label: 'Quantity', type: 'number', min: 1, step: 1, value: 1, required: true });
     const forWho = ui.field({ name: 'for', label: 'Booking for', type: 'select', options: [{ value: '', label: 'Me' }].concat(groups.groups.map((g) => ({ value: g.groupId, label: 'Group: ' + g.name }))) });
@@ -265,7 +394,9 @@ function bookingForm(onDone) {
     async function fillRes() {
       clear(res.input);
       if (kind.get() === 'category') cats.categories.forEach((c) => res.input.append(h('option', { value: c.categoryId }, c.name + (c.trackingMode === 'individual' ? '' : ' (consumable stock)'))));
-      else { kits = (await api('kits.list', { labId: lab.get() })).kits.filter((k) => k.status === 'active'); if (!kits.length) res.input.append(h('option', { value: '' }, 'No kits in this lab')); kits.forEach((k) => res.input.append(h('option', { value: k.kitId }, k.name))); }
+      else if (kind.get() === 'kit') { kits = (await api('kits.list', { labId: lab.get() })).kits.filter((k) => k.status === 'active'); if (!kits.length) res.input.append(h('option', { value: '' }, 'No kits in this lab')); kits.forEach((k) => res.input.append(h('option', { value: k.kitId }, k.name))); }
+      else { const c = await api('catalog.list', { labId: lab.get() }), units = (c.labs[0] || { units: [] }).units; if (!units.length) res.input.append(h('option', { value: '' }, 'No bookable units in this lab')); units.forEach((u) => res.input.append(h('option', { value: u.assetId }, u.name + (u.assetTag ? ' (' + u.assetTag + ')' : '')))); }
+      qty.el.hidden = kind.get() === 'asset';
     }
     lab.input.addEventListener('change', fillRes); kind.input.addEventListener('change', fillRes); await fillRes();
     function payload() {
@@ -282,7 +413,7 @@ function bookingForm(onDone) {
     } });
     const submit = ui.button('Request booking', { kind: 'primary', icon: 'calendar', onClick: async () => {
       clear(msg); await api('booking.request', payload()); LF.toast('Booking requested. Lab staff will confirm.', 'good'); if (onDone) onDone(); } });
-    return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Advance bookings reserve stock for a time window. You collect the items at the lab desk; staff issue them then.'),
+    return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Advance bookings reserve stock for a time window. You collect items at the lab desk. A workstation slot is released if you have not checked in to the lab 15 minutes after it starts.'),
       lab.el, kind.el, res.el, qty.el, forWho.el, h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '12px' } }, start.el, end.el), purpose.el, avail, msg, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, check, submit));
   });
   return root;
@@ -305,5 +436,53 @@ LF.register({ role: 'student', id: 'research', label: 'Research', icon: 'lab', r
       ui.button('Send request', { kind: 'primary', icon: 'inbox', onClick: async () => { await api('research.request', { labId: lab.get(), facultyId: sup.get(), date: date.get(), startTime: s.get(), endTime: e.get(), purpose: purpose.get() }); clear(done).append(h('div', { class: 'card good' }, 'Request sent. You will be notified when your supervisor decides.')); purpose.input.value = ''; } }));
   });
 } });
+
+/* ------------------------------------------------------------------ Class representative */
+LF.register({ role: 'student', id: 'classrep', label: 'Class rep', icon: 'users', when: (me) => !!me.classRep, render(root) {
+  const out = h('div', { style: { display: 'grid', gap: '12px' } });
+  root.append(h('h1', { class: 't-h1' }, 'Class representative'),
+    h('p', { class: 't-muted', style: { marginTop: 0 } }, 'You run your class session when needed: open or close it, call a rescan when your teacher asks, and in device-QR labs scan classmates. Scans are only possible while the session is open, only for your class, never for yourself, and every scan you make is shown to the teacher.'), out);
+  const reload = () => ui.loadInto(out, async () => {
+    const r = await api('cr.mine');
+    if (!r.sessions.length) return ui.empty('No class session today', 'Sessions for ' + r.reps.map((x) => x.courseCode + (x.section ? ' ' + x.section : '')).join(', ') + ' appear here on class days.');
+    return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => {
+      const c = s.counts, b = String(s.labMode || 'A').indexOf('B') >= 0;
+      return h('article', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s))), ui.status(s.status)),
+        c ? h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Inside ' + c.inside, 'good'), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : null, c.rescanWindow ? ui.badge('Rescan until ' + fmt.time(c.rescanWindow.closesAt), 'warn') : null) : null,
+        h('div', { class: 'toolbar', style: { marginTop: '12px' } },
+          s.status === 'scheduled' ? ui.button('Open session', { kind: 'primary', onClick: async () => { await api('sessions.open', { sessionId: s.sessionId }); LF.toast('Session opened', 'good'); reload(); } }) : null,
+          s.status === 'open' && b && r.crScanning ? ui.button('Scan classmates', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan classmates: ' + s.title) }) : null,
+          s.status === 'open' ? ui.button('Call a rescan', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); reload(); } }) : null,
+          s.status === 'open' ? ui.button('Close session', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close this session?', message: 'Only close it if your teacher asked you to.', confirmLabel: 'Close session' })) return; await api('sessions.close', { sessionId: s.sessionId, reason: 'closed by class representative' }); reload(); } }) : null));
+    }));
+  });
+  reload(); LF.every(20000, () => { if (!document.querySelector('.modal-back')) reload(); });
+} });
+
+/* ------------------------------------------------------------------ Event coordinator (any role) */
+function coordinatorView(root) {
+  const out = h('div', { style: { display: 'grid', gap: '12px' } });
+  root.append(h('h1', { class: 't-h1' }, 'Events I coordinate'),
+    h('p', { class: 't-muted', style: { marginTop: 0 } }, 'Your rights cover this event only and end shortly after it. You can open the session, scan participants, add guests without a university account, and watch the count against the lab capacity.'), out);
+  const reload = () => ui.loadInto(out, async () => {
+    const r = await api('events.mine');
+    if (!r.events.length) return ui.empty('No events', 'When a faculty member names you as coordinator, the event appears here.');
+    return h('div', { style: { display: 'grid', gap: '12px' } }, r.events.map((e) => {
+      const c = e.counts, over = c && c.overCapacity;
+      return h('article', { class: 'card' + (over ? ' bad' : '') }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name), h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + ' - ' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : ''))), e.session ? ui.status(e.session.status) : null),
+        h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Registered ' + e.registered, 'info'), ui.badge('Guests ' + e.guests, ''), c ? ui.badge('Inside ' + c.inside + ' / ' + (c.capacity || '-'), over ? 'bad' : 'good') : null, c && c.onBreak ? ui.badge('on break', 'warn') : null),
+        over ? h('div', { class: 'err', style: { marginTop: '6px' } }, 'Over the lab capacity. Ask people to wait outside or move to another lab.') : null,
+        e.active ? h('div', { class: 'toolbar', style: { marginTop: '12px' } },
+          e.session && e.session.status === 'scheduled' ? ui.button('Open event session', { kind: 'primary', onClick: async () => { await api('sessions.open', { sessionId: e.sessionId }); reload(); } }) : null,
+          e.session && e.session.status === 'open' ? ui.button('Scan participants', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan participants: ' + e.name) }) : null,
+          ui.button('Add a guest', { icon: 'plus', onClick: () => ui.formModal({ title: 'Add a guest', intro: 'For speakers or visitors without a Karunya account. Each addition is logged.', fields: [{ name: 'name', label: 'Name', required: true, maxlength: 80 }, { name: 'organisation', label: 'Organisation', maxlength: 80 }], submitLabel: 'Add guest', onSubmit: async (v) => { await api('events.addGuest', Object.assign({ labEventId: e.labEventId }, v)); LF.toast('Guest added', 'good'); reload(); } }) }),
+          ui.button('Register participants', { onClick: () => ui.formModal({ title: 'Register participants', fields: [{ name: 'rolls', label: 'Roll numbers (one per line or comma separated)', type: 'textarea', rows: 6, required: true }], submitLabel: 'Register', onSubmit: async (v) => { const x = await api('events.register', { labEventId: e.labEventId, rollNos: v.rolls.split(/[\s,;]+/).filter(Boolean) }); LF.toast(x.added + ' registered' + (x.errors.length ? ', ' + x.errors.length + ' not found' : ''), x.errors.length ? '' : 'good'); reload(); } }) }),
+          e.session && e.session.status === 'open' ? ui.button('Close', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close the event session?', message: 'Participants can still scan out for a short grace period.', confirmLabel: 'Close' })) return; await api('sessions.close', { sessionId: e.sessionId, reason: 'closed by coordinator' }); reload(); } }) : null)
+          : h('div', { class: 'hint', style: { marginTop: '10px' } }, 'Your coordinator rights start ' + fmt.dt(e.startAt) + ' (minus a short lead time).'));
+    }));
+  });
+  reload(); LF.every(10000, () => { if (!document.querySelector('.modal-back')) reload(); });
+}
+['student', 'faculty', 'staff'].forEach((role) => LF.register({ role, id: 'coordinate', label: 'Events I run', icon: 'calendar', when: (me) => me.coordinating > 0, render: coordinatorView }));
 })();
 </script>

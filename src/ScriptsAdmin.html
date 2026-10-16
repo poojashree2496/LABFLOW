@@ -28,7 +28,7 @@ LF.register({ role: 'admin', id: 'overview', label: 'Overview', icon: 'home', re
     return h('div', { style: { display: 'grid', gap: '20px' } },
       h('div', { class: 'grid-stats' }, ui.stat('Labs', d.labs), ui.stat('Open sessions now', d.openSessions, null, d.openSessions ? 'good' : ''), ui.stat('Students', d.users.student), ui.stat('Faculty', d.users.faculty), ui.stat('Lab staff', d.users.staff), ui.stat('Admins', d.users.admin)),
       h('section', { class: 'card', 'aria-label': 'Attendance by day' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h2', { class: 't-h2' }, 'Sessions and attendance'), h('div', { class: 'hint' }, totalSessions + ' sessions · ' + totalPresent + ' attendances')),
-        totalSessions ? [ui.barChart(chart, { label: 'Sessions (dark) and attendances (lime) per day' }), h('div', { class: 'hint' }, 'Dark bars: sessions held. Lime bars: students with a verified attendance. Based on closed and open sessions only.')] : ui.empty('No sessions in this period', 'Charts fill in as sessions are held.')),
+        totalSessions ? [ui.barChart(chart, { label: 'Sessions (blue) and attendances (gold) per day' }), h('div', { class: 'hint' }, 'Blue bars: sessions held. Gold bars: students with a verified attendance. Based on closed and open sessions only.')] : ui.empty('No sessions in this period', 'Charts fill in as sessions are held.')),
       h('div', { class: 'split' },
         h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Equipment'), h('dl', { class: 'dl' }, ...[['Single items', st.individual], ['On loan', st.onLoan], ['Counted units', st.quantityUnits], ['Units out', st.quantityOut], ['Damaged', st.damaged], ['Missing', st.missing]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))]))),
         h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Waiting for action'), h('dl', { class: 'dl' }, ...[['Students to verify', q.pendingStudents], ['Device requests', q.pendingCredentials], ['Booking requests', q.pendingBookings], ['Attendance corrections', q.pendingCorrections], ['Overdue loans', q.overdueLoans]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))])))));
@@ -161,14 +161,49 @@ LF.register({ role: 'admin', id: 'academics', label: 'Academics', icon: 'book', 
 /* ------------------------------------------------------------------ Labs & kiosks */
 LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root) {
   root.append(h('h1', { class: 't-h1' }, 'Labs & kiosks'), ui.tabs([{ id: 'labs', label: 'Labs', render: (p) => { ui.loadInto(p, labsView); } }, { id: 'kiosks', label: 'Scan kiosks', render: (p) => { ui.loadInto(p, kiosksView); } }]));
+  const MODE_LABEL = { A: 'Kiosk QR + GPS', B: 'Device QR', AB: 'Both' };
   async function labsView() {
     const r = await api('labs.list', { includeInactive: true }), reload = () => LF.go('labs');
-    return ui.table({ caption: 'Labs', rows: r.labs, searchPlaceholder: 'Search labs', empty: ui.empty('No labs yet', 'Add each laboratory (IoT, computing, GPU, research...).'), toolbar: ui.button('Add lab', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => labForm(null, reload) }),
-      columns: [{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'type', label: 'Type' }, { label: 'Location', text: (x) => (x.building || '') + ' ' + (x.room || '') }, { key: 'capacity', label: 'Capacity', align: 'right' }, { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => labForm(x, reload) }) }] }).el;
+    return h('div', { style: { display: 'grid', gap: '12px' } }, h('div', { class: 'card sky' }, h('strong', null, 'Check-in modes. '), 'Kiosk QR + GPS (A) is the specification\'s flow: the lab screen shows a rotating QR, students scan it and their phone location is checked against the lab geofence. Device QR (B) has students show a QR signed by their registered phone, scanned by the teacher, staff, a class rep or the kiosk scanner. Labs without their own mode use the default (' + MODE_LABEL[r.defaultMode] + ', under Settings).'),
+      ui.table({ caption: 'Labs', rows: r.labs, searchPlaceholder: 'Search labs', empty: ui.empty('No labs yet', 'Add each laboratory (IoT, computing, GPU, research...).'), toolbar: ui.button('Add lab', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => labForm(null, reload) }),
+        columns: [{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'type', label: 'Type' }, { label: 'Location', text: (x) => (x.building || '') + ' ' + (x.room || '') }, { key: 'capacity', label: 'Seats', align: 'right' },
+          { key: 'mode', label: 'Check-in', render: (x) => h('span', { class: 'pill-row' }, ui.badge(MODE_LABEL[x.mode] || x.mode, 'info'), x.checkinMode ? null : ui.badge('default', '')) },
+          { label: 'Geofence', text: (x) => x.latitude ? 'set' : 'none', render: (x) => x.latitude !== null && x.latitude !== undefined && x.latitude !== '' ? ui.badge((x.radiusM || 'default') + ' m', 'good') : (x.mode.indexOf('A') >= 0 ? ui.badge('not set', 'warn') : '-') },
+          { label: 'Hours', text: (x) => x.openTime || '', render: (x) => x.openTime ? x.openTime + '-' + x.closeTime : '-' },
+          { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => labForm(x, reload) }) }] }).el);
   }
   function labForm(l, reload) {
-    LF.ui.formModal({ title: l ? 'Edit lab' : 'Add lab', cols: 2, fields: [{ name: 'code', label: 'Code', required: true, value: l ? l.code : '', maxlength: 20 }, { name: 'name', label: 'Name', required: true, value: l ? l.name : '', maxlength: 80 }, { name: 'type', label: 'Type', type: 'select', value: l ? l.type : 'computing', options: ['iot', 'computing', 'gpu', 'research', 'other'] }, { name: 'capacity', label: 'Capacity', type: 'number', min: 1, value: l ? l.capacity : 60 }, { name: 'building', label: 'Building', value: l ? l.building : '' }, { name: 'room', label: 'Room', value: l ? l.room : '' }, { name: 'status', label: 'Status', type: 'select', value: l ? l.status : 'active', options: ['active', 'inactive'] }, { name: 'notes', label: 'Notes', value: l ? l.notes : '', span: true }], submitLabel: 'Save',
-      onSubmit: async (v) => { await api('labs.upsert', Object.assign({ labId: l ? l.labId : undefined }, v, { capacity: Number(v.capacity) })); LF.toast('Saved', 'good'); reload(); } });
+    const f = ui.field;
+    const code = f({ name: 'code', label: 'Code', required: true, value: l ? l.code : '', maxlength: 20 }), name = f({ name: 'name', label: 'Name', required: true, value: l ? l.name : '', maxlength: 80 });
+    const type = f({ name: 'type', label: 'Type', type: 'select', value: l ? l.type : 'computing', options: ['iot', 'computing', 'gpu', 'research', 'other'] }), cap = f({ name: 'capacity', label: 'Seats', type: 'number', min: 1, value: l ? l.capacity : 60 });
+    const building = f({ name: 'building', label: 'Building', value: l ? l.building : '' }), room = f({ name: 'room', label: 'Room', value: l ? l.room : '' });
+    const mode = f({ name: 'checkinMode', label: 'Check-in mode', type: 'select', value: l ? l.checkinMode : '', options: [{ value: '', label: 'Use the default' }, { value: 'A', label: 'Kiosk QR + GPS (A)' }, { value: 'B', label: 'Device QR (B)' }, { value: 'AB', label: 'Both (A and B)' }] });
+    const lat = f({ name: 'latitude', label: 'Latitude', type: 'number', step: 'any', value: l && l.latitude !== null ? l.latitude : '' }), lng = f({ name: 'longitude', label: 'Longitude', type: 'number', step: 'any', value: l && l.longitude !== null ? l.longitude : '' });
+    const radius = f({ name: 'radiusM', label: 'Geofence radius (m)', type: 'number', min: 5, max: 500, value: l && l.radiusM ? l.radiusM : '', hint: 'Blank = the default in Settings (20 m).' });
+    const open = f({ name: 'openTime', label: 'Opens', type: 'time', value: l ? l.openTime : '' }), close = f({ name: 'closeTime', label: 'Closes', type: 'time', value: l ? l.closeTime : '', hint: 'Staff are alerted about anyone still inside after closing.' });
+    const inch = f({ name: 'inchargeEmails', label: 'Lab incharge emails', value: l ? l.inchargeEmails : '', hint: 'Comma separated. They receive the daily digest and overstay alerts.' });
+    const status = f({ name: 'status', label: 'Status', type: 'select', value: l ? l.status : 'active', options: ['active', 'inactive'] }), notes = f({ name: 'notes', label: 'Notes', value: l ? l.notes : '' });
+    const here = h('div', { class: 'hint', role: 'status' });
+    const useHere = ui.button('Use this device\'s location', { size: 'sm', icon: 'pin', onClick: () => new Promise((resolve) => {
+      if (!navigator.geolocation) { here.textContent = 'This browser cannot share a location.'; return resolve(); }
+      here.textContent = 'Reading location... stand in the middle of the lab.';
+      navigator.geolocation.getCurrentPosition((p) => { lat.input.value = p.coords.latitude.toFixed(6); lng.input.value = p.coords.longitude.toFixed(6); here.textContent = 'Set from this device (accuracy about ' + Math.round(p.coords.accuracy) + ' m). Measure on site for best results.'; resolve(); },
+        (e) => { here.textContent = e.code === 1 ? 'Location permission was refused.' : 'Could not read the location.'; resolve(); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    }) });
+    const msg = h('div', { class: 'err', role: 'alert', hidden: true }), grid = (...k) => h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px' } }, ...k);
+    let m;
+    const save = ui.button('Save', { kind: 'primary', onClick: async () => {
+      msg.hidden = true;
+      try {
+        await api('labs.upsert', { labId: l ? l.labId : undefined, code: code.get(), name: name.get(), type: type.get(), capacity: Number(cap.get()) || 60, building: building.get(), room: room.get(), checkinMode: mode.get(),
+          latitude: lat.get() === '' ? undefined : Number(lat.get()), longitude: lng.get() === '' ? undefined : Number(lng.get()), radiusM: radius.get() === '' ? undefined : Number(radius.get()),
+          openTime: open.get() || undefined, closeTime: close.get() || undefined, inchargeEmails: inch.get(), status: status.get(), notes: notes.get() });
+        LF.toast('Saved', 'good'); m.close(); reload();
+      } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+    } });
+    m = LF.modal(l ? 'Edit ' + l.name : 'Add lab', h('div', { style: { display: 'grid', gap: '12px' } }, grid(code.el, name.el, type.el, cap.el), grid(building.el, room.el, status.el),
+      h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '12px', display: 'grid', gap: '12px' } }, h('legend', { class: 't-label' }, 'Check-in and geofence'), mode.el, grid(lat.el, lng.el, radius.el), h('div', { class: 'toolbar' }, useHere, here)),
+      grid(open.el, close.el), inch.el, notes.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), save)), { wide: true });
   }
   async function kiosksView() {
     const [k, labs] = await Promise.all([api('kiosks.list'), api('labs.list', { includeInactive: true })]), reload = () => LF.go('labs'), name = (id) => (labs.labs.find((l) => l.labId === id) || {}).name || id;
@@ -198,12 +233,14 @@ LF.register({ role: 'admin', id: 'approvals', label: 'Approvals', icon: 'shield'
 
 /* ------------------------------------------------------------------ Settings */
 LF.register({ role: 'admin', id: 'settings', label: 'Settings', icon: 'settings', render(root) {
-  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Settings'), out);
-  const groups = [['QR & attendance', ['qrTtlSeconds', 'exitGraceMinutes', 'autoCloseGraceMinutes', 'requireExitScan', 'credentialMaxActive', 'correctionApprovalAfterHours']], ['Rescans & spot checks', ['rescanMode', 'rescanWindowMinutes', 'rescanMinFraction', 'rescanMaxFraction', 'spotCheckDefaultCount']], ['Loans & bookings', ['loanDefaultDays', 'maxOpenLoansPerBorrower', 'blockLoansWhenOverdue', 'bookingMaxAdvanceDays', 'bookingMaxDays', 'bookingMaxActivePerRequester', 'bookingHoldPending']], ['Email & audit', ['emailEnabled', 'emailDailyReserve', 'reportRecipients', 'auditCheckpointEvery']]];
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Settings'), h('p', { class: 't-muted' }, 'Stored in the script properties (PropertiesService). Every change is written to the audit log with its old and new value.'), out);
   ui.loadInto(out, async () => {
-    const r = await api('settings.get'), by = {}; r.settings.forEach((s) => { by[s.key] = s; });
+    const r = await api('settings.get'), by = {}, order = [];
+    r.settings.forEach((s) => { by[s.key] = s; if (order.indexOf(s.group) < 0) order.push(s.group); });
+    const groups = order.map((g) => [g, r.settings.filter((s) => s.group === g).map((s) => s.key)]);
     const inputs = {}; const msg = h('div', { class: 'err', role: 'alert', hidden: true });
-    const fieldFor = (s) => { const f = ui.field({ name: s.key, label: s.key, type: s.type === 'bool' ? 'checkbox' : s.type === 'enum' ? 'select' : s.type === 'int' ? 'number' : 'text', value: s.value, options: s.values, min: s.min, max: s.max, hint: s.desc + (s.type === 'int' ? ' (' + s.min + ' to ' + s.max + ', default ' + s.def + ')' : '') }); if (s.type === 'bool') f.el.querySelector('label').lastChild.textContent = ' ' + s.key; inputs[s.key] = { f, s }; return f.el; };
+    const label = (k) => { const w = k.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/\bqr\b/g, 'QR').replace(/\bgps\b/g, 'GPS').replace(/\bcr\b/g, 'CR').replace(/\bhod\b/g, 'HOD').replace(/\bkmh\b/g, '(km/h)').replace(/ m$/, ' (m)').replace(/ seconds$/, ' (seconds)').replace(/ minutes$/, ' (minutes)').replace(/ hours$/, ' (hours)').replace(/ days$/, ' (days)'); return w.charAt(0).toUpperCase() + w.slice(1); };
+    const fieldFor = (s) => { const f = ui.field({ name: s.key, label: label(s.key), type: s.type === 'bool' ? 'checkbox' : s.type === 'enum' ? 'select' : s.type === 'int' ? 'number' : 'text', value: s.value, options: s.values, min: s.min, max: s.max, hint: s.desc + (s.type === 'int' ? ' (' + s.min + ' to ' + s.max + ', default ' + s.def + ')' : '') }); if (s.type === 'bool') f.el.querySelector('label').lastChild.textContent = ' ' + label(s.key); inputs[s.key] = { f, s }; return f.el; };
     return h('form', { style: { display: 'grid', gap: '16px', maxWidth: '760px' }, onsubmit: async (e) => {
       e.preventDefault(); msg.hidden = true; const values = {};
       Object.keys(inputs).forEach((k) => { const { f, s } = inputs[k]; const v = f.get(); if (String(v) !== String(s.value)) values[k] = s.type === 'int' ? Number(v) : v; });
@@ -215,7 +252,16 @@ LF.register({ role: 'admin', id: 'settings', label: 'Settings', icon: 'settings'
 
 /* ------------------------------------------------------------------ Audit & system */
 LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', render(root) {
-  root.append(h('h1', { class: 't-h1' }, 'Audit & system'), ui.tabs([{ id: 'audit', label: 'Audit trail', render: (p) => { p.appendChild(auditView()); } }, { id: 'system', label: 'System health', render: (p) => { ui.loadInto(p, systemView); } }, { id: 'tools', label: 'Reconcile', render: (p) => { p.appendChild(toolsView()); } }, { id: 'reports', label: 'Reports', render: (p) => { p.appendChild(LF.ui.reports(['daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'audit'])); } }]));
+  root.append(h('h1', { class: 't-h1' }, 'Audit & system'), ui.tabs([{ id: 'audit', label: 'Audit trail', render: (p) => { p.appendChild(auditView()); } }, { id: 'system', label: 'System health', render: (p) => { ui.loadInto(p, systemView); } }, { id: 'quota', label: 'Quota usage', render: (p) => { ui.loadInto(p, quotaView); } }, { id: 'tools', label: 'Reconcile', render: (p) => { p.appendChild(toolsView()); } }, { id: 'reports', label: 'Reports', render: (p) => { p.appendChild(LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'erp', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'audit'])); } }]));
+  /** Google can change Apps Script limits without notice (SRS section 14), so this shows usage against the published ones. */
+  async function quotaView() {
+    const q = await api('system.quota'), num = (n) => n === null || n === undefined ? 'n/a' : Number(n).toLocaleString('en-IN');
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { style: { display: 'grid', gap: '10px' } }, q.items.map((i) => {
+      const pct = i.limit && i.used !== null ? Math.min(100, Math.round(i.used * 100 / i.limit)) : null;
+      return h('div', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('strong', null, i.label), h('span', { class: 't-data' }, num(i.used) + (i.unit ? ' ' + i.unit : '') + (i.limit ? ' of ' + num(i.limit) + (i.unit ? ' ' + i.unit : '') : ''))),
+        pct !== null ? h('div', { class: 'progress' + (pct > 80 ? ' gold' : ''), style: { margin: '8px 0' } }, h('i', { style: { width: pct + '%' } })) : null, h('div', { class: 'hint' }, i.note));
+    })), h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Largest tables'), h('dl', { class: 'dl' }, ...q.largestTables.flatMap((t) => [h('dt', null, t.table), h('dd', null, num(t.rows) + ' rows')]))));
+  }
   function auditView() {
     const box = h('div', { style: { display: 'grid', gap: '12px' } }), list = h('div'), verify = h('div', { role: 'status' });
     const action = h('input', { class: 'input', placeholder: 'Action starts with (e.g. loan, session, scan)', 'aria-label': 'Filter by action', style: { maxWidth: '280px' } }), actor = h('input', { class: 'input', placeholder: 'Actor contains', 'aria-label': 'Filter by actor', style: { maxWidth: '240px' } });
@@ -247,7 +293,14 @@ LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', 
 } });
 
 /* ------------------------------------------------------------------ reuse staff views */
+/* ------------------------------------------------------------------ Events and class representatives */
+LF.register({ role: 'admin', id: 'events', label: 'Events & reps', icon: 'calendar', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Events and class representatives'), ui.tabs([{ id: 'events', label: 'Events', render: (p) => { p.appendChild(LF.eventsView()); } }, { id: 'reps', label: 'Class representatives', render: (p) => { p.appendChild(LF.classRepsView()); } }]));
+} });
+LF.register({ role: 'admin', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
+
+/* ------------------------------------------------------------------ reuse staff views */
 function reuse(id, label, iconName) { const v = (LF.routes.staff || []).find((x) => x.id === id); if (v) LF.register(Object.assign({}, v, { role: 'admin', label: label || v.label, icon: iconName || v.icon })); }
-reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings');
+reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan');
 })();
 </script>

@@ -1,93 +1,105 @@
 <script>
-/* Scan kiosk: a registered kiosk Google account on a lab PC/tablet. Primary input is a USB/Bluetooth "keyboard wedge" QR scanner
-   (it types the code and presses Enter). A camera mode (BarcodeDetector) and a paste box are fallbacks. The server decides
-   every scan; this screen only forwards the code and shows the outcome. */
+/* Lab kiosk: a dedicated kiosk Google account on the lab PC / monitor. What it shows depends on the lab's check-in mode:
+     A   the rotating QR (it changes every few seconds) that students scan with their phone camera, the live count and the
+         latest check-ins;
+     B   the scanner: a USB/Bluetooth "keyboard wedge" QR scanner types each student's code (camera and paste are
+         fallbacks), and the screen flashes the student's name, photo and IN/OUT;
+     AB  both side by side.
+   The kiosk account can do nothing else. The server decides every check-in; this screen only shows and forwards. */
 (function () {
 'use strict';
 const LF = window.LF, h = LF.h, api = LF.api, fmt = LF.fmt, ui = LF.ui, clear = LF.clear, icon = LF.icon;
+const TYPE = { IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed' };
 
 LF.register({ role: 'kiosk', id: 'kiosk', label: 'Kiosk', icon: 'scan', render(root) {
   const k = LF.me.kiosk;
-  const flash = h('div', { class: 'kiosk-flash idle', role: 'status', 'aria-live': 'assertive' }, h('div', { class: 't-display' }, 'Ready'), h('div', null, 'Hold your phone QR under the scanner'));
-  const recent = h('ol', { style: { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '6px' }, 'aria-label': 'Recent scans' });
-  const lab = h('div', { class: 'hint' }), clock = h('div', { class: 't-big t-data' }), health = h('div', { class: 'hint', role: 'status' });
-  const video = h('video', { class: 'scanbox', playsinline: true, muted: true, hidden: true, 'aria-label': 'Camera preview' });
-  const input = h('input', { class: 'input', id: 'k-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: false, 'aria-label': 'Scanner input. Scan a code or paste it and press Enter.', placeholder: 'Scan, or paste a code and press Enter', style: { fontFamily: 'ui-monospace, monospace' } });
-  let stopped = false, queue = [], busy = false, lastCode = '', lastAt = 0, camStream = null, camTimer = null, flashTimer = null;
-  const log = [];
+  let stopped = false, mode = null, lastSeenEvent = null, displayTimer = null, flashTimer = null;
+  const clock = h('div', { class: 't-big t-data', style: { fontSize: '44px' } }), labName = h('div', { class: 'hint', style: { color: 'rgb(255 255 255 / .85)' } }), modeBadge = h('span', { class: 'badge' });
+  const count = h('div', { class: 't-big', style: { fontSize: '56px' } }, '-'), capLine = h('div', { class: 'hint' }), openLine = h('div', { class: 'hint', role: 'status' });
+  const grid = h('div', { class: 'kiosk-grid' });
 
-  function show(kind, title, sub) {
+  /* ---- Version A: rotating QR ---- */
+  const qrBox = h('div', { class: 'qr-frame kiosk-qr', 'aria-label': 'Check-in QR code' }), qrBar = h('div', { class: 'progress gold' }, h('i', { style: { width: '100%' } }));
+  const recent = h('ol', { class: 'feed', style: { listStyle: 'none', margin: 0, padding: 0 }, 'aria-label': 'Latest check-ins' });
+  const panelA = h('section', { class: 'card', style: { display: 'grid', gap: '14px', justifyItems: 'center', textAlign: 'center' }, 'aria-label': 'Scan to check in' },
+    h('div', { class: 't-display', style: { fontSize: '40px' } }, 'Scan to check in'),
+    h('div', { class: 'hint', style: { fontSize: '15px' } }, 'Open your phone camera, point it at the code and tap the link. The code changes every few seconds.'), qrBox, h('div', { style: { width: 'min(46vh, 520px)' } }, qrBar));
+  async function refreshDisplay() {
+    if (stopped) return;
+    try {
+      const d = await api('kiosk.display'); applyStatus(d);
+      if (d.code) {
+        clear(qrBox).appendChild(LF.util.qrSvg(d.url));
+        const ms = Math.max(1000, d.nextAt - LF.now()), bi = qrBar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
+        requestAnimationFrame(() => { bi.style.transition = 'width ' + ms + 'ms linear'; bi.style.width = '0%'; });
+        displayTimer = setTimeout(refreshDisplay, ms + 150);
+      } else displayTimer = setTimeout(refreshDisplay, 8000);
+      drawRecent(d.recent || []);
+    } catch (e) { openLine.textContent = 'Cannot reach the server: ' + LF.errMsg(e); openLine.className = 'err'; displayTimer = setTimeout(refreshDisplay, 4000); }
+  }
+  function drawRecent(list) {
+    clear(recent).append(...(list.length ? list.map((r) => h('li', { class: 'row' }, h('span', null, h('strong', null, r.name || '-'), ' ' + (r.rollNo || '')), h('span', { class: 'toolbar' }, LF.ui.badge(TYPE[r.type] || r.type, r.type === 'OUT' ? '' : 'good'), h('span', { class: 'hint t-data' }, fmt.time(r.at))))) : [h('li', { class: 'hint' }, 'No check-ins yet.')]));
+    const top = list[0];
+    if (top && mode === 'A' && lastSeenEvent && top.eventId !== lastSeenEvent && LF.now() - top.at < 20000) show('good', TYPE[top.type] || 'Recorded', (top.name || '') + ' · ' + (top.rollNo || ''));
+    if (top) lastSeenEvent = top.eventId;
+  }
+
+  /* ---- Version B: scanner ---- */
+  const flash = h('div', { class: 'kiosk-flash idle', role: 'status', 'aria-live': 'assertive' });
+  const photoBox = h('div');
+  const idle = () => { flash.className = 'kiosk-flash idle'; clear(flash).append(h('div', { class: 't-display' }, 'Ready'), h('div', null, mode === 'A' ? 'Watch your phone for the confirmation' : 'Hold your phone QR under the scanner')); clear(photoBox); };
+  function show(kind, title, sub, eventId, hasPhoto) {
     clearTimeout(flashTimer); flash.className = 'kiosk-flash ' + kind;
-    clear(flash).append(h('div', { class: 't-display' }, title), sub ? h('div', { style: { fontSize: '18px', fontWeight: 600 } }, sub) : null);
-    flashTimer = setTimeout(() => { flash.className = 'kiosk-flash idle'; clear(flash).append(h('div', { class: 't-display' }, 'Ready'), h('div', null, 'Hold your phone QR under the scanner')); }, kind === 'good' ? 3500 : 6000);
+    clear(flash).append(h('div', { class: 't-display' }, title), sub ? h('div', { style: { fontSize: '20px', fontWeight: 600 } }, sub) : null);
+    clear(photoBox);
+    if (eventId && hasPhoto) api('scan.photo', { eventId }).then((p) => { if (p.dataUrl) photoBox.append(h('img', { class: 'photo', src: p.dataUrl, alt: 'Photo on file', style: { width: '160px', height: '160px', margin: '0 auto', display: 'block' } })); }).catch(() => {});
+    flashTimer = setTimeout(idle, kind === 'good' ? 3500 : 6000);
   }
-  function addLog(ok, text) {
-    log.unshift({ ok, text, at: LF.now() }); log.length = Math.min(log.length, 10);
-    clear(recent).append(...log.map((l) => h('li', { class: 'row', style: { padding: '6px 10px' } }, h('span', null, l.text), h('span', { class: 'hint t-data' }, fmt.time(l.at) + (l.ok ? '' : ' · refused')))));
-  }
-  const TYPE = { IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed' };
-
+  let queue = [], busy = false;
   async function process(code) {
     let sawNetwork = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const r = await api('kiosk.scan', { qr: code });
-        show('good', TYPE[r.type] || 'Recorded', r.student.name + ' · ' + r.student.rollNo + ' · ' + fmt.time(r.at));
-        addLog(true, (TYPE[r.type] || r.type) + ': ' + r.student.name + ' (' + r.student.rollNo + ')'); beep(true); return;
+        show('good', TYPE[r.type] || 'Recorded', r.student.name + ' · ' + r.student.rollNo, r.eventId, r.student.hasPhoto); beep(true); return;
       } catch (e) {
         if ((e.code === 'NETWORK' || e.code === 'BUSY') && attempt < 2) { sawNetwork = true; await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
-        if (e.code === 'REPLAY' && sawNetwork) { show('good', 'Probably recorded', 'The first attempt may have gone through. Check the roster.'); addLog(true, 'Possibly recorded (connection dropped)'); return; }
+        if (e.code === 'REPLAY' && sawNetwork) { show('good', 'Probably recorded', 'The first attempt may have gone through. Check the roster.'); return; }
         const who = e.extra && e.extra.student ? e.extra.student + ': ' : '';
-        show('bad', e.code === 'NETWORK' ? 'No connection' : 'Not accepted', who + e.message); addLog(false, who + e.message); beep(false); return;
+        show('bad', e.code === 'NETWORK' ? 'No connection' : 'Not accepted', who + e.message); beep(false); return;
       }
     }
   }
-  async function drain() {
-    if (busy) return; busy = true;
-    try { while (queue.length && !stopped) await process(queue.shift()); } finally { busy = false; }
-  }
-  function submit(raw) {
-    const code = String(raw || '').trim();
-    if (!code) return;
-    if (code === lastCode && Date.now() - lastAt < 5000) return; // scanners often read twice
-    lastCode = code; lastAt = Date.now();
-    if (queue.length >= 20) { show('bad', 'Too many scans', 'Wait a moment.'); return; }
-    queue.push(code); drain();
-  }
+  async function drain() { if (busy) return; busy = true; try { while (queue.length && !stopped) await process(queue.shift()); } finally { busy = false; } }
+  const scanner = ui.scanner({ title: 'Scanner input', onCode: (code) => { if (queue.length >= 20) { show('bad', 'Too many scans', 'Wait a moment.'); return; } queue.push(code); drain(); } });
+  const panelB = h('section', { class: 'card', style: { display: 'grid', gap: '14px' }, 'aria-label': 'Scanner' }, h('div', { class: 't-display', style: { fontSize: '40px' } }, 'Scan your phone'), flash, photoBox, scanner.el);
   function beep(ok) { try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = ok ? 880 : 220; g.gain.value = .05; o.connect(g); g.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, ok ? 120 : 380); } catch (e) { /* audio optional */ } }
-
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = input.value; input.value = ''; submit(v); } });
-  input.addEventListener('paste', () => setTimeout(() => { const v = input.value; if (v.indexOf('~') > 0 && v.length > 60) { input.value = ''; submit(v); } }, 0));
-  const refocus = () => { if (!stopped && !document.querySelector('.modal-back') && document.activeElement !== input && !camStream) input.focus({ preventScroll: true }); };
+  const refocus = () => { if (!stopped && (mode === 'B' || mode === 'AB') && !document.querySelector('.modal-back') && document.activeElement !== scanner.input && !scanner.cameraOn()) scanner.focus(); };
   document.addEventListener('click', refocus); LF.every(1500, refocus);
 
-  /* ---- camera fallback */
-  const camBtn = ui.button('Use camera instead', { icon: 'camera', onClick: async () => { if (camStream) return stopCam(); await startCam(); } });
-  async function startCam() {
-    if (!('BarcodeDetector' in window)) { LF.toast('This browser cannot read QR codes from the camera. Use a USB scanner or paste the code.', 'bad'); return; }
-    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { LF.toast('Camera access is not available here.', 'bad'); return; }
-    try {
-      const det = new window.BarcodeDetector({ formats: ['qr_code'] });
-      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      video.srcObject = camStream; video.hidden = false; await video.play(); camBtn.lastChild.textContent = 'Stop camera';
-      camTimer = setInterval(async () => { try { const r = await det.detect(video); if (r.length) submit(r[0].rawValue); } catch (e) { /* frame not ready */ } }, 300);
-    } catch (e) { stopCam(); LF.toast(e && e.name === 'NotAllowedError' ? 'Camera permission was denied.' : 'Could not start the camera.', 'bad'); }
+  /* ---- status: lab, live count, open sessions, mode ---- */
+  const side = h('section', { class: 'card', style: { display: 'grid', gap: '10px', alignContent: 'start' }, 'aria-label': 'Lab status' }, h('div', { class: 't-label' }, 'Inside now'), count, capLine, openLine, h('div', { class: 't-label', style: { marginTop: '8px' } }, 'Latest'), recent);
+  function applyStatus(d) {
+    labName.textContent = d.lab ? d.lab.name + (d.lab.room ? ' · ' + d.lab.room : '') : 'No lab';
+    const occ = d.occupancy || {}; count.textContent = String(occ.inside || 0);
+    capLine.textContent = occ.capacity ? 'of ' + occ.capacity + ' seats' + (occ.overCapacity ? ' · OVER CAPACITY' : '') : '';
+    capLine.className = occ.overCapacity ? 'err' : 'hint';
+    openLine.className = 'hint';
+    openLine.textContent = (d.openSessions || []).length ? 'Open now: ' + d.openSessions.map((s) => s.title).join(', ') : 'No session is open in this lab right now.';
+    if (d.mode !== mode) { mode = d.mode; layout(); }
   }
-  function stopCam() { clearInterval(camTimer); if (camStream) camStream.getTracks().forEach((t) => t.stop()); camStream = null; video.hidden = true; camBtn.lastChild.textContent = 'Use camera instead'; input.focus(); }
+  function layout() {
+    modeBadge.textContent = mode === 'A' ? 'Kiosk QR + GPS' : mode === 'B' ? 'Device QR scanner' : 'Both modes';
+    clear(grid).append(...(mode === 'A' ? [panelA, side] : mode === 'B' ? [panelB, side] : [panelA, panelB, side]));
+    idle(); if (mode !== 'A') scanner.focus();
+  }
 
-  /* ---- heartbeat + clock */
-  async function ping() {
-    try { const r = await api('kiosk.ping'); clear(lab).append(r.lab ? r.lab.name + (r.lab.room ? ' · ' + r.lab.room : '') : 'No lab'); clear(health).append(r.openSessions.length ? 'Open now: ' + r.openSessions.map((s) => s.title).join(', ') : 'No session is open in this lab. Faculty open the session before students can check in.'); health.className = 'hint'; }
-    catch (e) { health.textContent = 'Cannot reach the server: ' + LF.errMsg(e); health.className = 'err'; }
-  }
   const tick = () => { clock.textContent = fmt.time(LF.now()); };
-  LF.every(1000, tick, true); LF.every(30000, ping, true);
-
-  clear(root).appendChild(h('main', { id: 'main', style: { maxWidth: '900px', margin: '0 auto', padding: '16px', display: 'grid', gap: '16px' } },
-    h('header', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-display', style: { fontSize: '34px' } }, 'Labflow scanner'), h('div', { class: 'hint' }, k.name), lab), clock),
-    flash, h('div', { class: 'field' }, h('label', { for: 'k-input' }, 'Scanner input'), input), video, h('div', { class: 'toolbar' }, camBtn), health, h('h2', { class: 't-h3' }, 'Recent scans'), recent));
-  input.focus();
-  return () => { stopped = true; stopCam(); clearTimeout(flashTimer); document.removeEventListener('click', refocus); };
+  LF.every(1000, tick, true);
+  LF.every(30000, () => { api('kiosk.ping').catch(() => {}); });
+  clear(root).appendChild(h('div', { class: 'kiosk-shell' }, h('header', { class: 'kiosk-head' }, h('div', null, h('div', { class: 'wordmark', style: { fontSize: '30px' } }, 'Labflow'), h('div', { class: 'wordmark-sub' }, k.name), labName), h('div', { class: 'toolbar' }, modeBadge, clock)), h('main', { id: 'main' }, grid)));
+  refreshDisplay();
+  return () => { stopped = true; clearTimeout(displayTimer); clearTimeout(flashTimer); scanner.stop(); document.removeEventListener('click', refocus); };
 } });
 })();
 </script>
