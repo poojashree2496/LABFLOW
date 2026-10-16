@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>LABFLOW</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <?!= include('Styles') ?>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+  <div id="app"><div style="padding:32px;display:flex;gap:10px;align-items:center"><span class="spin"></span><span>Loading LABFLOW&hellip;</span></div></div>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <noscript><p style="padding:24px">LABFLOW needs JavaScript. Please enable it and reload.</p></noscript>
+  <?!= include('SharedComponents') ?>
+  <?!= include('Vendor_QR') ?>
+  <?!= include('Scripts') ?>
+  <?!= include('ScriptsStudent') ?>
+  <?!= include('ScriptsFaculty') ?>
+  <?!= include('ScriptsStaff') ?>
+  <?!= include('ScriptsAdmin') ?>
+  <?!= include('ScriptsKiosk') ?>
+  <script>LF.start();</script>
+</body>
+</html>

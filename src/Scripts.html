@@ -1,0 +1,530 @@
+<script>
+/* LABFLOW client core. Vanilla JS, no framework. All DOM is built with h() using textContent, never innerHTML with data,
+   so server data can never inject markup. The server (rpc) is the only authority: nothing here grants access. */
+(function () {
+'use strict';
+const LF = window.LF = { routes: {}, ui: {}, util: {}, fmt: {}, me: null, role: null, current: null, cleanups: [], timers: [] };
+const TZ = 'Asia/Kolkata', IST_MIN = 330;
+
+/* ------------------------------------------------------------------ DOM helpers */
+const SVGNS = 'http://www.w3.org/2000/svg';
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  if (props) for (const k of Object.keys(props)) {
+    const v = props[k];
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'dataset') Object.assign(el.dataset, v);
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'hidden' || k === 'selected' || k === 'readOnly' || k === 'required' || k === 'multiple') el[k] = v;
+    else el.setAttribute(k, v === true ? '' : String(v));
+  }
+  append(el, kids);
+  return el;
+}
+function append(el, kids) {
+  for (const k of kids) {
+    if (k === null || k === undefined || k === false) continue;
+    if (Array.isArray(k)) append(el, k);
+    else if (k instanceof Node) el.appendChild(k);
+    else el.appendChild(document.createTextNode(String(k)));
+  }
+  return el;
+}
+function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+function icon(name, cls) {
+  const s = document.createElementNS(SVGNS, 'svg'); s.setAttribute('class', 'icon' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true');
+  const u = document.createElementNS(SVGNS, 'use'); u.setAttribute('href', '#i-' + name); s.appendChild(u); return s;
+}
+const $ = (sel, root) => (root || document).querySelector(sel);
+LF.h = h; LF.clear = clear; LF.icon = icon; LF.$ = $;
+
+/* ------------------------------------------------------------------ time (always Asia/Kolkata, never the device zone) */
+const dtf = new Intl.DateTimeFormat('en-IN', { timeZone: TZ, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+const df = new Intl.DateTimeFormat('en-IN', { timeZone: TZ, weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+const tf = new Intl.DateTimeFormat('en-IN', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
+let skew = 0; // serverNow - clientNow
+LF.now = () => Date.now() + skew;
+LF.setServerNow = (sn) => { if (typeof sn === 'number') skew = sn - Date.now(); };
+LF.fmt.dt = (ms) => ms ? dtf.format(ms) : '-';
+LF.fmt.date = (ms) => ms ? df.format(ms) : '-';
+LF.fmt.time = (ms) => ms ? tf.format(ms) : '-';
+LF.fmt.mins = (m) => { m = Math.round(m || 0); return m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'; };
+LF.fmt.todayIst = () => new Date(Date.now() + skew + IST_MIN * 60000).toISOString().slice(0, 10);
+LF.fmt.countdown = (ms) => { ms = Math.max(0, ms); const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+LF.util.istToMs = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(s || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - IST_MIN * 60000 : null; };
+LF.util.msToIstInput = (ms) => new Date(ms + IST_MIN * 60000).toISOString().slice(0, 16);
+LF.util.uuid = () => { try { return crypto.randomUUID(); } catch (e) { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join(''); } };
+LF.util.b64u = (buf) => { let s = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+LF.util.debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+
+/* ------------------------------------------------------------------ API */
+class ApiError extends Error { constructor(code, message, extra) { super(message); this.code = code; this.extra = extra || null; } }
+LF.ApiError = ApiError;
+function rawCall(action, payload) {
+  return new Promise((resolve, reject) => {
+    if (!(window.google && google.script && google.script.run)) return reject(new ApiError('NETWORK', 'This page must be opened from the LABFLOW web app link.'));
+    google.script.run
+      .withSuccessHandler((r) => {
+        if (r && r.ok) return resolve(r.data);
+        if (r && r.error) return reject(new ApiError(r.error.code, r.error.message, r.error.extra));
+        reject(new ApiError('NETWORK', 'The server returned an unexpected response.'));
+      })
+      .withFailureHandler((e) => reject(new ApiError('NETWORK', (e && e.message) ? String(e.message).replace(/^Error:\s*/, '') : 'Could not reach the server. Check your connection.')))
+      .rpc(action, payload === undefined ? {} : payload);
+  });
+}
+/** opts.retry: retry transient failures (use ONLY for reads or idempotent writes carrying an idemKey). */
+async function api(action, payload, opts) {
+  const max = opts && opts.retry ? 3 : 1;
+  for (let i = 1; ; i++) {
+    try { const d = await rawCall(action, payload); if (d && typeof d.serverNow === 'number') LF.setServerNow(d.serverNow); return d; }
+    catch (e) {
+      const transient = e.code === 'NETWORK' || e.code === 'BUSY';
+      if (!transient || i >= max) throw e;
+      await new Promise((r) => setTimeout(r, 500 * i * i));
+    }
+  }
+}
+LF.api = api;
+
+/* ------------------------------------------------------------------ feedback widgets */
+function toast(msg, kind) {
+  const t = h('div', { class: 'toast ' + (kind || ''), role: kind === 'bad' ? 'alert' : 'status' }, msg);
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'bad' ? 7000 : 3500);
+}
+LF.toast = toast;
+function errMsg(e) { return e instanceof ApiError ? e.message : 'Something unexpected happened. Please try again.'; }
+LF.errMsg = errMsg;
+function fail(e) { if (!(e instanceof ApiError)) console.error(e); toast(errMsg(e), 'bad'); }
+LF.fail = fail;
+
+let modalSeq = 0;
+function modal(title, body, opts) {
+  opts = opts || {};
+  const prev = document.activeElement, id = 'm' + (++modalSeq);
+  const back = h('div', { class: 'modal-back' });
+  const box = h('div', { class: 'modal' + (opts.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id, tabindex: '-1' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '12px', marginBottom: '12px' } },
+      h('h2', { class: 't-h2', id }, title), h('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Close', onclick: () => close() }, icon('x'))), body);
+  back.appendChild(box);
+  function close(v) { document.removeEventListener('keydown', onKey, true); back.remove(); if (prev && prev.focus) prev.focus(); if (opts.onClose) opts.onClose(v); }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const f = box.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])');
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  back.addEventListener('mousedown', (e) => { if (e.target === back && !opts.sticky) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(back);
+  const first = box.querySelector('input,select,textarea,button.btn-primary') || box; first.focus();
+  return { close, box };
+}
+LF.modal = modal;
+function confirmBox(o) {
+  return new Promise((resolve) => {
+    let m; let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } m.close(); };
+    const body = h('div', { style: { display: 'grid', gap: '16px' } }, h('p', null, o.message),
+      h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' } },
+        h('button', { class: 'btn', onclick: () => finish(false) }, o.cancelLabel || 'Cancel'),
+        h('button', { class: 'btn ' + (o.danger ? 'btn-danger' : 'btn-primary'), onclick: () => finish(true) }, o.confirmLabel || 'Confirm')));
+    m = modal(o.title || 'Are you sure?', body, { onClose: () => { if (!done) { done = true; resolve(false); } } });
+  });
+}
+LF.confirm = confirmBox;
+
+function badge(text, kind) { return h('span', { class: 'badge ' + (kind || '') }, text); }
+const STATUS_KIND = { present: 'good', verified: 'good', active: 'good', approved: 'good', open: 'good', closed: '', scheduled: 'info', pending: 'warn', pending_approval: 'warn', in: 'good', out: '', none: '',
+  absent: 'bad', flagged: 'bad', rejected: 'bad', revoked: 'bad', damaged: 'bad', missing: 'bad', unverified_exit: 'warn', missed_rescan: 'warn', overdue: 'bad', cancelled: '', expired: '', fulfilled: 'info',
+  on_loan: 'info', available: 'good', maintenance: 'warn', retired: '', partial: 'warn', failed: 'bad', disabled: 'bad', imported: '', replaced: '' };
+const STATUS_LABEL = { unverified_exit: 'exit not scanned', missed_rescan: 'missed rescan', pending_approval: 'awaiting approval', on_loan: 'on loan', none: 'not arrived' };
+function statusBadge(s) { return badge(STATUS_LABEL[s] || String(s || '-').replace(/_/g, ' '), STATUS_KIND[s]); }
+LF.ui.badge = badge; LF.ui.status = statusBadge;
+
+function skeleton(rows) { return h('div', { 'aria-busy': 'true', 'aria-label': 'Loading', style: { display: 'grid', gap: '10px' } }, Array.from({ length: rows || 4 }, () => h('div', { class: 'skeleton', style: { height: '44px' } }))); }
+function empty(title, text, action) { return h('div', { class: 'empty' }, h('div', { class: 't-h3' }, title), text ? h('p', { class: 'hint', style: { margin: '6px 0 0' } }, text) : null, action ? h('div', { style: { marginTop: '12px' } }, action) : null); }
+function errorBox(e, retry) {
+  return h('div', { class: 'card bad', role: 'alert', style: { display: 'grid', gap: '8px' } }, h('div', { class: 't-h3' }, 'Could not load this'), h('div', null, errMsg(e)),
+    retry ? h('div', null, h('button', { class: 'btn btn-sm', onclick: retry }, icon('refresh'), 'Try again')) : null);
+}
+LF.ui.skeleton = skeleton; LF.ui.empty = empty; LF.ui.errorBox = errorBox;
+
+/** Run an async loader into `root` showing skeleton -> content or error. Returns a reload function. */
+function loadInto(root, fn, rows) {
+  const run = async () => {
+    clear(root).appendChild(skeleton(rows));
+    try { const out = await fn(); clear(root); if (out) append(root, [out]); }
+    catch (e) { clear(root).appendChild(errorBox(e, run)); }
+  };
+  run(); return run;
+}
+LF.ui.loadInto = loadInto;
+
+function button(label, opts) {
+  opts = opts || {};
+  const b = h('button', { class: 'btn ' + (opts.kind ? 'btn-' + opts.kind : '') + (opts.size ? ' btn-' + opts.size : '') + (opts.block ? ' btn-block' : ''), type: opts.type || 'button', title: opts.title, 'aria-label': opts.aria }, opts.icon ? icon(opts.icon) : null, label);
+  if (opts.onClick) b.addEventListener('click', async (e) => {
+    if (b.disabled) return; b.disabled = true; const sp = h('span', { class: 'spin' }); b.prepend(sp);
+    try { await opts.onClick(e); } catch (err) { fail(err); } finally { sp.remove(); b.disabled = false; }
+  });
+  return b;
+}
+LF.ui.button = button;
+
+/* ------------------------------------------------------------------ forms */
+function fieldEl(f, ids) {
+  const id = 'f' + (++modalSeq);
+  let input;
+  const common = { id, name: f.name, class: 'input', required: !!f.required, 'aria-describedby': f.hint ? id + 'h' : null, placeholder: f.placeholder, autocomplete: f.autocomplete || 'off' };
+  if (f.type === 'select') {
+    input = h('select', common, (f.options || []).map((o) => { const v = typeof o === 'object' ? o.value : o, l = typeof o === 'object' ? o.label : o; return h('option', { value: v, selected: String(f.value === undefined ? '' : f.value) === String(v) }, l); }));
+  } else if (f.type === 'textarea') {
+    input = h('textarea', Object.assign(common, { rows: f.rows || 4 })); input.value = f.value || '';
+  } else if (f.type === 'checkbox') {
+    input = h('input', { id, name: f.name, type: 'checkbox', checked: !!f.value, style: { width: '20px', height: '20px' } });
+    return { el: h('div', { class: 'field' }, h('label', { for: id, style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 600 } }, input, f.label), f.hint ? h('div', { class: 'hint' }, f.hint) : null), input, get: () => input.checked };
+  } else {
+    input = h('input', Object.assign(common, { type: f.type || 'text', min: f.min, max: f.max, step: f.step, maxlength: f.maxlength, inputmode: f.inputmode, pattern: f.pattern }));
+    if (f.value !== undefined && f.value !== null) input.value = f.value;
+  }
+  const err = h('div', { class: 'err', id: id + 'e', role: 'alert', hidden: true });
+  const el = h('div', { class: 'field', style: f.span ? { gridColumn: '1 / -1' } : null }, h('label', { for: id }, f.label + (f.required ? ' *' : '')), input, f.hint ? h('div', { class: 'hint', id: id + 'h' }, f.hint) : null, err);
+  return { el, input, err, get: () => (f.type === 'number' && input.value !== '' ? Number(input.value) : input.value) };
+}
+/** opts: { title, fields, submitLabel, onSubmit(values) -> Promise, intro, wide } ; closes on success. */
+function formModal(opts) {
+  const fields = opts.fields.map((f) => Object.assign({ f }, fieldEl(f)));
+  const top = h('div', { class: 'err', role: 'alert', hidden: true, style: { marginBottom: '8px' } });
+  let m;
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, opts.submitLabel || 'Save');
+  const form = h('form', { novalidate: true, onsubmit: async (e) => {
+    e.preventDefault(); top.hidden = true;
+    const values = {}; let bad = false;
+    fields.forEach((x) => { x.input.removeAttribute('aria-invalid'); if (x.err) x.err.hidden = true; });
+    fields.forEach((x) => {
+      const v = x.get(); values[x.f.name] = v;
+      if (x.f.required && (v === '' || v === null || v === undefined)) { bad = true; x.input.setAttribute('aria-invalid', 'true'); if (x.err) { x.err.textContent = 'This field is required.'; x.err.hidden = false; } }
+    });
+    if (bad) { const f1 = fields.find((x) => x.input.getAttribute('aria-invalid')); if (f1) f1.input.focus(); return; }
+    submit.disabled = true; const sp = h('span', { class: 'spin' }); submit.prepend(sp);
+    try { const r = await opts.onSubmit(values); m.close(r); }
+    catch (err) { top.textContent = errMsg(err); top.hidden = false; if (opts.onError) opts.onError(err); }
+    finally { sp.remove(); submit.disabled = false; }
+  } },
+    opts.intro ? h('p', { class: 'hint', style: { marginTop: 0 } }, opts.intro) : null, top,
+    h('div', { style: { display: 'grid', gap: '12px', gridTemplateColumns: opts.cols === 2 ? 'repeat(auto-fit,minmax(220px,1fr))' : '1fr' } }, fields.map((x) => x.el)),
+    h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', flexWrap: 'wrap' } }, h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), submit));
+  m = modal(opts.title, form, { wide: opts.wide, onClose: opts.onClose });
+  return m;
+}
+LF.ui.formModal = formModal; LF.ui.field = fieldEl;
+
+/* ------------------------------------------------------------------ tables */
+/** columns: [{ key, label, render(row)->Node|string, text(row)->string (search/sort), sort:true, align }] */
+function table(o) {
+  let rows = o.rows || [], q = '', sortKey = null, sortDir = 1, page = 0;
+  const size = o.pageSize || 25;
+  const wrap = h('div'), head = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' } });
+  const body = h('div'); const info = h('div', { class: 'hint', 'aria-live': 'polite' });
+  const search = o.search === false ? null : h('input', { class: 'input', type: 'search', placeholder: o.searchPlaceholder || 'Search', 'aria-label': 'Search table', style: { maxWidth: '280px' }, oninput: LF.util.debounce((e) => { q = e.target.value.toLowerCase(); page = 0; draw(); }, 150) });
+  const filterSel = (o.filters || []).map((f) => {
+    const sel = h('select', { class: 'input', 'aria-label': f.label, style: { maxWidth: '200px' }, onchange: () => { page = 0; draw(); } }, h('option', { value: '' }, f.label + ': all'), f.options.map((x) => h('option', { value: typeof x === 'object' ? x.value : x }, typeof x === 'object' ? x.label : x)));
+    return { f, sel };
+  });
+  append(head, [search, filterSel.map((x) => x.sel), o.toolbar, h('div', { style: { marginLeft: 'auto' } }, info)]);
+  const textOf = (c, r) => String(c.text ? c.text(r) : (r[c.key] === undefined || r[c.key] === null ? '' : r[c.key]));
+  function draw() {
+    let list = rows.filter((r) => {
+      for (const x of filterSel) { const v = x.sel.value; if (v && String(x.f.get(r)) !== v) return false; }
+      if (!q) return true;
+      return o.columns.some((c) => textOf(c, r).toLowerCase().indexOf(q) >= 0);
+    });
+    if (sortKey) { const c = o.columns.find((x) => x.key === sortKey); list = list.slice().sort((a, b) => { const x = textOf(c, a), y = textOf(c, b); const nx = parseFloat(x), ny = parseFloat(y); return (!isNaN(nx) && !isNaN(ny) ? nx - ny : x.localeCompare(y)) * sortDir; }); }
+    const pages = Math.max(1, Math.ceil(list.length / size)); if (page >= pages) page = pages - 1;
+    const slice = list.slice(page * size, page * size + size);
+    info.textContent = list.length + (list.length === 1 ? ' row' : ' rows') + (list.length !== rows.length ? ' (of ' + rows.length + ')' : '');
+    clear(body);
+    if (!rows.length) { body.appendChild(o.empty || empty('Nothing here yet', 'Records will appear here.')); return; }
+    if (!list.length) { body.appendChild(empty('No matches', 'Try a different search or filter.')); return; }
+    const t = h('table', { class: 'tbl' }, h('caption', { class: 'sr-only', style: { position: 'absolute', left: '-9999px' } }, o.caption || 'Data table'),
+      h('thead', null, h('tr', null, o.columns.map((c) => h('th', { scope: 'col', style: { textAlign: c.align || 'left' }, 'aria-sort': sortKey === c.key ? (sortDir > 0 ? 'ascending' : 'descending') : null },
+        c.sort === false || !c.key ? c.label : h('button', { type: 'button', onclick: () => { if (sortKey === c.key) sortDir = -sortDir; else { sortKey = c.key; sortDir = 1; } draw(); } }, c.label + (sortKey === c.key ? (sortDir > 0 ? ' ▲' : ' ▼') : '')))))),
+      h('tbody', null, slice.map((r) => h('tr', { class: o.rowClass ? o.rowClass(r) : null }, o.columns.map((c) => h('td', { style: { textAlign: c.align || 'left' } }, c.render ? c.render(r) : textOf(c, r)))))));
+    body.appendChild(h('div', { class: 'tbl-wrap' }, t));
+    if (pages > 1) body.appendChild(h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center', marginTop: '10px' } },
+      h('button', { class: 'btn btn-sm', disabled: page === 0, onclick: () => { page--; draw(); } }, 'Previous'), h('span', { class: 'hint' }, 'Page ' + (page + 1) + ' of ' + pages),
+      h('button', { class: 'btn btn-sm', disabled: page >= pages - 1, onclick: () => { page++; draw(); } }, 'Next')));
+  }
+  append(wrap, [head, body]); draw();
+  return { el: wrap, setRows: (r) => { rows = r; draw(); } };
+}
+LF.ui.table = table;
+
+function tabs(items, initial) {
+  const bar = h('div', { class: 'tabs', role: 'tablist' }), panel = h('div', { style: { marginTop: '16px' }, role: 'tabpanel' });
+  let cur = null;
+  const btns = items.map((it) => h('button', { class: 'tab', role: 'tab', type: 'button', 'aria-selected': 'false', onclick: () => select(it.id) }, it.label));
+  function select(id) {
+    const i = items.findIndex((x) => x.id === id); cur = id;
+    btns.forEach((b, j) => b.setAttribute('aria-selected', String(i === j)));
+    clear(panel); const out = items[i].render(panel); if (out instanceof Node) panel.appendChild(out);
+  }
+  bar.addEventListener('keydown', (e) => { const i = btns.indexOf(document.activeElement); if (i < 0) return; if (e.key === 'ArrowRight') { btns[(i + 1) % btns.length].focus(); } if (e.key === 'ArrowLeft') { btns[(i - 1 + btns.length) % btns.length].focus(); } });
+  append(bar, btns);
+  select(initial || items[0].id);
+  return h('div', null, bar, panel);
+}
+LF.ui.tabs = tabs;
+
+function stat(label, value, sub, kind) { return h('div', { class: 'card ' + (kind || '') }, h('div', { class: 't-label', style: kind ? { color: 'inherit', opacity: .75 } : null }, label), h('div', { class: 't-big', style: { margin: '4px 0' } }, value), sub ? h('div', { class: 'hint', style: kind ? { color: 'inherit', opacity: .8 } : null }, sub) : null); }
+LF.ui.stat = stat;
+
+/** Tiny SVG bar chart over real data: data = [{ label, a, b? }]. */
+function barChart(data, o) {
+  o = o || {}; const W = 640, H = 220, pad = { l: 34, r: 8, t: 10, b: 28 };
+  const max = Math.max(1, ...data.map((d) => Math.max(d.a || 0, d.b || 0)));
+  const bw = (W - pad.l - pad.r) / Math.max(1, data.length);
+  const svg = document.createElementNS(SVGNS, 'svg'); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('role', 'img'); svg.setAttribute('style', 'width:100%;height:auto'); svg.setAttribute('aria-label', o.label || 'Chart');
+  const mk = (n, a) => { const e = document.createElementNS(SVGNS, n); for (const k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; };
+  const fracs = max <= 4 ? Array.from({ length: max + 1 }, (_, i) => i / max) : [0, .5, 1]; // integer ticks only, never a repeated label
+  fracs.forEach((f) => { const y = pad.t + (H - pad.t - pad.b) * (1 - f); mk('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: 'chart-axis' }); const t = mk('text', { x: pad.l - 6, y: y + 4, 'text-anchor': 'end', class: 'chart-text' }); t.textContent = Math.round(max * f); });
+  data.forEach((d, i) => {
+    const x = pad.l + i * bw + bw * .12, w = bw * .76 / (d.b !== undefined ? 2 : 1);
+    const hh = (v) => (H - pad.t - pad.b) * (v / max);
+    const r1 = mk('rect', { x, y: H - pad.b - hh(d.a || 0), width: w, height: hh(d.a || 0), class: 'chart-bar' }); const tt = document.createElementNS(SVGNS, 'title'); tt.textContent = d.label + ': ' + (d.a || 0) + (d.b !== undefined ? ' / ' + d.b : ''); r1.appendChild(tt);
+    if (d.b !== undefined) mk('rect', { x: x + w, y: H - pad.b - hh(d.b || 0), width: w, height: hh(d.b || 0), class: 'chart-bar2' });
+    if (data.length <= 16 || i % Math.ceil(data.length / 12) === 0) { const t = mk('text', { x: pad.l + i * bw + bw / 2, y: H - 10, 'text-anchor': 'middle', class: 'chart-text' }); t.textContent = d.label; }
+  });
+  return svg;
+}
+LF.ui.barChart = barChart;
+
+/* ------------------------------------------------------------------ downloads / images */
+LF.util.download = (name, content, mime, isBase64) => {
+  let blob;
+  if (isBase64) { const bin = atob(content), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); blob = new Blob([a], { type: mime }); }
+  else blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob), a = h('a', { href: url, download: name }); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+LF.util.parseCsv = (text) => {
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true; else if (c === ',') { row.push(cur); cur = ''; } else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; } else cur += c;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter((r) => r.some((x) => x.trim() !== ''));
+};
+/** CSV text -> array of objects using the header row (case-insensitive header names). */
+LF.util.csvObjects = (text) => { const r = LF.util.parseCsv(text); if (r.length < 2) return []; const hdr = r[0].map((x) => x.trim()); return r.slice(1).map((row) => { const o = {}; hdr.forEach((k, i) => { o[k] = (row[i] || '').trim(); }); return o; }); };
+/** Shrink a camera/gallery photo to a small JPEG data URL (the server rejects anything bigger than ~400 KB). */
+LF.util.photoFromFile = (file, maxSide) => new Promise((resolve, reject) => {
+  if (!file || !/^image\//.test(file.type)) return reject(new ApiError('BAD_INPUT', 'Choose an image file.'));
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url); const s = Math.min(1, (maxSide || 480) / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    let q = .82, out = c.toDataURL('image/jpeg', q); while (out.length > 380000 && q > .3) { q -= .12; out = c.toDataURL('image/jpeg', q); }
+    resolve(out);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new ApiError('BAD_INPUT', 'That image could not be read.')); };
+  img.src = url;
+});
+
+/* ------------------------------------------------------------------ QR drawing (qrcode-generator is vendored, MIT) */
+LF.util.qrSvg = (text) => {
+  const qr = window.qrcode(0, 'M'); qr.addData(text, 'Byte'); qr.make();
+  const n = qr.getModuleCount(), quiet = 4, size = n + quiet * 2; let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += 'M' + (c + quiet) + ' ' + (r + quiet) + 'h1v1h-1z';
+  const svg = document.createElementNS(SVGNS, 'svg'); svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size); svg.setAttribute('shape-rendering', 'crispEdges'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Attendance QR code');
+  const bg = document.createElementNS(SVGNS, 'rect'); bg.setAttribute('width', size); bg.setAttribute('height', size); bg.setAttribute('fill', '#fff');
+  const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', '#000'); svg.append(bg, p); return svg;
+};
+
+/* ------------------------------------------------------------------ timers tied to the current view */
+LF.every = (ms, fn, immediate) => {
+  const t = setInterval(() => { if (!document.hidden) fn(); }, ms); LF.timers.push(t);
+  if (immediate) fn(); return t;
+};
+LF.onLeave = (fn) => LF.cleanups.push(fn);
+function runCleanups() { LF.timers.forEach(clearInterval); LF.timers = []; LF.cleanups.splice(0).forEach((f) => { try { f(); } catch (e) { /* ignore */ } }); }
+
+/* ------------------------------------------------------------------ theme */
+function applyTheme(t) {
+  if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
+  try { if (t) localStorage.setItem('lf-theme', t); } catch (e) { /* storage may be unavailable in sandboxed frames */ }
+}
+function currentThemeIsDark() { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches; }
+try { const t = localStorage.getItem('lf-theme'); if (t) applyTheme(t); } catch (e) { /* ignore */ }
+
+/* ------------------------------------------------------------------ routing & shell */
+/** Views register themselves: LF.register({ role, id, label, icon, render(root) -> optional cleanup }). */
+LF.register = (v) => { (LF.routes[v.role] = LF.routes[v.role] || []).push(v); };
+const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', kiosk: 'Kiosk' };
+const ROLE_ORDER = ['admin', 'staff', 'faculty', 'student'];
+
+function appRoot() { return $('#app'); }
+function setHash(role, id) { try { const want = '#/' + role + '/' + id; if (location.hash !== want) history.replaceState(null, '', want); } catch (e) { try { location.hash = '#/' + role + '/' + id; } catch (x) { /* ignore */ } } }
+function readHash() { const m = /^#\/([a-z]+)\/([\w-]+)/.exec(location.hash || ''); return m ? { role: m[1], id: m[2] } : null; }
+
+LF.go = (id, role) => {
+  role = role || LF.role;
+  const list = LF.routes[role] || [], v = list.find((x) => x.id === id) || list[0];
+  if (!v) return;
+  LF.role = role; LF.current = v; setHash(role, v.id); renderShell();
+};
+
+let unreadCount = 0;
+function renderShell() {
+  runCleanups();
+  const me = LF.me, roles = ROLE_ORDER.filter((r) => me.roles.includes(r));
+  const list = LF.routes[LF.role] || [];
+  const navBtn = (v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => LF.go(v.id) }, icon(v.icon || 'list'), h('span', null, v.label));
+  const main = h('main', { id: 'main', class: 'main', tabindex: '-1' });
+  const bell = h('button', { class: 'btn btn-ghost', 'aria-label': 'Notifications', onclick: openNotifications }, icon('bell'), h('span', { id: 'unread', class: 'badge lime', hidden: unreadCount === 0 }, String(unreadCount)));
+  const roleSel = roles.length > 1 ? h('select', { class: 'input', 'aria-label': 'Switch role', style: { width: 'auto', minHeight: '36px' }, onchange: (e) => LF.go(undefined, e.target.value) }, roles.map((r) => h('option', { value: r, selected: r === LF.role }, ROLE_LABEL[r]))) : badge(ROLE_LABEL[LF.role]);
+  const top = h('header', { class: 'topbar' }, h('div', { class: 't-display', style: { fontSize: '26px' }, 'aria-label': 'LABFLOW' }, 'Labflow'), h('div', { style: { flex: 1 } }),
+    roleSel, bell,
+    h('button', { class: 'btn btn-ghost', 'aria-label': currentThemeIsDark() ? 'Switch to light theme' : 'Switch to dark theme', onclick: () => { applyTheme(currentThemeIsDark() ? 'light' : 'dark'); renderShell(); } }, icon(currentThemeIsDark() ? 'sun' : 'moon')),
+    h('span', { class: 'hint', style: { maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: me.email }, me.displayName));
+  const shell = h('div', { class: 'shell' }, h('nav', { class: 'sidebar', 'aria-label': 'Main' }, list.map(navBtn)), h('div', null, top, main), h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, list.slice(0, 5).map(navBtn)));
+  clear(appRoot()).appendChild(shell);
+  if (roleSel.tagName === 'SELECT') roleSel.addEventListener('change', () => {}, { once: true });
+  const cleanup = LF.current.render(main);
+  if (typeof cleanup === 'function') LF.onLeave(cleanup);
+  main.focus({ preventScroll: true });
+}
+
+async function refreshUnread() {
+  try { const r = await api('notifications.list'); unreadCount = r.unread; const b = $('#unread'); if (b) { b.textContent = String(r.unread); b.hidden = r.unread === 0; } return r; } catch (e) { return null; }
+}
+async function openNotifications() {
+  const body = h('div', null, skeleton(3)); const m = modal('Notifications', body);
+  try {
+    const r = await api('notifications.list'); clear(body);
+    if (!r.notifications.length) body.appendChild(empty('All caught up', 'New notifications will appear here.'));
+    else body.appendChild(h('div', { style: { display: 'grid', gap: '10px' } }, r.notifications.map((n) => h('div', { class: 'card flat', style: { opacity: n.read ? .7 : 1 } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px' } }, h('strong', null, n.title), h('span', { class: 'hint t-data' }, LF.fmt.dt(n.createdAt))), h('div', { class: 'hint', style: { marginTop: '4px' } }, n.body)))));
+    if (r.unread) { await api('notifications.read', { ids: [] }); unreadCount = 0; const b = $('#unread'); if (b) b.hidden = true; }
+  } catch (e) { clear(body).appendChild(errorBox(e)); }
+  void m;
+}
+
+/* ------------------------------------------------------------------ gate screens */
+function authShell(title, lead, content) {
+  return h('div', { class: 'auth-wrap' },
+    h('section', { class: 'auth-art' }, h('div', { class: 't-display' }, 'Labflow'), h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('p', null, 'Attendance, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint', style: { color: 'inherit' } }, 'Sign in with your university Google account.')),
+    h('main', { id: 'main', style: { padding: '32px 20px', display: 'grid', alignContent: 'center', maxWidth: '520px', width: '100%', margin: '0 auto', gap: '12px' } }, h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
+}
+function blocked(e) {
+  const reasons = {
+    NO_IDENTITY: ['We could not see your Google identity', 'This usually means the web app was not opened with your @karunya.edu or @karunya.edu.in account, or the deployment does not share identity with your domain. Switch to your university account and reload. If this keeps happening, the administrator must follow the Authentication section of the README.'],
+    DOMAIN_NOT_ALLOWED: ['This account cannot use LABFLOW', e.message],
+    ACCOUNT_DISABLED: ['Your account is disabled', e.message],
+    NOT_INITIALISED: ['LABFLOW is not set up yet', e.message]
+  };
+  const r = reasons[e.code] || ['LABFLOW could not start', e.message];
+  clear(appRoot()).appendChild(authShell(r[0], r[1], h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { class: 'btn btn-primary', onclick: () => location.reload() }, icon('refresh'), 'Reload'))));
+}
+
+function onboarding() {
+  const me = LF.me, err = h('div', { class: 'err', role: 'alert', hidden: true });
+  let photo = null;
+  const roll = h('input', { class: 'input', id: 'ob-roll', required: true, autocomplete: 'off', maxlength: 20, placeholder: 'e.g. URK23CS1001' });
+  const name = h('input', { class: 'input', id: 'ob-name', required: true, value: me.displayName && !/@/.test(me.displayName) ? me.displayName : '', autocomplete: 'name' });
+  const dept = h('input', { class: 'input', id: 'ob-dept', value: 'CSE' }), section = h('input', { class: 'input', id: 'ob-sec', maxlength: 10, placeholder: 'A' });
+  const year = h('select', { class: 'input', id: 'ob-year' }, [1, 2, 3, 4].map((y) => h('option', { value: y, selected: y === 2 }, 'Year ' + y)));
+  const prev = h('img', { alt: 'Your photo preview', style: { width: '96px', height: '96px', objectFit: 'cover', borderRadius: '12px', border: '1px solid var(--line)' }, hidden: true });
+  const file = h('input', { type: 'file', accept: 'image/*', capture: 'user', id: 'ob-photo', class: 'input', onchange: async (e) => { try { photo = await LF.util.photoFromFile(e.target.files[0]); prev.src = photo; prev.hidden = false; } catch (x) { fail(x); } } });
+  const btn = button('Create my profile', { kind: 'primary', block: true, type: 'submit' });
+  const form = h('form', { novalidate: true, style: { display: 'grid', gap: '12px' }, onsubmit: async (e) => {
+    e.preventDefault(); err.hidden = true;
+    if (!roll.value.trim() || !name.value.trim()) { err.textContent = 'Roll number and name are required.'; err.hidden = false; return; }
+    btn.disabled = true;
+    try {
+      await api('onboard', { rollNo: roll.value, name: name.value, department: dept.value, section: section.value, year: Number(year.value), photo: photo || undefined });
+      await boot();
+    } catch (x) { err.textContent = errMsg(x); err.hidden = false; btn.disabled = false; }
+  } },
+    h('div', { class: 'field' }, h('label', { for: 'ob-roll' }, 'Roll number *'), roll, h('div', { class: 'hint' }, 'Exactly as printed on your ID card.')),
+    h('div', { class: 'field' }, h('label', { for: 'ob-name' }, 'Full name *'), name),
+    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' } }, h('div', { class: 'field' }, h('label', { for: 'ob-dept' }, 'Department'), dept), h('div', { class: 'field' }, h('label', { for: 'ob-sec' }, 'Section'), section), h('div', { class: 'field' }, h('label', { for: 'ob-year' }, 'Year'), year)),
+    h('div', { class: 'field' }, h('label', { for: 'ob-photo' }, 'Photo (optional, used only for lab spot checks)'), file, prev),
+    err, btn);
+  clear(appRoot()).appendChild(authShell('Set up your student profile', 'Signed in as ' + me.email + '. Your profile is checked against the official student list; if it does not match, lab staff will verify your ID card in person.', form));
+}
+
+/* ------------------------------------------------------------------ boot */
+async function boot() {
+  let me;
+  try { me = await api('me', {}, { retry: true }); } catch (e) { return blocked(e); }
+  LF.me = me; LF.setServerNow(me.serverNow);
+  if (me.kiosk) { LF.role = 'kiosk'; LF.current = (LF.routes.kiosk || [])[0]; return renderKiosk(); }
+  if (me.onboardingRequired) return onboarding();
+  const roles = ROLE_ORDER.filter((r) => me.roles.includes(r));
+  if (!roles.length) return blocked(new ApiError('FORBIDDEN', 'Your account has no role yet. Ask the administrator to assign one.'));
+  const hsh = readHash(); let saved = null; try { saved = sessionStorage.getItem('lf-role'); } catch (e) { /* ignore */ }
+  LF.role = hsh && roles.includes(hsh.role) ? hsh.role : (saved && roles.includes(saved) ? saved : roles[roles.length > 1 ? 0 : 0]);
+  if (!hsh && roles.includes('student') && roles.length === 1) LF.role = 'student';
+  const list = LF.routes[LF.role] || [];
+  LF.current = (hsh && list.find((v) => v.id === hsh.id)) || list[0];
+  renderShell(); refreshUnread();
+  LF.every(60000, refreshUnread);
+}
+function renderKiosk() { runCleanups(); const root = appRoot(); clear(root); const out = LF.current.render(root); if (typeof out === 'function') LF.onLeave(out); }
+LF.boot = boot;
+LF.start = () => { boot().catch((e) => { console.error(e); blocked(new ApiError('INTERNAL', 'LABFLOW failed to start. Reload the page.')); }); };
+window.addEventListener('hashchange', () => { const hs = readHash(); if (hs && LF.me && hs.role === LF.role && (!LF.current || hs.id !== LF.current.id)) LF.go(hs.id, hs.role); });
+document.addEventListener('visibilitychange', () => { /* timers skip while hidden; nothing else needed */ });
+LF.on = { roleChange: (r) => { try { sessionStorage.setItem('lf-role', r); } catch (e) { /* ignore */ } } };
+
+/* role switch handler needs the chosen role: patched go() */
+const goBase = LF.go;
+LF.go = (id, role) => { if (role) LF.on.roleChange(role); goBase(id, role); };
+
+/* ------------------------------------------------------------------ generic reports view (all roles) */
+LF.ui.reports = (allowed) => {
+  const labels = { daily: 'Daily lab report', monthly: 'Monthly report', faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail' };
+  const box = h('div', { style: { display: 'grid', gap: '16px' } }), out = h('div');
+  const type = h('select', { class: 'input', id: 'rp-type', style: { maxWidth: '260px' } }, allowed.map((t) => h('option', { value: t }, labels[t])));
+  const date = h('input', { class: 'input', type: 'date', id: 'rp-date', value: LF.fmt.todayIst() });
+  const month = h('input', { class: 'input', type: 'month', id: 'rp-month', value: LF.fmt.todayIst().slice(0, 7) });
+  const from = h('input', { class: 'input', type: 'date', id: 'rp-from', value: new Date(Date.now() - 30 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) });
+  const to = h('input', { class: 'input', type: 'date', id: 'rp-to', value: LF.fmt.todayIst() });
+  const who = h('input', { class: 'input', id: 'rp-who', placeholder: 'Student roll number', hidden: true });
+  const fac = h('select', { class: 'input', id: 'rp-fac', 'aria-label': 'Faculty member' }); let facLoaded = false;
+  const wrap = (lbl, el, id) => h('div', { class: 'field', dataset: { k: id } }, h('label', { for: el.id }, lbl), el);
+  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac');
+  let last = null;
+  function sync() { const t = type.value; fDate.hidden = t !== 'daily'; fMonth.hidden = t !== 'monthly'; const ranged = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit'].includes(t); fFrom.hidden = fTo.hidden = !ranged; const priv = LF.me.roles.includes('admin') || LF.me.roles.includes('staff'); fFac.hidden = !(t === 'faculty' && priv); if (!fFac.hidden && !facLoaded) { facLoaded = true; api('directory.faculty').then((r) => { r.faculty.forEach((f) => fac.appendChild(h('option', { value: f.facultyId }, f.name))); }).catch(fail); } fWho.hidden = !(t === 'student' && (LF.me.roles.includes('admin') || LF.me.roles.includes('staff') || LF.me.roles.includes('faculty'))); who.hidden = fWho.hidden; }
+  type.addEventListener('change', sync); sync();
+  async function params() {
+    const t = type.value, p = { type: t };
+    if (t === 'daily') p.date = date.value; if (t === 'monthly') p.month = month.value;
+    if (['faculty', 'student', 'utilisation', 'assetUsage', 'audit'].includes(t)) { p.from = from.value; p.to = to.value; }
+    if (t === 'faculty' && !fFac.hidden) p.facultyId = fac.value;
+    if (t === 'student' && who.value.trim()) { const r = await api('students.list', { q: who.value.trim(), limit: 5 }); const s = r.students.find((x) => x.rollNo.toLowerCase() === who.value.trim().toLowerCase()) || r.students[0]; if (!s) throw new ApiError('NOT_FOUND', 'No student matches that roll number.'); p.studentId = s.studentId; }
+    return p;
+  }
+  const run = button('Run report', { kind: 'primary', icon: 'chart', onClick: async () => {
+    const p = await params(); clear(out).appendChild(skeleton(5));
+    try {
+      const r = await api('reports.run', p); last = p; clear(out);
+      const t = table({ columns: r.columns.map((c, i) => ({ key: 'c' + i, label: c, text: (row) => row[i] === null || row[i] === undefined ? '' : String(row[i]), render: (row) => (row[i] === null || row[i] === undefined ? '' : String(row[i])), align: typeof (r.rows[0] || [])[i] === 'number' ? 'right' : 'left' })), rows: r.rows, pageSize: 50, caption: r.title });
+      append(out, [h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' } }, h('h3', { class: 't-h2' }, r.title),
+        h('div', { style: { display: 'flex', gap: '8px' } }, button('CSV', { icon: 'download', size: 'sm', onClick: async () => { const c = await api('reports.csv', last); LF.util.download(c.filename, c.csv, 'text/csv'); } }),
+          button('PDF', { icon: 'download', size: 'sm', onClick: async () => { toast('Preparing PDF...'); const c = await api('reports.pdf', last); LF.util.download(c.filename, c.base64, 'application/pdf', true); if (c.truncated) toast('PDF shows the first 1000 rows. Use CSV for everything.'); } }))),
+        r.truncated ? h('div', { class: 'card warn', style: { marginBottom: '8px' } }, 'Showing the first 5000 rows only. Narrow the date range for the full data.') : null, t.el]);
+    } catch (e) { clear(out).appendChild(errorBox(e)); }
+  } });
+  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fWho, fFac, run), out]);
+  return box;
+};
+})();
+</script>
