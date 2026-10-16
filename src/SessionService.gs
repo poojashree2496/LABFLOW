@@ -17,7 +17,8 @@ var Sessions = {
     var lab = (ref.labs || {})[s.labId] || {}, course = (ref.courses || {})[s.courseId] || {}, fac = (ref.fac || {})[s.facultyId] || {};
     return { sessionId: s.sessionId, type: s.type, labId: s.labId, labName: lab.name, labCode: lab.code, courseId: s.courseId, courseCode: course.code, courseName: course.name,
       facultyId: s.facultyId, facultyName: fac.name, title: s.title, section: s.section, date: s.date, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status,
-      openedAt: s.openedAt, closedAt: s.closedAt, openToAll: s.openToAll, rescanMode: s.rescanMode, nextRescanAt: s.nextRescanAt, rescansDone: s.rescansDone, notes: s.notes };
+      openedAt: s.openedAt, closedAt: s.closedAt, openToAll: s.openToAll, rescanMode: s.rescanMode, nextRescanAt: s.nextRescanAt, rescansDone: s.rescansDone, notes: s.notes,
+      labEventId: s.labEventId || '', breakStart: s.breakStart, breakEnd: s.breakEnd, selfWork: String(s.slotKey || '').indexOf('rsv|') === 0 };
   },
   _ref: function () {
     return { labs: U.indexBy(Db.readAll('Labs'), 'labId'), courses: U.indexBy(Db.readAll('Courses'), 'courseId'), fac: U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId') };
@@ -77,7 +78,7 @@ var Sessions = {
 
   get: function (ctx, p) {
     var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('admin') || ctx.has('staff') || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'You cannot view this session.');
+    if (!(ctx.has('admin') || ctx.has('staff') || Auth.canOperate(ctx, s))) fail('FORBIDDEN', 'You cannot view this session.');
     return { session: Sessions.pub(s, Sessions._ref()) };
   },
 
@@ -155,7 +156,7 @@ var Sessions = {
     var override = ctx.has('admin') && V.bool(p.override);
     return Locks.with(function () {
       var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-      if (!Auth.ownsSession(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+      if (!Auth.canOperate(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
       if (s.status !== 'scheduled') fail('INVALID_STATE', 'Only a scheduled session can be opened (this one is ' + s.status + ').');
       var now = U.now(), grace = Settings.get('autoCloseGraceMinutes') * 60000, overrides = [];
       if (now < s.scheduledStart - Sessions._OPEN_EARLY_MS || now > s.scheduledEnd + grace) {
@@ -168,14 +169,15 @@ var Sessions = {
       }
       var mode = p.rescanMode ? V.enumOf(p.rescanMode, 'Rescan mode', ['off', 'random']) : s.rescanMode;
       var next = Db.update('Sessions', s.sessionId, { status: 'open', openedAt: now, openedBy: ctx.email, rescanMode: mode, rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, s.scheduledEnd) : null });
-      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: overrides.length ? 'session.open.override' : 'session.open', entityType: 'Session', entityId: s.sessionId, detail: { overrides: overrides, rescanMode: mode } });
+      Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: overrides.length ? 'session.open.override' : 'session.open', entityType: 'Session', entityId: s.sessionId, detail: { overrides: overrides, rescanMode: mode } });
+      Occupancy.invalidate(s.labId);
       return { session: Sessions.pub(next, Sessions._ref()) };
     });
   },
 
   /** Random time between minFraction and maxFraction of the remaining session; null if the session is too short. */
   _planRescan: function (openedAt, scheduledEnd) {
-    var span = scheduledEnd - openedAt, win = Settings.get('rescanWindowMinutes') * 60000;
+    var span = scheduledEnd - openedAt, win = Settings.get('rescanWindowSeconds') * 1000;
     if (span < 3 * win) return null;
     var lo = Settings.get('rescanMinFraction') / 100, hi = Math.max(lo, Settings.get('rescanMaxFraction') / 100);
     var at = openedAt + span * (lo + (hi - lo) * (U.randInt(10000) / 10000));
@@ -185,7 +187,8 @@ var Sessions = {
   close: function (ctx, p) {
     V.obj(p);
     var reason = V.str(p.reason, 'Reason', { optional: true, max: 200, def: 'closed by faculty' });
-    var s = Sessions._closeInternal(Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session'), ctx.email, ctx.roles[0], reason, function (sess) { if (!Auth.ownsSession(ctx, sess)) fail('FORBIDDEN', 'This is not your session.'); });
+    var hint = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
+    var s = Sessions._closeInternal(hint, ctx.email, Auth.operatorRole(ctx, hint), reason, function (sess) { if (!Auth.canOperate(ctx, sess)) fail('FORBIDDEN', 'This is not your session.'); });
     return { session: Sessions.pub(s, Sessions._ref()), counts: Attend.liveCounts(s) };
   },
 
@@ -201,6 +204,8 @@ var Sessions = {
       return next;
     });
     Attend.rebuildSummary(closed.sessionId); // derived data; events are untouched
+    Occupancy.invalidate(closed.labId);
+    try { Flags.afterClose(closed); } catch (e) { Syslog.warn('sessions', 'FLAG_CHECK_FAILED', String(e && e.message)); }
     return closed;
   },
 
@@ -214,6 +219,67 @@ var Sessions = {
       var next = Db.update('Sessions', s.sessionId, { status: 'cancelled', notes: ('Cancelled: ' + reason).slice(0, 300) });
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'session.cancel', entityType: 'Session', entityId: s.sessionId, detail: { reason: reason } });
       return { session: Sessions.pub(next, Sessions._ref()) };
+    });
+  },
+
+  /** Open a session as the system (timetable auto-open, research visit on arrival). Returns the fresh row. */
+  _systemOpen: function (s, why) {
+    return Locks.with(function () {
+      var cur = Db.get('Sessions', s.sessionId);
+      if (cur.status !== 'scheduled') return cur;
+      var now = U.now(), mode = cur.rescanMode;
+      if (cur.type !== 'research') {
+        var other = Db.where('Sessions', function (x) { return x.labId === cur.labId && x.sessionId !== cur.sessionId && x.type !== 'research' && x.status === 'open'; });
+        if (other.length) return cur; // the lab is still busy; faculty can open it by hand
+      }
+      var next = Db.update('Sessions', cur.sessionId, { status: 'open', openedAt: now, openedBy: 'system', rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, cur.scheduledEnd) : null });
+      Audit.log({ actor: 'system', role: 'system', action: 'session.open', entityType: 'Session', entityId: cur.sessionId, detail: { auto: why } });
+      Occupancy.invalidate(cur.labId);
+      return next;
+    });
+  },
+
+  /** Trigger: open timetabled class sessions at their start time (teachers do nothing at the start of class). */
+  autoOpenDue: function () {
+    if (!Settings.get('autoOpenSessions')) return { opened: 0, disabled: true };
+    var now = U.now(), opened = 0;
+    Sessions.materialize(U.local(now).date);
+    Db.where('Sessions', function (s) { return s.type === 'class' && s.status === 'scheduled' && s.scheduledStart - 5 * 60000 <= now && now < s.scheduledEnd; }).forEach(function (s) {
+      try { if (Sessions._systemOpen(s, 'timetable').status === 'open') opened++; }
+      catch (e) { Syslog.error('sessions', 'AUTO_OPEN_FAILED', String(e && e.message), { sessionId: s.sessionId }); }
+    });
+    return { opened: opened };
+  },
+
+  /** An approved research visit opens when its student arrives inside the visit window. */
+  openResearchIfDue: function (session, studentId) {
+    if (session.type !== 'research' || session.status !== 'scheduled') return session;
+    var now = U.now();
+    if (now < session.scheduledStart - Sessions._OPEN_EARLY_MS || now > session.scheduledEnd) return session;
+    if (!Roster.isEligible(session, studentId)) return session;
+    return Sessions._systemOpen(session, 'research-arrival');
+  },
+
+  /**
+   * The self-work session behind an approved workstation booking (FR-25). One per booking (unique slotKey), with the
+   * booking's requester (or group) on its roster and no faculty owner; lab staff oversee it.
+   */
+  selfWorkFor: function (r, studentId) {
+    var key = 'rsv|' + r.reservationId, have = Db.getBy('Sessions', 'slotKey', key);
+    if (have) return have.status === 'scheduled' ? Sessions._systemOpen(have, 'booking') : have;
+    return Locks.with(function () {
+      var again = Db.getBy('Sessions', 'slotKey', key);
+      if (again) return again;
+      var now = U.now(), name = Booking._resourceName(r);
+      var s = Db.insert('Sessions', { sessionId: U.id('session'), type: 'research', labId: r.labId, courseId: '', facultyId: '', title: 'Self-work: ' + name, slotKey: key, date: U.local(r.startAt).date,
+        scheduledStart: r.startAt, scheduledEnd: r.endAt, status: 'open', openedAt: now, openedBy: 'system', openToAll: false, rescanMode: 'off', rescansDone: 0, requestedBy: studentId,
+        notes: 'Booking ' + r.reservationId, createdBy: 'system', createdAt: now });
+      var members = r.requesterType === 'group' ? Db.whereEq('GroupMembers', { groupId: r.requesterId }).map(function (m) { return m.studentId; }) : [studentId];
+      Db.insertMany('Rosters', U.uniq(members).map(function (sid) { return { rosterId: U.id('roster'), scopeType: 'session', scopeId: s.sessionId, studentId: sid, status: 'active', addedBy: 'system', addedAt: now }; }));
+      Roster._bump();
+      Audit.log({ actor: 'system', role: 'system', action: 'session.selfwork', entityType: 'Session', entityId: s.sessionId, detail: { reservationId: r.reservationId } });
+      Occupancy.invalidate(r.labId);
+      return s;
     });
   },
 

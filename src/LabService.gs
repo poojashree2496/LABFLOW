@@ -6,22 +6,83 @@
 var Labs = {
   list: function (ctx, p) {
     var all = !!(p && p.includeInactive && (ctx.has('admin') || ctx.has('staff')));
-    return { labs: Db.readAll('Labs').filter(function (l) { return all || l.status === 'active'; }).map(Labs._pub) };
+    return { labs: Db.readAll('Labs').filter(function (l) { return all || l.status === 'active'; }).map(Labs._pub), defaultMode: Settings.get('defaultCheckinMode') };
   },
-  _pub: function (l) { return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, notes: l.notes }; },
+  _pub: function (l) {
+    return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, notes: l.notes,
+             latitude: l.latitude, longitude: l.longitude, radiusM: l.radiusM, openTime: l.openTime, closeTime: l.closeTime, checkinMode: l.checkinMode || '',
+             mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '' };
+  },
+  /** The lab's check-in mode: its own setting, else the global default. 'A', 'B' or 'AB'. */
+  modeOf: function (lab) { return (lab && lab.checkinMode) || Settings.get('defaultCheckinMode'); },
+  allows: function (lab, mode) { return !!lab && Labs.modeOf(lab).indexOf(mode) >= 0; },
+  hasGeofence: function (lab) { return typeof lab.latitude === 'number' && typeof lab.longitude === 'number' && !(lab.latitude === 0 && lab.longitude === 0); },
+  radiusOf: function (lab) { return lab.radiusM || Settings.get('defaultGeofenceRadiusM'); },
+  /** Lab closing time today as epoch ms, or null when the lab has no hours set. */
+  closesAt: function (lab, date) { return lab.closeTime && U.isTime(lab.closeTime) ? U.fromLocal(date, lab.closeTime) : null; },
+  incharges: function (lab) { return String(lab.inchargeEmails || '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean); },
+
   upsert: function (ctx, p) {
     V.obj(p);
     var rec = {
       code: V.str(p.code, 'Code', { max: 20, re: /^[A-Za-z0-9_-]+$/ }).toUpperCase(), name: V.str(p.name, 'Name', { max: 80 }),
       type: V.enumOf(p.type, 'Type', Cfg.LAB_TYPES), building: V.str(p.building, 'Building', { optional: true, max: 60 }), room: V.str(p.room, 'Room', { optional: true, max: 30 }),
       capacity: V.int(p.capacity, 'Capacity', 1, 1000, { optional: true, def: 60 }), status: V.enumOf(p.status, 'Status', ['active', 'inactive'], { optional: true, def: 'active' }),
-      notes: V.str(p.notes, 'Notes', { optional: true, max: 300 })
+      notes: V.str(p.notes, 'Notes', { optional: true, max: 300 }),
+      checkinMode: V.enumOf(p.checkinMode, 'Check-in mode', Cfg.CHECKIN_MODES, { optional: true, def: '' }),
+      radiusM: V.int(p.radiusM, 'Geofence radius', 5, 500, { optional: true, def: null }),
+      latitude: null, longitude: null, openTime: '', closeTime: '', inchargeEmails: ''
     };
+    var hasLat = p.latitude !== undefined && p.latitude !== null && p.latitude !== '', hasLng = p.longitude !== undefined && p.longitude !== null && p.longitude !== '';
+    if (hasLat !== hasLng) fail('BAD_INPUT', 'Give both latitude and longitude, or neither.');
+    if (hasLat) { var ll = V.latLng(p.latitude, p.longitude); rec.latitude = Math.round(ll.lat * 1e6) / 1e6; rec.longitude = Math.round(ll.lng * 1e6) / 1e6; }
+    if (!!p.openTime !== !!p.closeTime) fail('BAD_INPUT', 'Give both opening and closing time, or neither.');
+    if (p.openTime) {
+      rec.openTime = V.time(p.openTime, 'Opening time'); rec.closeTime = V.time(p.closeTime, 'Closing time');
+      if (rec.closeTime <= rec.openTime) fail('BAD_INPUT', 'Closing time must be after opening time.');
+    }
+    if (p.inchargeEmails) {
+      var list = String(p.inchargeEmails).split(',').map(function (s) { return s.trim(); }).filter(Boolean).map(function (e) { return V.email(e, 'Lab incharge email'); });
+      list.forEach(function (e) { if (Auth.allowedDomains().indexOf(e.split('@')[1]) < 0) fail('BAD_INPUT', e + ' is not on an allowed domain.'); });
+      if (list.length > 5) fail('BAD_INPUT', 'At most 5 lab incharge emails.');
+      rec.inchargeEmails = list.join(',');
+    }
     var lab;
     if (p.labId) { lab = Db.update('Labs', V.id(p.labId, 'Lab', 'lab'), rec); }
     else lab = Db.insert('Labs', Object.assign({ labId: U.id('lab'), createdAt: U.now() }, rec));
+    Occupancy.invalidate(lab.labId);
     Audit.log({ actor: ctx.email, role: 'admin', action: p.labId ? 'lab.update' : 'lab.create', entityType: 'Lab', entityId: lab.labId, detail: rec });
     return { lab: Labs._pub(lab) };
+  }
+};
+
+/**
+ * Live occupancy (FR-16): students currently inside each lab, across its open sessions. Cached for a few seconds
+ * because every dashboard polls it; an accepted scan clears the lab's entry so the count moves immediately.
+ */
+var Occupancy = {
+  _key: function (labId) { return 'occ|' + labId; },
+  invalidate: function (labId) { try { CacheService.getScriptCache().remove(Occupancy._key(labId)); } catch (e) {} },
+  lab: function (labId) {
+    var cache = CacheService.getScriptCache(), key = Occupancy._key(labId);
+    try { var hit = cache.get(key); if (hit) return JSON.parse(hit); } catch (e) {}
+    var lab = Db.cachedGet('Labs', 'labId', labId, 120) || {};
+    var open = Db.where('Sessions', function (s) { return s.labId === labId && s.status === 'open'; });
+    var sessions = open.map(function (s) { var c = Attend.liveCounts(s); return { sessionId: s.sessionId, title: s.title, type: s.type, inside: c.inside, enrolled: c.enrolled, onBreak: c.onBreak }; });
+    var inside = sessions.reduce(function (a, s) { return a + s.inside; }, 0);
+    var out = { labId: labId, code: lab.code, name: lab.name, inside: inside, capacity: lab.capacity || null, overCapacity: !!lab.capacity && inside > lab.capacity,
+                openTime: lab.openTime || '', closeTime: lab.closeTime || '', sessions: sessions, at: U.now() };
+    try { cache.put(key, JSON.stringify(out), Settings.get('occupancyRefreshSeconds')); } catch (e) {}
+    return out;
+  },
+  list: function () {
+    return { labs: Db.where('Labs', function (l) { return l.status === 'active'; }).map(function (l) { return Occupancy.lab(l.labId); }), refreshSeconds: Settings.get('occupancyRefreshSeconds'), serverNow: U.now() };
+  },
+  /** The open session in this lab the student is currently inside, or null. */
+  insideSession: function (studentId, labId) {
+    var open = Db.where('Sessions', function (s) { return s.labId === labId && s.status === 'open'; });
+    for (var i = 0; i < open.length; i++) if (Attend.studentState(open[i], studentId).state === 'in') return open[i];
+    return null;
   }
 };
 
@@ -42,14 +103,17 @@ var Kiosks = {
     Audit.log({ actor: ctx.email, role: 'admin', action: p.kioskId ? 'kiosk.update' : 'kiosk.create', entityType: 'Kiosk', entityId: k.kioskId, detail: { labId: rec.labId, email: email, status: rec.status } });
     return { kiosk: Kiosks._pub(k) };
   },
-  /** Kiosk heartbeat (at most once a minute) so admins can see which kiosks are alive. */
+  /** Record the kiosk as alive (at most one sheet write a minute). */
+  touch: function (k) { if (!k.lastSeenAt || U.now() - k.lastSeenAt > 60000) { try { Db.update('Kiosks', k.kioskId, { lastSeenAt: U.now() }); } catch (e) { /* best effort */ } } },
+  /** Kiosk heartbeat so admins can see which kiosks are alive. */
   ping: function (ctx) {
     var k = ctx.kiosk;
     if (!k) fail('FORBIDDEN', 'Not a kiosk account.');
-    if (!k.lastSeenAt || U.now() - k.lastSeenAt > 60000) Db.update('Kiosks', k.kioskId, { lastSeenAt: U.now() });
+    Kiosks.touch(k);
     var lab = Db.get('Labs', k.labId);
     var open = Db.where('Sessions', function (s) { return s.labId === k.labId && s.status === 'open'; });
-    return { kiosk: { kioskId: k.kioskId, name: k.name }, lab: lab ? Labs._pub(lab) : null, openSessions: open.map(function (s) { return { sessionId: s.sessionId, title: s.title, type: s.type }; }), serverNow: U.now() };
+    return { kiosk: { kioskId: k.kioskId, name: k.name }, lab: lab ? Labs._pub(lab) : null, mode: Labs.modeOf(lab), occupancy: Occupancy.lab(k.labId),
+             openSessions: open.map(function (s) { return { sessionId: s.sessionId, title: s.title, type: s.type }; }), serverNow: U.now() };
   }
 };
 
@@ -121,7 +185,11 @@ var Roster = {
     V.obj(p);
     var ses = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     if (!Auth.ownsSession(ctx, ses)) fail('FORBIDDEN', 'This is not your session.');
-    var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'rollNo'), rolls = V.arr(p.rollNos, 'Roll numbers', 300);
+    return Roster.addToSessionAs(ctx, ses, V.arr(p.rollNos, 'Roll numbers', 300));
+  },
+  /** Add roll numbers to one session's roster (caller already authorised). */
+  addToSessionAs: function (ctx, ses, rolls) {
+    var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'rollNo');
     var have = {}; Db.where('Rosters', function (r) { return r.scopeType === 'session' && r.scopeId === ses.sessionId; }).forEach(function (r) { have[r.studentId] = true; });
     var create = [], errors = [];
     rolls.forEach(function (rn, i) {

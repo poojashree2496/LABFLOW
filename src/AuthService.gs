@@ -90,6 +90,24 @@ var Auth = {
     return !!(ctx.faculty && session.facultyId === ctx.faculty.facultyId);
   },
 
+  /**
+   * May the caller run this session (open, close, call a rescan, see the live roster)? The owning faculty and admins
+   * always; an event's coordinator during the event; a class representative for their own class on the day. Spot
+   * checks, corrections and photos stay with the faculty owner.
+   */
+  canOperate: function (ctx, session) {
+    if (Auth.ownsSession(ctx, session)) return true;
+    if (Events.isCoordinator(ctx, session)) return true;
+    return !!(ctx.student && session.date === U.local(U.now()).date && ClassReps.isRepFor(ctx.student.studentId, session));
+  },
+  operatorRole: function (ctx, session) {
+    if (ctx.has('admin')) return 'admin';
+    if (ctx.faculty && session.facultyId === ctx.faculty.facultyId) return 'faculty';
+    if (Events.isCoordinator(ctx, session)) return 'coordinator';
+    if (ctx.student && ClassReps.isRepFor(ctx.student.studentId, session)) return 'cr';
+    return ctx.roles[0] || 'user';
+  },
+
   /** Simple fixed-window rate limiter on CacheService (approximate under concurrency; see SECURITY.md). */
   rateLimit: function (key, max, windowSec) {
     var cache = CacheService.getScriptCache();
