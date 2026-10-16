@@ -103,7 +103,69 @@ var U = {
     rows.forEach(function (r) { lines.push(r.map(U.csvSafe).join(',')); });
     return lines.join('\r\n');
   },
-  overlaps: function (aStart, aEnd, bStart, bEnd) { return aStart < bEnd && bStart < aEnd; }
+  overlaps: function (aStart, aEnd, bStart, bEnd) { return aStart < bEnd && bStart < aEnd; },
+
+  // ---- geography -----------------------------------------------------------------------------
+  /** Great-circle distance in metres between two lat/lng points (haversine, mean Earth radius). */
+  haversineM: function (lat1, lng1, lat2, lng2) {
+    var R = 6371008.8, rad = Math.PI / 180;
+    var dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  },
+  /** Coarse band stored instead of a precise distance where only the order of magnitude matters. */
+  distanceBand: function (m) { return m === null || m === undefined ? '' : m < 20 ? '<20m' : m < 50 ? '20-50m' : m < 100 ? '50-100m' : m < 500 ? '100-500m' : '>500m'; },
+
+  /** Value of one query parameter in a URL or query string, or ''. Only used on short, length-checked input. */
+  queryParam: function (url, name) {
+    var q = String(url || ''), i = q.indexOf('?');
+    if (i >= 0) q = q.slice(i + 1);
+    var parts = q.split('#')[0].split('&');
+    for (var j = 0; j < parts.length; j++) {
+      var kv = parts[j].split('=');
+      if (kv[0] === name) { try { return decodeURIComponent((kv.slice(1).join('=') || '').replace(/\+/g, ' ')); } catch (e) { return ''; } }
+    }
+    return '';
+  }
+};
+
+/**
+ * Verification pipelines. A check-in or scan is an ordered list of named steps; each step's run(c) reads and extends
+ * the shared context `c`, and throws an AppError to refuse. Steps marked `locked` (always at the end) run together
+ * inside the script lock, so the lock is held only for the replay check and the write.
+ *
+ * The list is data so that tests and the local Test Lab can see which step decided the outcome. An optional global
+ * observer (__pipelineObserver, defined only by the dev server) receives the trace. Production code never reads any
+ * per-step switch: every step in the list always runs.
+ */
+var Pipeline = {
+  run: function (name, steps, c) {
+    var trace = [];
+    c.trace = trace;
+    function exec(step) {
+      var t0 = Date.now(); // wall time: measures cost, independent of the test clock
+      try { step.run(c); trace.push({ id: step.id, ok: true, ms: Date.now() - t0 }); }
+      catch (e) { trace.push({ id: step.id, ok: false, ms: Date.now() - t0, code: (e && e.code) || 'ERROR' }); throw e; }
+    }
+    try {
+      var firstLocked = -1;
+      for (var i = 0; i < steps.length; i++) { if (steps[i].locked) { firstLocked = i; break; } }
+      var pre = firstLocked < 0 ? steps : steps.slice(0, firstLocked), locked = firstLocked < 0 ? [] : steps.slice(firstLocked);
+      pre.forEach(exec);
+      if (locked.length) Locks.with(function () { locked.forEach(exec); });
+      Pipeline._emit(name, c, true, null);
+      return c.result;
+    } catch (e) {
+      Pipeline._emit(name, c, false, e);
+      throw e;
+    }
+  },
+  /** Step ids and labels, for documentation and the Test Lab. */
+  describe: function (steps) { return steps.map(function (s) { return { id: s.id, label: s.label, locked: !!s.locked }; }); },
+  _emit: function (name, c, ok, e) {
+    if (typeof __pipelineObserver !== 'function') return;
+    try { __pipelineObserver({ pipeline: name, ok: ok, code: e ? (e.code || 'ERROR') : null, message: e ? String(e.message) : null, trace: c.trace, at: U.now(), subject: c.subject || null }); } catch (x) { /* observers never affect the outcome */ }
+  }
 };
 
 /** Input validation. Every RPC handler validates its payload through these; failures become BAD_INPUT. */
@@ -157,5 +219,16 @@ var V = {
     if (v.length > (max || 500)) fail('BAD_INPUT', name + ' has too many entries (max ' + (max || 500) + ').');
     return v;
   },
-  rollNo: function (v) { return V.str(v, 'Roll number', { max: 20, min: 3, re: /^[A-Za-z0-9._-]+$/, reMsg: 'Roll number may only contain letters, digits, dot, dash and underscore.' }).toUpperCase(); }
+  rollNo: function (v) { return V.str(v, 'Roll number', { max: 20, min: 3, re: /^[A-Za-z0-9._-]+$/, reMsg: 'Roll number may only contain letters, digits, dot, dash and underscore.' }).toUpperCase(); },
+  /** Indian mobile number; accepts +91 / 0 prefixes and spaces, returns the 10 digits. */
+  mobile: function (v) {
+    var s = V.str(v, 'Mobile number', { max: 20 }).replace(/[\s()-]/g, '');
+    s = s.replace(/^(\+91|0091|91(?=\d{10}$)|0(?=\d{10}$))/, '');
+    if (!/^[6-9]\d{9}$/.test(s)) fail('BAD_INPUT', 'Enter a 10-digit Indian mobile number.');
+    return s;
+  },
+  latLng: function (lat, lng) {
+    var a = V.num(lat, 'Latitude', -90, 90), b = V.num(lng, 'Longitude', -180, 180);
+    return { lat: a, lng: b };
+  }
 };

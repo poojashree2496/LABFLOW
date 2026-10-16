@@ -19,7 +19,7 @@ var Setup = {
       props.setProperty(Cfg.PROP.DB_ID, ss.getId());
     }
     Db.resetHandles();
-    var created = [], checked = [];
+    var created = [], checked = [], extended = [];
     Object.keys(Cfg.SCHEMA).forEach(function (table) {
       var cols = Cfg.SCHEMA[table];
       var sheet = ss.getSheetByName(table);
@@ -30,8 +30,16 @@ var Setup = {
         created.push(table);
       } else {
         var existing = sheet.getRange(1, 1, 1, cols.length).getValues()[0];
-        var same = header.every(function (h, i) { return existing[i] === h; });
-        if (!same) fail('SCHEMA_MISMATCH', 'Sheet "' + table + '" headers differ from the expected schema. Refusing to modify existing data.');
+        // Additive migration: an older sheet whose headers are a prefix of the schema gets the new columns appended.
+        // Anything else (renamed, reordered or foreign columns) is refused rather than "fixed".
+        var have = 0;
+        while (have < header.length && existing[have] === header[have]) have++;
+        var restBlank = existing.slice(have).every(function (v) { return v === '' || v === null; });
+        if (have === 0 || !restBlank) fail('SCHEMA_MISMATCH', 'Sheet "' + table + '" headers differ from the expected schema. Refusing to modify existing data.');
+        if (have < header.length) {
+          sheet.getRange(1, have + 1, 1, header.length - have).setValues([header.slice(have)]);
+          extended.push(table + ' +' + (header.length - have));
+        }
         checked.push(table);
       }
       // Plain-text format for text/JSON columns so ids like "007" or "=1+1" are stored literally, never parsed.
@@ -46,7 +54,7 @@ var Setup = {
     if (!props.getProperty(Cfg.PROP.HMAC)) props.setProperty(Cfg.PROP.HMAC, Setup._newSecret());
     if (opts.adminEmail) Setup.setBootstrapAdmin(opts.adminEmail);
     Db.resetHandles();
-    var out = { spreadsheetId: ss.getId(), url: ss.getUrl(), created: created, verified: checked };
+    var out = { spreadsheetId: ss.getId(), url: ss.getUrl(), created: created, verified: checked, extended: extended };
     if (!opts.silent) console.log(JSON.stringify(out));
     return out;
   },
@@ -141,8 +149,54 @@ var Setup = {
     check('Mail quota available', function () { return MailApp.getRemainingDailyQuota() + ' messages left today'; });
     check('Allowed domains', function () { return Auth.allowedDomains().join(', '); });
     check('Triggers installed', function () { return Triggers.status().summary; });
+    check('Web app URL known (needed inside kiosk and student QR codes)', function () {
+      var u = Setup.webAppUrl();
+      if (!u) throw new Error('not deployed yet: deploy as a web app, then run this again');
+      return u;
+    });
     r.allOk = r.checks.every(function (c) { return c.ok; });
     console.log(JSON.stringify(r, null, 2));
     return r;
+  },
+
+  /** The deployed /exec URL. A script property can pin it (the local dev server sets one). */
+  webAppUrl: function () {
+    var pinned = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.WEBAPP_URL);
+    if (pinned) return pinned;
+    try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+  },
+
+  /**
+   * Peak-load estimate on the REAL runtime, against a throwaway spreadsheet (the live database is not touched).
+   * Measures the parts of one accepted scan: signature verification, the replay lookup and the locked append.
+   * Prints per-scan cost and the implied time for a class of `students`. Run from the editor after deploying.
+   */
+  benchmarkScans: function (students) {
+    students = students || 60;
+    var scratch = SpreadsheetApp.create('LABFLOW benchmark (safe to delete)'), out = { students: students };
+    try {
+      Db.useSpreadsheet(scratch);
+      Object.keys(Cfg.SCHEMA).forEach(function (t) { var c = Cfg.SCHEMA[t]; scratch.insertSheet(t).getRange(1, 1, 1, c.length).setValues([c.map(function (x) { return x.name; })]); });
+      var v = Setup._VECTOR, n = Math.min(students, 60), t0 = Date.now(), i;
+      for (i = 0; i < n; i++) Creds.verifySignature(v.pub, v.msg, v.sig);
+      out.verifyMsEach = Math.round((Date.now() - t0) / n);
+      t0 = Date.now();
+      for (i = 0; i < n; i++) {
+        Locks.with(function () {
+          Tokens.wasRedeemed('bench' + i);
+          Db.insert('AttendanceEvents', { eventId: U.id('event'), sessionId: 'bench', labId: 'bench', studentId: 'S' + i, type: 'IN', source: 'kiosk', at: U.now(), createdAt: U.now() });
+          Db.insert('Redemptions', { nonce: 'bench' + i, purpose: 'i', studentId: 'S' + i, at: U.now() });
+        });
+      }
+      out.lockedWriteMsEach = Math.round((Date.now() - t0) / n);
+      out.perScanMs = out.verifyMsEach + out.lockedWriteMsEach;
+      out.classSeconds = Math.round(out.perScanMs * students / 100) / 10;
+      out.note = 'Scans are serial behind the script lock only for the locked part; verification runs outside it. Network and page time on the phone are extra.';
+    } finally {
+      Db.resetHandles();
+      try { DriveApp.getFileById(scratch.getId()).setTrashed(true); } catch (e) {}
+    }
+    console.log(JSON.stringify(out, null, 2));
+    return out;
   }
 };

@@ -198,7 +198,7 @@ test('audit: truncating the tail is detected via the stored head', () => {
 
 test('audit: periodic checkpoint is written every N events', () => {
   const e = fresh();
-  e.run(`Db.insert('Config', { key:'auditCheckpointEvery', value:'5' })`);
+  e.run(`Settings.put({ auditCheckpointEvery: '5' })`);
   e.run(`Settings.reset()`);
   for (let i = 0; i < 12; i++) e.run(`Audit.log({ actor:'x', action:'a${i}' })`);
   assert.equal(e.run(`Db.count('AuditCheckpoints')`), 2);
@@ -208,8 +208,8 @@ test('audit: periodic checkpoint is written every N events', () => {
 test('settings: defaults apply, stored values are coerced and clamped', () => {
   const e = fresh();
   assert.equal(e.run(`Settings.get('qrTtlSeconds')`), 60);
-  e.run(`Db.insert('Config', { key:'qrTtlSeconds', value:'9999' })`); e.run(`Settings.reset()`);
+  e.run(`Settings.put({ qrTtlSeconds: '9999' })`);
   assert.equal(e.run(`Settings.get('qrTtlSeconds')`), 180, 'clamped to max');
-  e.run(`Db.insert('Config', { key:'requireExitScan', value:'false' })`); e.run(`Settings.reset()`);
+  e.run(`Settings.put({ requireExitScan: 'false' })`);
   assert.equal(e.run(`Settings.get('requireExitScan')`), false);
 });

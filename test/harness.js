@@ -18,8 +18,7 @@ const nodeCrypto = require('crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 // Load order mirrors .clasp.json filePushOrder.
-const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs',
-  'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'AssetService.gs', 'BookingService.gs', 'ReportService.gs', 'AdminService.gs', 'TriggerService.gs', 'Code.gs'];
+const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs', 'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'CheckinService.gs', 'FlagService.gs', 'EventService.gs', 'AssetService.gs', 'BookingService.gs', 'ReportService.gs', 'AdminService.gs', 'TriggerService.gs', 'Code.gs'];
 
 function signed(buf) { return Array.from(buf, (b) => (b > 127 ? b - 256 : b)); }
 function toBuf(x) { return Buffer.isBuffer(x) ? x : Buffer.from(x.map ? x.map((b) => b & 255) : x); }
@@ -141,7 +140,7 @@ function createEnv(opts = {}) {
       getFolderById: (id) => { if (!folders[id]) throw new Error('no folder'); return folders[id]; },
       getFileById: (id) => ({ setTrashed: () => { trashed.push(id); }, getAs: () => ({ getBytes: () => signed(Buffer.from('%PDF-fake')) }) }),
     },
-    DocumentApp: { ParagraphHeading: { HEADING1: 'H1' },
+    DocumentApp: { ParagraphHeading: { HEADING1: 'H1', HEADING2: 'H2' },
       create: () => { const doc = { getId: () => 'doc-1', getBody: () => { const b = { setMarginTop: () => b, setMarginBottom: () => b, setMarginLeft: () => b, setMarginRight: () => b, appendParagraph: (t) => { docs.push(t); return { setHeading() {} }; },
         appendTable: (d) => { docs.push('table:' + d.length); return { setFontSize() {}, getRow: () => ({ editAsText: () => ({ setBold() {} }) }) }; } }; return b; }, saveAndClose: () => {} }; return doc; } },
     ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: (t) => { const i = triggers.indexOf(t); if (i >= 0) triggers.splice(i, 1); },
