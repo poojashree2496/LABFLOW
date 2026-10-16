@@ -81,6 +81,24 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     check('spot check created with the photo-less fallback', await f.locator('text=No photo on file').count() >= 1);
     await f.getByRole('button', { name: 'Matches' }).first().click(); await f.locator('.toast', { hasText: 'Recorded' }).waitFor();
 
+    // ---------------- staff: equipment request from inside the lab, filled on the issue screen
+    setClock(IST(10, 30));
+    await s1.goto(base + '/?as=student1@karunya.edu'); await s1.getByRole('button', { name: 'Equipment' }).last().click();
+    await s1.getByRole('tab', { name: 'Request in the lab' }).click(); await s1.waitForSelector('text=Ask the lab desk');
+    await s1.getByLabel('What do you need?').selectOption({ label: /ESP32 board/ }).catch(async () => { const v = await s1.getByLabel('What do you need?').locator('option', { hasText: 'ESP32 board' }).getAttribute('value'); await s1.getByLabel('What do you need?').selectOption(v); });
+    await s1.getByRole('button', { name: 'Send request' }).click(); await s1.waitForSelector('text=Request sent to the lab desk');
+    check('student inside the lab requests equipment', true);
+    const tctx = await browser.newContext(desktop), t = await page(tctx, 'staff@karunya.edu', 'staff');
+    await t.waitForSelector('text=Equipment requests'); await t.waitForTimeout(600); await shot(t, '12-staff-desk');
+    await t.locator('section', { hasText: 'Equipment requests' }).getByRole('button', { name: 'Issue' }).first().click();
+    await t.waitForSelector('text=Filling a request');
+    await t.getByLabel('Search equipment to add').fill('ESP'); await t.getByRole('button', { name: /ESP32 DevKit/ }).first().click();
+    await shot(t, '13-staff-issue'); await t.getByRole('button', { name: 'Issue items' }).click(); await t.waitForSelector('text=Issued.');
+    check('staff issues the requested item and the request closes', w.call('student1@karunya.edu', 'equipment.mine', {}).data.requests[0].status === 'fulfilled');
+    await t.getByRole('tab', { name: 'Return' }).click(); await t.getByRole('button', { name: /Aarav/ }).click();
+    await t.getByRole('button', { name: 'All back' }).first().click(); await t.getByRole('button', { name: 'Record return' }).click(); await t.waitForSelector('text=Loan closed');
+    check('staff records the return; the loan closes', w.call(w.staff, 'loans.list', { status: 'active' }).data.loans.length === 0);
+
     // ---------------- Version B: device QR at the GPU lab kiosk scanner, and a teacher phone opening the QR link
     setClock(IST(14, 1)); await tick();
     await s1.goto(base + '/?as=student1@karunya.edu'); await s1.waitForSelector('text=CSE302 Deep Learning Lab');
@@ -114,23 +132,6 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     check('the class representative gets the class rep page', await crp.getByRole('button', { name: 'More' }).count() + await crp.getByRole('button', { name: 'Class rep' }).count() >= 1);
     await crp.close();
 
-    // ---------------- staff: equipment request from inside the lab, filled on the issue screen
-    setClock(IST(10, 30));
-    await s1.goto(base + '/?as=student1@karunya.edu'); await s1.getByRole('button', { name: 'Equipment' }).last().click();
-    await s1.getByRole('tab', { name: 'Request in the lab' }).click(); await s1.waitForSelector('text=Ask the lab desk');
-    await s1.getByLabel('What do you need?').selectOption({ label: /ESP32 board/ }).catch(async () => { const v = await s1.getByLabel('What do you need?').locator('option', { hasText: 'ESP32 board' }).getAttribute('value'); await s1.getByLabel('What do you need?').selectOption(v); });
-    await s1.getByRole('button', { name: 'Send request' }).click(); await s1.waitForSelector('text=Request sent to the lab desk');
-    check('student inside the lab requests equipment', true);
-    const tctx = await browser.newContext(desktop), t = await page(tctx, 'staff@karunya.edu', 'staff');
-    await t.waitForSelector('text=Equipment requests'); await t.waitForTimeout(600); await shot(t, '12-staff-desk');
-    await t.locator('section', { hasText: 'Equipment requests' }).getByRole('button', { name: 'Issue' }).first().click();
-    await t.waitForSelector('text=Filling a request');
-    await t.getByLabel('Search equipment to add').fill('ESP'); await t.getByRole('button', { name: /ESP32 DevKit/ }).first().click();
-    await shot(t, '13-staff-issue'); await t.getByRole('button', { name: 'Issue items' }).click(); await t.waitForSelector('text=Issued.');
-    check('staff issues the requested item and the request closes', w.call('student1@karunya.edu', 'equipment.mine', {}).data.requests[0].status === 'fulfilled');
-    await t.getByRole('tab', { name: 'Return' }).click(); await t.getByRole('button', { name: /Aarav/ }).click();
-    await t.getByRole('button', { name: 'All back' }).first().click(); await t.getByRole('button', { name: 'Record return' }).click(); await t.waitForSelector('text=Loan closed');
-    check('staff records the return; the loan closes', w.call(w.staff, 'loans.list', { status: 'active' }).data.loans.length === 0);
 
     // ---------------- admin: every page renders without error; mobile layout; access control; labelled controls
     const actx = await browser.newContext(desktop), a = await page(actx, 'admin@karunya.edu', 'admin');

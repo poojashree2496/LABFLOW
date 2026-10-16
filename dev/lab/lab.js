@@ -277,5 +277,6 @@ function dataView(root) {
 /* ------------------------------------------------------------------ boot */
 clear($('#top-actions')).append(h('a', { class: 'btn sm', href: appUrl('admin@karunya.edu'), target: '_blank', rel: 'noopener' }, 'Open app'), btn('+5 min', async () => { await api('clock', { action: 'advance', ms: 300000 }); await refreshState(); }, 'sm'));
 refreshState().then(() => go((location.hash || '#overview').slice(1))).catch((e) => { clear($('#main')).append(h('h1', null, 'The dev server is not responding'), h('p', null, String(e.message))); });
+addEventListener('hashchange', () => { if (!current || location.hash.slice(1) !== current.id) go(location.hash.slice(1)); });
 setInterval(() => { refreshState().catch(() => {}); }, 15000);
 })();
