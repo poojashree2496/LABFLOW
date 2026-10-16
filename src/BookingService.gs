@@ -7,7 +7,7 @@
  * last unit cannot both succeed. Loans.issue consults Booking.availability so that walk-up checkout cannot consume
  * stock promised to an approved booking.
  *
- * Statuses: pending -> approved | rejected | cancelled | expired ; approved -> fulfilled | cancelled | expired (no-show).
+ * Statuses: pending -> approved | rejected | cancelled | expired ; approved -> fulfilled | cancelled | expired (no-show) | completed (used workstation slot).
  */
 var Booking = {
   COLLECT_EARLY_MS: 2 * 3600000,
@@ -186,22 +186,124 @@ var Booking = {
   },
   list: function (ctx, p) {
     p = p || {};
-    var status = p.status ? V.enumOf(p.status, 'Status', ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled']) : '';
+    var status = p.status ? V.enumOf(p.status, 'Status', ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed']) : '';
     var rows = Db.where('Reservations', function (r) { return (!status || r.status === status) && (!p.labId || r.labId === p.labId); }).reverse();
     return { reservations: rows.slice(0, 200).map(Booking._view), total: rows.length };
   },
 
-  /** Trigger: pending requests whose start has passed expire; approved bookings not collected within the no-show window expire. */
+  /** A student's own approved workstation (single asset) bookings in this lab that are running now (or start within `earlyMs`). */
+  activeWorkstationBookings: function (studentId, labId, now, earlyMs) {
+    var groups = {}; Db.whereEq('GroupMembers', { studentId: studentId }).forEach(function (m) { groups[m.groupId] = true; });
+    return Db.where('Reservations', function (r) {
+      return r.labId === labId && r.status === 'approved' && r.resourceType === 'asset' && r.startAt - (earlyMs || 0) <= now && now <= r.endAt &&
+        ((r.requesterType === 'student' && r.requesterId === studentId) || (r.requesterType === 'group' && groups[r.requesterId]));
+    });
+  },
+  /** A check-in by the booking's student during the slot marks it used (utilisation counts used slots, FR-25). */
+  markUsed: function (studentId, labId, now) {
+    Booking.activeWorkstationBookings(studentId, labId, now, 15 * 60000).forEach(function (r) {
+      if (r.usedAt) return;
+      Db.update('Reservations', r.reservationId, { usedAt: now });
+      Audit.log({ actor: 'system', role: 'system', action: 'booking.used', entityType: 'Reservation', entityId: r.reservationId, detail: { studentId: studentId } });
+    });
+  },
+
+  /**
+   * Trigger. Pending requests whose start has passed expire. A workstation slot nobody checked in for is released
+   * noShowReleaseMinutes after it starts (FR-25) and a used one completes at its end. Other approved bookings expire
+   * when they are not collected within the collection window.
+   */
   expireStale: function () {
-    var now = U.now(), n = 0;
-    Db.where('Reservations', function (r) { return (r.status === 'pending' && r.startAt < now) || (r.status === 'approved' && r.startAt + Booking.NO_SHOW_MS < now); }).forEach(function (r) {
+    var now = U.now(), n = 0, released = 0, completed = 0, noShow = Settings.get('noShowReleaseMinutes') * 60000;
+    Db.where('Reservations', function (r) { return r.status === 'pending' || r.status === 'approved'; }).forEach(function (r) {
+      var note = null, status = 'expired';
+      if (r.status === 'pending' && r.startAt < now) note = 'Not decided before start';
+      else if (r.status === 'approved' && r.resourceType === 'asset') {
+        if (r.usedAt && r.endAt < now) { status = 'completed'; note = 'Slot finished'; }
+        else if (!r.usedAt && r.startAt + noShow < now) note = 'No-show: released ' + Math.round(noShow / 60000) + ' minutes after the start';
+      } else if (r.status === 'approved' && r.startAt + Booking.NO_SHOW_MS < now) note = 'Not collected (no-show)';
+      if (!note) return;
       try {
-        var next = Db.update('Reservations', r.reservationId, { status: 'expired', decidedAt: now, decisionNote: r.status === 'pending' ? 'Not decided before start' : 'Not collected (no-show)' });
-        Audit.log({ actor: 'system', role: 'system', action: 'booking.expire', entityType: 'Reservation', entityId: r.reservationId, detail: { was: r.status } });
-        Booking._notifyRequester(next, 'booking', 'Booking expired', Booking._resourceName(next) + ' from ' + U.fmt(next.startAt) + ' expired.', 'bk-exp:' + r.reservationId);
-        n++;
+        var next = Db.update('Reservations', r.reservationId, { status: status, decidedAt: r.decidedAt || now, decisionNote: note });
+        Audit.log({ actor: 'system', role: 'system', action: status === 'completed' ? 'booking.complete' : 'booking.expire', entityType: 'Reservation', entityId: r.reservationId, detail: { was: r.status, note: note } });
+        if (status === 'completed') { completed++; return; }
+        Booking._notifyRequester(next, 'booking', 'Booking ' + (r.resourceType === 'asset' && r.status === 'approved' ? 'released' : 'expired'), Booking._resourceName(next) + ' from ' + U.fmt(next.startAt) + ': ' + note + '.', 'bk-exp:' + r.reservationId);
+        if (r.resourceType === 'asset' && r.status === 'approved') released++; else n++;
       } catch (e) { Syslog.error('booking', 'EXPIRE_FAILED', String(e && e.message), { id: r.reservationId }); }
     });
-    return { expired: n };
+    return { expired: n, released: released, completed: completed };
+  }
+};
+
+/**
+ * Equipment requests made from inside the lab (FR-21): a student who is checked in asks for a component or kit now;
+ * lab staff hand it over on the issue screen, which closes the request. Advance bookings (above) need no check-in.
+ */
+var Requests = {
+  _view: function (r) {
+    var st = Db.get('StudentProfiles', r.studentId) || {}, res = r.resourceType === 'kit' ? Db.get('Kits', r.resourceId) : Db.get('Categories', r.resourceId), lab = Db.cachedGet('Labs', 'labId', r.labId, 120) || {};
+    return { requestId: r.requestId, labId: r.labId, labName: lab.name, sessionId: r.sessionId, studentId: r.studentId, name: st.name, rollNo: st.rollNo, resourceType: r.resourceType, resourceId: r.resourceId,
+             resourceName: res ? res.name : r.resourceId, quantity: r.quantity, note: r.note, status: r.status, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote, loanId: r.loanId };
+  },
+  create: function (ctx, p) {
+    V.obj(p);
+    var st = Creds._requireVerifiedStudent(ctx);
+    var labId = V.id(p.labId, 'Lab', 'lab'), rt = V.enumOf(p.resourceType, 'Item type', ['category', 'kit']);
+    var rid = rt === 'kit' ? V.id(p.resourceId, 'Kit', 'kit') : V.id(p.resourceId, 'Category', 'category');
+    var qty = V.int(p.quantity === undefined ? 1 : p.quantity, 'Quantity', 1, 50), note = V.str(p.note, 'Note', { optional: true, max: 200 });
+    var inside = Occupancy.insideSession(st.studentId, labId);
+    if (Settings.get('requireCheckinForRequests') && !inside) fail('NOT_CHECKED_IN', 'Check in to this lab first. Requests are made from inside the lab; book ahead under Bookings.');
+    if (rt === 'kit') { var kit = Db.mustGet('Kits', rid, 'Kit'); if (kit.labId !== labId || kit.status !== 'active') fail('BAD_INPUT', 'That kit is not available in this lab.'); }
+    var now = U.now(), demand = Booking.demand(rt, rid, qty);
+    Object.keys(demand).forEach(function (catId) {
+      var av = Booking.availability(labId, catId, now, now + 3600000, null), cat = Db.get('Categories', catId);
+      if (demand[catId] > av.free) fail('NOT_AVAILABLE', 'Not enough ' + (cat ? cat.name : 'stock') + ' right now: ' + av.free + ' free.');
+    });
+    return Locks.with(function () {
+      var pending = Db.where('EquipmentRequests', function (r) { return r.studentId === st.studentId && r.status === 'pending'; });
+      if (pending.length >= 3) fail('LIMIT', 'You already have 3 requests waiting at the desk.');
+      var r = Db.insert('EquipmentRequests', { requestId: U.id('request'), labId: labId, sessionId: inside ? inside.sessionId : '', studentId: st.studentId, resourceType: rt, resourceId: rid, quantity: qty, note: note,
+        status: 'pending', requestedAt: now });
+      Audit.log({ actor: ctx.email, role: 'student', action: 'equipment.request', entityType: 'EquipmentRequest', entityId: r.requestId, detail: { labId: labId, resourceType: rt, resourceId: rid, quantity: qty } });
+      var v = Requests._view(r);
+      Notify.toRole('staff', 'equipment', 'Equipment request', v.name + ' (' + v.rollNo + ') asks for ' + v.resourceName + ' x' + qty + ' in ' + v.labName + '.', 'eqr:' + r.requestId);
+      return { request: v };
+    });
+  },
+  mine: function (ctx) {
+    if (!ctx.student) return { requests: [] };
+    return { requests: Db.where('EquipmentRequests', function (r) { return r.studentId === ctx.student.studentId; }).slice(-30).reverse().map(Requests._view) };
+  },
+  cancel: function (ctx, p) {
+    V.obj(p);
+    var r = Db.mustGet('EquipmentRequests', V.id(p.requestId, 'Request', 'request'), 'Request');
+    if (!ctx.student || r.studentId !== ctx.student.studentId) fail('FORBIDDEN', 'This is not your request.');
+    if (r.status !== 'pending') fail('INVALID_STATE', 'This request is already ' + r.status + '.');
+    Db.update('EquipmentRequests', r.requestId, { status: 'cancelled', decidedAt: U.now() });
+    return { ok: true };
+  },
+  list: function (ctx, p) {
+    p = p || {};
+    var status = V.enumOf(p.status, 'Status', ['pending', 'fulfilled', 'rejected', 'cancelled', 'all'], { optional: true, def: 'pending' });
+    return { requests: Db.where('EquipmentRequests', function (r) { return (status === 'all' || r.status === status) && (!p.labId || r.labId === p.labId); }).slice(-200).reverse().map(Requests._view) };
+  },
+  decide: function (ctx, p) {
+    V.obj(p);
+    var note = V.str(p.note, 'Note', { min: 3, max: 200 });
+    return Locks.with(function () {
+      var r = Db.mustGet('EquipmentRequests', V.id(p.requestId, 'Request', 'request'), 'Request');
+      if (r.status !== 'pending') fail('INVALID_STATE', 'This request is already ' + r.status + '.');
+      Db.update('EquipmentRequests', r.requestId, { status: 'rejected', decidedBy: ctx.email, decidedAt: U.now(), decisionNote: note });
+      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'equipment.reject', entityType: 'EquipmentRequest', entityId: r.requestId, detail: { note: note } });
+      Notify.toStudent(r.studentId, 'equipment', 'Request not filled', note, 'eqr-dec:' + r.requestId, { email: false });
+      return { ok: true };
+    });
+  },
+  /** Called by Loans.issue (inside its lock) when a loan hands over a requested item. */
+  fulfil: function (requestId, loan, ctx) {
+    var r = Db.mustGet('EquipmentRequests', requestId, 'Request');
+    if (r.status !== 'pending') fail('INVALID_STATE', 'That request is already ' + r.status + '.');
+    if (loan.borrowerType !== 'student' || loan.borrowerId !== r.studentId) fail('BAD_INPUT', 'That request belongs to a different student.');
+    Db.update('EquipmentRequests', r.requestId, { status: 'fulfilled', decidedBy: ctx.email, decidedAt: U.now(), loanId: loan.loanId });
   }
 };

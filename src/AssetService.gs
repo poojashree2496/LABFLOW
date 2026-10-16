@@ -55,6 +55,30 @@ var Assets = {
     var total = rows.length, limit = V.int(p.limit, 'Limit', 1, 500, { optional: true, def: 200 });
     return { assets: rows.slice(0, limit).map(function (a) { return Assets._pub(a, ctx); }), total: total };
   },
+  /**
+   * What a lab has and what is free right now, for anyone signed in (FR-20: students see availability without
+   * checking in). No serial numbers, values or borrower details. Workstations (individually tracked) are listed by
+   * name so they can be booked.
+   */
+  catalog: function (ctx, p) {
+    p = p || {};
+    var labs = Db.where('Labs', function (l) { return l.status === 'active' && (!p.labId || l.labId === p.labId); }), now = U.now(), cats = Db.readAll('Categories');
+    return { labs: labs.map(function (lab) {
+      var assets = Db.whereEq('Assets', { labId: lab.labId });
+      var categories = cats.filter(function (c) { return assets.some(function (a) { return a.categoryId === c.categoryId; }); }).map(function (c) {
+        var av = Booking.availability(lab.labId, c.categoryId, now, now + 3600000, null);
+        return { categoryId: c.categoryId, name: c.name, trackingMode: c.trackingMode, total: av.total, free: av.free };
+      });
+      var units = assets.filter(function (a) { return a.trackingMode === 'individual' && (a.status === 'available' || a.status === 'on_loan'); })
+        .map(function (a) { return { assetId: a.assetId, name: a.name, assetTag: a.assetTag, categoryId: a.categoryId, status: a.status }; });
+      var kits = Db.where('Kits', function (k) { return k.labId === lab.labId && k.status === 'active'; }).map(function (k) {
+        var comps = Db.whereEq('KitComponents', { kitId: k.kitId }).filter(function (c) { return c.quantity > 0; });
+        var can = comps.length ? Math.min.apply(null, comps.map(function (c) { var av = Booking.availability(lab.labId, c.categoryId, now, now + 3600000, null); return Math.floor(av.free / c.quantity); })) : 0;
+        return { kitId: k.kitId, name: k.name, description: k.description, available: can };
+      });
+      return { labId: lab.labId, code: lab.code, name: lab.name, type: lab.type, categories: categories, units: units, kits: kits };
+    }), serverNow: now };
+  },
   _validate: function (p, existing) {
     var cat = Db.mustGet('Categories', V.id(p.categoryId, 'Category', 'category'), 'Category');
     var lab = Db.mustGet('Labs', V.id(p.labId, 'Lab', 'lab'), 'Lab');
@@ -437,6 +461,7 @@ var Loans = {
         });
         loan = Db.update('Loans', loan.loanId, { status: 'open' });
         if (reservation) Db.update('Reservations', reservation.reservationId, { status: 'fulfilled' });
+        if (p.requestId) Requests.fulfil(V.id(p.requestId, 'Request', 'request'), loan, ctx);
         Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'loan.issue', entityType: 'Loan', entityId: loan.loanId, detail: { borrowerType: type, borrowerId: borrowerId, items: resolved.lines.length, dueAt: dueAt, kitId: loan.kitId, reservationId: loan.reservationId } });
         Loans._notifyBorrower(loan, 'loan', 'Items issued', resolved.lines.length + ' item line(s) issued. Due ' + U.fmt(dueAt) + '.', 'loan-issued:' + loan.loanId);
 

@@ -16,21 +16,57 @@ var Users = {
   _pubUser: function (u) { return { userId: u.userId, email: u.email, displayName: u.displayName, roles: String(u.roles || '').split(',').filter(Boolean), status: u.status, lastLoginAt: u.lastLoginAt }; },
 
   me: function (ctx) {
-    var s = Settings.all();
+    var s = Settings.all(), sid = ctx.student ? ctx.student.studentId : null;
+    var reps = sid ? Db.where('ClassReps', function (r) { return r.status === 'active' && r.studentId === sid; }).length : 0;
+    var coordinating = Db.where('Events', function (e) { return e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + s.eventCoordinatorGraceMinutes * 60000 >= U.now(); }).length;
     return {
       email: ctx.email,
       userId: ctx.user ? ctx.user.userId : null,
       displayName: ctx.user ? ctx.user.displayName : ctx.email.split('@')[0],
       roles: ctx.roles,
       onboardingRequired: !ctx.user || (ctx.has('student') && !ctx.student),
+      consentRequired: !ctx.kiosk && Users.consentRequired(ctx.user),
+      profileIncomplete: !!ctx.user && s.requireMobile && !ctx.user.mobile,
+      mobile: ctx.user ? ctx.user.mobile || '' : '',
+      derivedRollNo: !ctx.student ? Users.derivedRoll(ctx.email) : '',
+      classRep: reps > 0, coordinating: coordinating,
       student: ctx.student ? Object.assign(Users._pubStudent(ctx.student), { credential: Creds.summaryFor(ctx.student.studentId) }) : null,
       faculty: ctx.faculty ? { facultyId: ctx.faculty.facultyId, name: ctx.faculty.name, department: ctx.faculty.department } : null,
       kiosk: ctx.kiosk ? { kioskId: ctx.kiosk.kioskId, labId: ctx.kiosk.labId, name: ctx.kiosk.name } : null,
-      settings: { qrTtlSeconds: s.qrTtlSeconds, rescanWindowMinutes: s.rescanWindowMinutes, exitGraceMinutes: s.exitGraceMinutes,
+      settings: { qrTtlSeconds: s.qrTtlSeconds, rescanWindowSeconds: s.rescanWindowSeconds, exitGraceMinutes: s.exitGraceMinutes,
                   requireExitScan: s.requireExitScan, loanDefaultDays: s.loanDefaultDays, bookingMaxAdvanceDays: s.bookingMaxAdvanceDays,
-                  bookingMaxDays: s.bookingMaxDays },
+                  bookingMaxDays: s.bookingMaxDays, studentQrRotateSeconds: s.studentQrRotateSeconds, qrFreshSeconds: s.qrFreshSeconds,
+                  occupancyRefreshSeconds: s.occupancyRefreshSeconds, defaultCheckinMode: s.defaultCheckinMode, requireMobile: s.requireMobile,
+                  requireCheckinForRequests: s.requireCheckinForRequests, minScanGapSeconds: s.minScanGapSeconds },
+      consentVersion: Cfg.CONSENT_VERSION,
+      webAppUrl: Setup.webAppUrl(),
       serverNow: U.now(), tz: Cfg.TZ
     };
+  },
+
+  /** Has this account accepted the current privacy notice (DPDP Act notice, SRS section 13)? */
+  consentRequired: function (user) { return !user || user.consentVersion !== Cfg.CONSENT_VERSION; },
+
+  /** Roll number taken from the student email (FR-3), e.g. urk24cs1021@karunya.edu.in -> URK24CS1021, or '' if it does not match. */
+  derivedRoll: function (email) {
+    if (!Settings.get('rollFromEmail')) return '';
+    var local = String(email || '').split('@')[0].toLowerCase(), re;
+    try { re = new RegExp(Settings.get('rollEmailPattern')); } catch (e) { return ''; }
+    return local.length <= 20 && re.test(local) ? local.toUpperCase() : '';
+  },
+
+  /** The signed-in user's own profile fields: mobile number and acceptance of the privacy notice. */
+  updateProfile: function (ctx, p) {
+    V.obj(p);
+    if (!ctx.user) fail('NOT_ONBOARDED', 'Complete onboarding first.');
+    var patch = {}, detail = {};
+    if (p.mobile !== undefined) { patch.mobile = V.mobile(p.mobile); detail.mobile = 'updated'; }
+    if (p.consent === true) { patch.consentAt = U.now(); patch.consentVersion = Cfg.CONSENT_VERSION; detail.consentVersion = Cfg.CONSENT_VERSION; }
+    if (!Object.keys(patch).length) fail('BAD_INPUT', 'Nothing to change.');
+    patch.updatedAt = U.now();
+    Db.update('Users', ctx.user.userId, patch);
+    Audit.log({ actor: ctx.email, role: ctx.roles[0] || 'user', action: patch.consentVersion ? 'consent.accept' : 'profile.update', entityType: 'User', entityId: ctx.user.userId, detail: detail });
+    return { ok: true, consentRequired: false };
   },
 
   // ---- onboarding ----------------------------------------------------------------------------------
@@ -38,7 +74,10 @@ var Users = {
     V.obj(p);
     if (ctx.student) fail('ALREADY_ONBOARDED', 'Your student profile already exists.');
     if (ctx.user && !ctx.has('student')) fail('FORBIDDEN', 'Only students can onboard here. Staff and faculty accounts are created by an administrator.');
-    var rollNo = V.rollNo(p.rollNo);
+    if (p.consent !== true) fail('CONSENT_REQUIRED', 'Read and accept the privacy notice to continue.');
+    var derived = Users.derivedRoll(ctx.email);
+    var rollNo = derived || V.rollNo(p.rollNo); // a roll number that comes from the email cannot be typed differently (FR-3)
+    var mobile = Settings.get('requireMobile') || p.mobile ? V.mobile(p.mobile) : '';
     var name = V.str(p.name, 'Name', { max: 80, min: 2 });
     var department = V.str(p.department, 'Department', { optional: true, max: 60, def: 'CSE' });
     var section = V.str(p.section, 'Section', { optional: true, max: 10 });
@@ -49,22 +88,26 @@ var Users = {
       var now = U.now();
       var user = ctx.user;
       if (!user) {
-        user = Db.insert('Users', { userId: U.id('user'), email: ctx.email, displayName: name, roles: 'student', status: 'active', createdAt: now, updatedAt: now });
+        user = Db.insert('Users', { userId: U.id('user'), email: ctx.email, displayName: name, roles: 'student', status: 'active', createdAt: now, updatedAt: now,
+          mobile: mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION });
+      } else {
+        user = Db.update('Users', user.userId, { mobile: mobile || user.mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION, updatedAt: now });
       }
       var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
       var out;
       if (existing) {
         if (existing.userId && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
         if (existing.status !== 'imported' && existing.status !== 'rejected' && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
-        var matches = existing.importedEmail && existing.importedEmail === ctx.email;
+        // Verified automatically when the admin imported this roll number with this email, or when the roll number IS the email.
+        var matches = existing.importedEmail ? existing.importedEmail === ctx.email : !!derived;
         out = Db.update('StudentProfiles', existing.studentId, {
           userId: user.userId, email: ctx.email, name: name, department: department || existing.department, section: section || existing.section,
           year: year !== null ? year : existing.year, status: matches ? 'verified' : 'pending',
-          verifiedBy: matches ? 'import-email-match' : '', verifiedAt: matches ? now : null, updatedAt: now
+          verifiedBy: matches ? (existing.importedEmail ? 'import-email-match' : 'email-roll-match') : '', verifiedAt: matches ? now : null, updatedAt: now
         });
       } else {
         out = Db.insert('StudentProfiles', { studentId: U.id('student'), userId: user.userId, email: ctx.email, importedEmail: '', rollNo: rollNo, name: name,
-          department: department, section: section, year: year, status: 'pending', createdAt: now, updatedAt: now });
+          department: department, section: section, year: year, status: derived ? 'verified' : 'pending', verifiedBy: derived ? 'email-roll-match' : '', verifiedAt: derived ? now : null, createdAt: now, updatedAt: now });
       }
       Audit.log({ actor: ctx.email, role: 'student', action: 'student.onboard', entityType: 'StudentProfile', entityId: out.studentId,
                   detail: { rollNo: rollNo, resultStatus: out.status } });
