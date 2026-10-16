@@ -1,0 +1,183 @@
+/**
+ * The local Test Lab world: the real src/*.gs running on the in-memory Apps Script fakes (test/harness.js), seeded with
+ * a realistic department, a controllable clock, verification-pipeline fault injection, traces and simulated sheet
+ * latency. Development only; nothing here is deployed (dev/ is in .claspignore).
+ */
+const { world: baseWorld, NOW, LAB_A, LAB_B, north } = require('../test/fixtures');
+
+const FIRST = ['Aarav', 'Diya', 'Ishaan', 'Ananya', 'Rohan', 'Meera', 'Karthik', 'Nila', 'Arjun', 'Kavya', 'Vikram', 'Sneha', 'Rahul', 'Priya', 'Aditya', 'Lakshmi', 'Siddharth', 'Divya', 'Harish', 'Pooja',
+  'Naveen', 'Asha', 'Gokul', 'Revathi', 'Joel', 'Shalini', 'Pranav', 'Keerthana', 'Sanjay', 'Swathi', 'Abel', 'Nandhini', 'Varun', 'Janani', 'Kevin', 'Harini', 'Dinesh', 'Ishwarya', 'Samuel', 'Yamini'];
+const LAST = ['Kumar', 'Raj', 'Nair', 'Menon', 'Iyer', 'Thomas', 'Joseph', 'Pillai', 'Reddy', 'Das', 'Paul', 'Babu', 'Krishnan', 'Varghese', 'Prakash', 'Mathew', 'Suresh', 'George', 'Sharma', 'John'];
+const LAB_C = north(LAB_A, -140);
+const PRESETS = { small: { students: 12, historyDays: 2 }, demo: { students: 30, historyDays: 5 }, large: { students: 60, historyDays: 10 } };
+// Steps that only check something (safe to skip in the Test Lab to see what that check protects against).
+const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'enrolment', 'attendance_state',
+  'code_mac', 'code_age', 'code_unused', 'pass_fresh', 'geo_plausible', 'geofence', 'code_once', 'pass_mac'];
+
+/** A clock that runs in real time from a chosen moment and can be paused, advanced or set. */
+function makeClock(start) {
+  const c = { base: start, realStart: Date.now(), paused: false, frozen: start };
+  c.now = () => (c.paused ? c.frozen : c.base + (Date.now() - c.realStart));
+  c.set = (ms) => { c.base = ms; c.realStart = Date.now(); c.frozen = ms; };
+  c.advance = (ms) => c.set(c.now() + ms);
+  c.pause = () => { c.frozen = c.now(); c.paused = true; };
+  c.resume = () => { c.set(c.frozen); c.paused = false; };
+  return c;
+}
+
+/**
+ * Wrap every step of the verification pipelines (in the vm only) so the Test Lab can make a step fail, skip it, or
+ * slow it down. The production code iterates the step list unchanged; these wrappers exist only in this process.
+ */
+function installPipelineHooks(lab) {
+  const e = lab.w.e;
+  e.ctx.__devFault = (pipeline, id) => lab.faults[pipeline + ':' + id] || null;
+  e.ctx.__devSkipped = (id) => { lab.pendingSkips.push(id); };
+  e.ctx.__pipelineObserver = (t) => {
+    const rec = JSON.parse(JSON.stringify(t));
+    rec.skipped = lab.pendingSkips.splice(0); rec.id = ++lab.traceSeq; rec.sheetOps = lab.opsSince(rec.at);
+    lab.traces.push(rec); if (lab.traces.length > 200) lab.traces.shift();
+  };
+  e.run(`(function () {
+    var pipes = { 'B.scan': Attend.STEPS_B, 'A.open': Checkin.STEPS_OPEN, 'A.checkin': Checkin.STEPS_A };
+    Object.keys(pipes).forEach(function (name) {
+      pipes[name].forEach(function (step) {
+        if (step.__devWrapped) return;
+        var orig = step.run; step.__devWrapped = name;
+        step.run = function (c) {
+          var m = __devFault(name, step.id);
+          if (!m || m.mode === 'normal') return orig(c);
+          if (m.mode === 'skip') { __devSkipped(step.id); return; }
+          if (m.mode === 'fail') fail('INJECTED_FAULT', 'Test Lab: the "' + step.id + '" step is set to fail.');
+          if (m.mode === 'delay') { var t = Date.now(); while (Date.now() - t < Math.min(5000, m.ms || 0)) { /* simulated slow step */ } }
+          return orig(c);
+        };
+      });
+    });
+  })()`);
+}
+
+/** Count (and optionally slow down) every range read/write, to estimate Apps Script time for a flow. */
+function installSheetMeter(lab) {
+  const ss = Object.values(lab.w.e.spreadsheets)[0];
+  lab.ops = { read: 0, write: 0 };
+  lab.opLog = [];
+  ss.onOp = (kind) => {
+    lab.ops[kind]++;
+    lab.opLog.push(Date.now()); if (lab.opLog.length > 5000) lab.opLog.splice(0, 1000);
+    if (lab.latencyMs > 0) { const t = Date.now(); while (Date.now() - t < lab.latencyMs) { /* simulated sheet latency */ } }
+  };
+  lab.opsSince = () => lab.ops.read + lab.ops.write;
+}
+
+function seed(lab, preset) {
+  const w = lab.w, A = w.admin, S = w.staff, opts = PRESETS[preset] || PRESETS.demo;
+  w.e.setTime(NOW - 4 * 86400000); // set-up happened a few days before the simulated day
+  // labs: the IoT lab follows the spec (kiosk QR + GPS), the GPU lab uses device QR, the computing lab offers both
+  w.ok(A, 'labs.upsert', Object.assign({}, w.lab, { checkinMode: 'A', openTime: '08:00', closeTime: '19:00', inchargeEmails: 'staff@karunya.edu', building: 'Engineering block', room: 'EB-204' }));
+  w.ok(A, 'labs.upsert', Object.assign({}, w.lab2, { checkinMode: 'B', openTime: '08:00', closeTime: '21:00', building: 'Research block', room: 'RB-110' }));
+  lab.lab3 = w.ok(A, 'labs.upsert', { code: 'CMP01', name: 'Computing Lab', type: 'computing', capacity: 60, latitude: LAB_C.lat, longitude: LAB_C.lng, radiusM: 25, checkinMode: 'AB', openTime: '08:00', closeTime: '18:00', building: 'Engineering block', room: 'EB-101' }).lab;
+  w.ok(A, 'kiosks.upsert', { labId: lab.lab3.labId, name: 'Computing door', authorizedEmail: 'kiosk3@karunya.edu' });
+  w.ok(A, 'users.upsert', { email: 'faculty3@karunya.edu', displayName: 'Dr Priya Raman', roles: ['faculty'], employeeCode: 'F003' });
+  w.ok(A, 'users.upsert', { email: 'faculty@karunya.edu', displayName: 'Dr Anand Joseph', roles: ['faculty'], employeeCode: 'F001' });
+  w.ok(A, 'users.upsert', { email: 'faculty2@karunya.edu', displayName: 'Dr Sunita Mathew', roles: ['faculty'], employeeCode: 'F002' });
+  w.ok(A, 'users.upsert', { email: S, displayName: 'Ravi (Lab staff)', roles: ['staff'] });
+  w.ok(A, 'users.upsert', { email: A, displayName: 'Lab Admin', roles: ['admin'] });
+  const fac3 = w.ok('faculty3@karunya.edu', 'me').faculty.facultyId;
+  const c2 = w.ok(A, 'courses.upsert', { code: 'CSE302', name: 'Deep Learning Lab' }).course, c3 = w.ok(A, 'courses.upsert', { code: 'CSE303', name: 'Web Technology Lab' }).course;
+  w.ok(A, 'facultycourses.set', { facultyId: w.faculty2Id, courseId: c2.courseId, section: 'A' });
+  w.ok(A, 'facultycourses.set', { facultyId: fac3, courseId: c3.courseId, section: 'A' });
+  // students with realistic names; the email local part stays studentN so the Test Lab can switch identities
+  const rows = [];
+  for (let i = 1; i <= opts.students; i++) rows.push({ rollNo: 'URK24CS1' + String(i).padStart(3, '0'), name: FIRST[(i - 1) % FIRST.length] + ' ' + LAST[(i * 7) % LAST.length], email: 'student' + i + '@karunya.edu', section: 'A', year: 3 });
+  w.ok(A, 'students.import', { rows });
+  rows.forEach((r, i) => { const s = w.ok(r.email, 'onboard', { rollNo: r.rollNo, name: r.name, consent: true, mobile: '98' + String(40000000 + i * 3917).slice(0, 8) }).student; w.students.push({ email: r.email, studentId: s.studentId, rollNo: r.rollNo, name: r.name }); });
+  [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
+  const rolls = rows.map((r) => r.rollNo);
+  w.ok(A, 'roster.import', { courseId: w.course.courseId, rows: rolls });
+  w.ok(A, 'roster.import', { courseId: c2.courseId, rows: rolls.slice(0, Math.ceil(rolls.length / 2)) });
+  w.ok(A, 'roster.import', { courseId: c3.courseId, rows: rolls });
+  // a weekly timetable on every working day so any simulated date has sessions
+  for (let d = 1; d <= 6; d++) {
+    if (d !== 3) w.ok(A, 'timetable.upsert', { labId: w.lab.labId, courseId: w.course.courseId, facultyId: w.facultyId, section: 'A', dayOfWeek: d, startTime: '10:00', endTime: '12:00', validFrom: '2026-10-01', validTo: '2026-12-31' });
+    w.ok(A, 'timetable.upsert', { labId: w.lab2.labId, courseId: c2.courseId, facultyId: w.faculty2Id, section: 'A', dayOfWeek: d, startTime: '14:00', endTime: '16:00', validFrom: '2026-10-01', validTo: '2026-12-31' });
+    w.ok(A, 'timetable.upsert', { labId: lab.lab3.labId, courseId: c3.courseId, facultyId: fac3, section: 'A', dayOfWeek: d, startTime: '09:00', endTime: '11:00', validFrom: '2026-10-01', validTo: '2026-12-31' });
+  }
+  // inventory
+  const esp = w.ok(S, 'categories.upsert', { name: 'ESP32 board', trackingMode: 'individual' }).category, bb = w.ok(S, 'categories.upsert', { name: 'Breadboard', trackingMode: 'individual' }).category;
+  const wire = w.ok(S, 'categories.upsert', { name: 'Jumper wires', trackingMode: 'quantity' }).category, led = w.ok(S, 'categories.upsert', { name: 'LED (5 mm)', trackingMode: 'quantity' }).category;
+  const dht = w.ok(S, 'categories.upsert', { name: 'DHT22 sensor', trackingMode: 'individual' }).category, gpu = w.ok(S, 'categories.upsert', { name: 'GPU workstation', trackingMode: 'individual' }).category;
+  for (let i = 1; i <= 12; i++) w.ok(S, 'assets.upsert', { categoryId: esp.categoryId, labId: w.lab.labId, name: 'ESP32 DevKit', assetTag: 'ESP-' + String(i).padStart(3, '0'), serialNo: 'ESP32-SN' + (1000 + i), valueInr: 650, location: 'Cupboard A' });
+  for (let i = 1; i <= 12; i++) w.ok(S, 'assets.upsert', { categoryId: bb.categoryId, labId: w.lab.labId, name: 'Breadboard 830', assetTag: 'BB-' + String(i).padStart(3, '0'), location: 'Cupboard A' });
+  for (let i = 1; i <= 6; i++) w.ok(S, 'assets.upsert', { categoryId: dht.categoryId, labId: w.lab.labId, name: 'DHT22', assetTag: 'DHT-' + String(i).padStart(3, '0'), location: 'Drawer 3' });
+  w.ok(S, 'assets.upsert', { categoryId: wire.categoryId, labId: w.lab.labId, name: 'Jumper wires (M-M)', quantityTotal: 400, assetTag: 'WIRE-MM' });
+  w.ok(S, 'assets.upsert', { categoryId: led.categoryId, labId: w.lab.labId, name: 'Red LED 5 mm', quantityTotal: 300, assetTag: 'LED-RED' });
+  for (let i = 1; i <= 4; i++) w.ok(S, 'assets.upsert', { categoryId: gpu.categoryId, labId: w.lab2.labId, name: 'RTX 4090 workstation #' + i, assetTag: 'WS-0' + i, serialNo: 'WS-SN-' + i, valueInr: 350000, location: 'Bay ' + i });
+  w.ok(S, 'kits.upsert', { labId: w.lab.labId, name: 'LED blink kit', description: 'ESP32, breadboard, LED, wires', components: [{ categoryId: esp.categoryId, quantity: 1 }, { categoryId: bb.categoryId, quantity: 1 }, { categoryId: led.categoryId, quantity: 2 }, { categoryId: wire.categoryId, quantity: 10 }] });
+  w.ok(S, 'groups.create', { name: 'Smart-farm team', studentIds: [w.students[0].studentId, w.students[1].studentId], leaderId: w.students[0].studentId, labId: w.lab.labId });
+  // a class representative, and an evening workshop with a coordinator and a lunch break
+  w.ok(w.faculty, 'classreps.set', { courseId: w.course.courseId, section: 'A', studentId: w.students[1].studentId });
+  w.ok(w.faculty, 'events.create', { name: 'Hands-on IoT workshop', labId: lab.lab3.labId, date: '2026-10-14', startTime: '12:00', endTime: '17:00', breakStart: '13:00', breakEnd: '14:00', capacity: 40, openToAll: true, coordinatorEmail: w.students[2].email, override: true });
+  // attendance history on earlier days, so reports and charts have something real in them
+  history(lab, opts.historyDays);
+  lab.studentsMeta = rows;
+}
+
+/** Past days: the IoT class runs with kiosk QR check-ins; most students scan out, a few forget. */
+function history(lab, days) {
+  const w = lab.w, today = Date.UTC(2026, 9, 14, 4, 30);
+  let done = 0;
+  for (let back = 1; done < days && back < 30; back++) {
+    const t = today - back * 86400000, dow = new Date(t + 330 * 60000).getUTCDay();
+    if (dow === 0) continue;
+    w.e.setTime(t - 2 * 60000);
+    const date = w.eval('U.local(U.now()).date');
+    const ses = w.ok(w.faculty, 'sessions.day', { date }).sessions.find((s) => s.labId === w.lab.labId);
+    if (!ses) continue;
+    w.e.setTime(t);
+    w.ok(w.faculty, 'sessions.open', { sessionId: ses.sessionId });
+    // readings vary like real indoor GPS (identical readings across sessions are what the spoofing detector looks for)
+    w.students.forEach((s, i) => { if ((i + back) % 6 === 0) return; w.e.setTime(t + i * 9000); w.checkin(s, { geo: w.at(2 + Math.random() * 12, 6 + Math.random() * 18) }); });
+    w.e.setTime(t + 110 * 60000);
+    w.students.forEach((s, i) => { if ((i + back) % 6 === 0 || (i + back) % 7 === 0) return; w.checkin(s, { action: 'out', geo: w.at(1 + Math.random() * 10, 5 + Math.random() * 15) }); });
+    w.e.setTime(t + 121 * 60000);
+    w.ok(w.faculty, 'sessions.close', { sessionId: ses.sessionId });
+    done++;
+  }
+}
+
+/** Build a fresh Test Lab world. */
+function createLab(opts = {}) {
+  const preset = opts.preset || 'demo';
+  const lab = { preset, faults: {}, pendingSkips: [], traces: [], traceSeq: 0, latencyMs: 0, autoJobs: true, geo: { mode: 'inside', accuracy: 12, offsetM: 4 }, startedAt: Date.now() };
+  lab.w = baseWorld({ students: 0, mode: 'AB' });
+  lab.w.e.run("PropertiesService.getScriptProperties().setProperty('WEBAPP_URL', " + JSON.stringify(opts.baseUrl || 'http://localhost:8787/') + ')');
+  seed(lab, preset);
+  // the simulated day starts a few minutes before the 10:00 class; the clock then runs in real time
+  lab.clock = makeClock(NOW - 6 * 60000);
+  lab.sync = () => lab.w.e.setTime(lab.clock.now());
+  lab.sync();
+  lab.w.e.run('Sessions.materialize(U.local(U.now()).date)');
+  installSheetMeter(lab);
+  installPipelineHooks(lab);
+  lab.labs = { A: LAB_A, B: LAB_B, C: LAB_C };
+  return lab;
+}
+
+/** Pipelines and their steps, with the Test Lab's current mode for each. */
+function describePipelines(lab) {
+  const d = JSON.parse(lab.w.e.run('JSON.stringify({ "A.open": Pipeline.describe(Checkin.STEPS_OPEN), "A.checkin": Pipeline.describe(Checkin.STEPS_A), "B.scan": Pipeline.describe(Attend.STEPS_B) })'));
+  Object.keys(d).forEach((p) => d[p].forEach((s) => { const f = lab.faults[p + ':' + s.id]; s.mode = f ? f.mode : 'normal'; s.ms = f ? f.ms : 0; s.skippable = SKIPPABLE.indexOf(s.id) >= 0; }));
+  return d;
+}
+
+/** Run a trigger job now, ignoring its minimum-gap throttle. */
+function runJob(lab, name) {
+  const allowed = ['tickSessions', 'sendEmails', 'nightly', 'morning', 'evening'];
+  if (allowed.indexOf(name) < 0) throw new Error('Unknown job ' + name);
+  lab.sync();
+  lab.w.e.run("CacheService.getScriptCache().remove('job|" + name + "')");
+  return JSON.parse(lab.w.e.run('JSON.stringify(Jobs.' + name + '())'));
+}
+
+module.exports = { createLab, describePipelines, runJob, installPipelineHooks, SKIPPABLE, PRESETS, makeClock };

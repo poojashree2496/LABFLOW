@@ -26,6 +26,7 @@ function toBuf(x) { return Buffer.isBuffer(x) ? x : Buffer.from(x.map ? x.map((b
 class FakeRange {
   constructor(sheet, r, c, nr, nc) { Object.assign(this, { sheet, r, c, nr, nc }); }
   getValues() {
+    if (this.sheet.ss.onOp) this.sheet.ss.onOp('read', this.sheet.name);
     const out = [];
     for (let i = 0; i < this.nr; i++) {
       const row = [];
@@ -35,6 +36,7 @@ class FakeRange {
     return out;
   }
   setValues(vals) {
+    if (this.sheet.ss.onOp) this.sheet.ss.onOp('write', this.sheet.name);
     if (vals.length !== this.nr || vals[0].length !== this.nc) throw new Error('setValues dimension mismatch');
     if (this.r + this.nr - 1 > this.sheet.maxRows) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     for (let i = 0; i < this.nr; i++) {
