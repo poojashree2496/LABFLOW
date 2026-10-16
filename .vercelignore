@@ -1,0 +1,8 @@
+/*
+!/src
+!/web
+!/scripts
+!/package.json
+!/package-lock.json
+!/vercel.json
+/src/Local_*

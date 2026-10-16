@@ -8,3 +8,7 @@ node_modules/
 dist/
 .vercel/
 src/Local_*.gs
+client_secret_*.json
+
+.vercel
+.env*
