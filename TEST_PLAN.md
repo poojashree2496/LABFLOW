@@ -7,7 +7,7 @@ Last full run on the build in this repository: `npm run check` and `npm run e2e`
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7) | `npm test` | **137 pass, 0 fail** |
+| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1) | `npm test` | **138 pass, 0 fail** |
 | Browser E2E (Playwright, real Chromium) | `npm run e2e` | **74 pass, 0 fail** |
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.

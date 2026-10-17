@@ -92,6 +92,7 @@ function seed(lab, preset) {
   for (let i = 1; i <= opts.students; i++) rows.push({ rollNo: 'URK24CS1' + String(i).padStart(3, '0'), name: FIRST[(i - 1) % FIRST.length] + ' ' + LAST[(i * 7) % LAST.length], email: 'student' + i + '@karunya.edu', section: 'A', year: 3 });
   w.ok(A, 'students.import', { rows });
   rows.forEach((r, i) => { const s = w.ok(r.email, 'onboard', { rollNo: r.rollNo, name: r.name, consent: true, mobile: '98' + String(40000000 + i * 3917).slice(0, 8) }).student; w.students.push({ email: r.email, studentId: s.studentId, rollNo: r.rollNo, name: r.name }); });
+  w.demoPendingStudent = w.ok('pending.student@karunya.edu', 'onboard', { rollNo: 'URK24CS1999', name: 'Pending Verification', consent: true, mobile: '9876509999' }).student;
   [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
   const rolls = rows.map((r) => r.rollNo);
   w.ok(A, 'roster.import', { courseId: w.course.courseId, rows: rolls });
@@ -107,43 +108,78 @@ function seed(lab, preset) {
   const esp = w.ok(S, 'categories.upsert', { name: 'ESP32 board', trackingMode: 'individual' }).category, bb = w.ok(S, 'categories.upsert', { name: 'Breadboard', trackingMode: 'individual' }).category;
   const wire = w.ok(S, 'categories.upsert', { name: 'Jumper wires', trackingMode: 'quantity' }).category, led = w.ok(S, 'categories.upsert', { name: 'LED (5 mm)', trackingMode: 'quantity' }).category;
   const dht = w.ok(S, 'categories.upsert', { name: 'DHT22 sensor', trackingMode: 'individual' }).category, gpu = w.ok(S, 'categories.upsert', { name: 'GPU workstation', trackingMode: 'individual' }).category;
-  for (let i = 1; i <= 12; i++) w.ok(S, 'assets.upsert', { categoryId: esp.categoryId, labId: w.lab.labId, name: 'ESP32 DevKit', assetTag: 'ESP-' + String(i).padStart(3, '0'), serialNo: 'ESP32-SN' + (1000 + i), valueInr: 650, location: 'Cupboard A' });
+  const espAssets = [];
+  for (let i = 1; i <= 12; i++) espAssets.push(w.ok(S, 'assets.upsert', { categoryId: esp.categoryId, labId: w.lab.labId, name: 'ESP32 DevKit', assetTag: 'ESP-' + String(i).padStart(3, '0'), serialNo: 'ESP32-SN' + (1000 + i), valueInr: 650, location: 'Cupboard A' }).asset);
   for (let i = 1; i <= 12; i++) w.ok(S, 'assets.upsert', { categoryId: bb.categoryId, labId: w.lab.labId, name: 'Breadboard 830', assetTag: 'BB-' + String(i).padStart(3, '0'), location: 'Cupboard A' });
   for (let i = 1; i <= 6; i++) w.ok(S, 'assets.upsert', { categoryId: dht.categoryId, labId: w.lab.labId, name: 'DHT22', assetTag: 'DHT-' + String(i).padStart(3, '0'), location: 'Drawer 3' });
-  w.ok(S, 'assets.upsert', { categoryId: wire.categoryId, labId: w.lab.labId, name: 'Jumper wires (M-M)', quantityTotal: 400, assetTag: 'WIRE-MM' });
+  const wireAsset = w.ok(S, 'assets.upsert', { categoryId: wire.categoryId, labId: w.lab.labId, name: 'Jumper wires (M-M)', quantityTotal: 400, assetTag: 'WIRE-MM' }).asset;
   w.ok(S, 'assets.upsert', { categoryId: led.categoryId, labId: w.lab.labId, name: 'Red LED 5 mm', quantityTotal: 300, assetTag: 'LED-RED' });
-  for (let i = 1; i <= 4; i++) w.ok(S, 'assets.upsert', { categoryId: gpu.categoryId, labId: w.lab2.labId, name: 'RTX 4090 workstation #' + i, assetTag: 'WS-0' + i, serialNo: 'WS-SN-' + i, valueInr: 350000, location: 'Bay ' + i });
+  const workstations = [];
+  for (let i = 1; i <= 4; i++) workstations.push(w.ok(S, 'assets.upsert', { categoryId: gpu.categoryId, labId: w.lab2.labId, name: 'RTX 4090 workstation #' + i, assetTag: 'WS-0' + i, serialNo: 'WS-SN-' + i, valueInr: 350000, location: 'Bay ' + i }).asset);
   w.ok(S, 'kits.upsert', { labId: w.lab.labId, name: 'LED blink kit', description: 'ESP32, breadboard, LED, wires', components: [{ categoryId: esp.categoryId, quantity: 1 }, { categoryId: bb.categoryId, quantity: 1 }, { categoryId: led.categoryId, quantity: 2 }, { categoryId: wire.categoryId, quantity: 10 }] });
   w.ok(S, 'groups.create', { name: 'Smart-farm team', studentIds: [w.students[0].studentId, w.students[1].studentId], leaderId: w.students[0].studentId, labId: w.lab.labId });
   // a class representative, and an evening workshop with a coordinator and a lunch break
   w.ok(w.faculty, 'classreps.set', { courseId: w.course.courseId, section: 'A', studentId: w.students[1].studentId });
-  w.ok(w.faculty, 'events.create', { name: 'Hands-on IoT workshop', labId: lab.lab3.labId, date: '2026-10-14', startTime: '12:00', endTime: '17:00', breakStart: '13:00', breakEnd: '14:00', capacity: 40, openToAll: true, coordinatorEmail: w.students[2].email, override: true });
+  const demoEvent = w.ok(w.faculty, 'events.create', { name: 'Hands-on IoT workshop', labId: lab.lab3.labId, date: '2026-10-14', startTime: '12:00', endTime: '17:00', breakStart: '13:00', breakEnd: '14:00', capacity: 40, openToAll: true, coordinatorEmail: w.students[2].email, override: true }).event;
+  lab.demoEventId = demoEvent.labEventId;
   // attendance history on earlier days, so reports and charts have something real in them
   history(lab, opts.historyDays);
+  // A live class and a couple of checked-in students make the dashboards and request queue useful immediately.
+  w.e.setTime(NOW + 6 * 60000);
+  w.e.run('Sessions.materialize(U.local(U.now()).date)');
+  w.e.run('Sessions.autoOpenDue()');
+  const todaySession = w.ok(A, 'sessions.day', { date: '2026-10-14' }).sessions.find((s) => s.labId === w.lab.labId);
+  [w.students[0], w.students[1]].forEach((s) => {
+    const result = w.checkin(s, { sessionId: todaySession.sessionId });
+    if (!result.ok) throw new Error('Demo check-in failed for ' + s.email + ': ' + result.error.code);
+  });
+  lab.demoSessionId = todaySession.sessionId;
+  w.ok(w.students[0].email, 'equipment.request', { labId: w.lab.labId, resourceType: 'category', resourceId: esp.categoryId, quantity: 1, note: 'Board for the LED blink exercise' });
+  w.ok(A, 'spot.start', { sessionId: todaySession.sessionId, studentId: w.students[0].studentId });
+  w.checkin(w.students[2], { sessionId: todaySession.sessionId, geo: w.at(1, 0.5) });
+  w.ok(w.faculty, 'events.register', { labEventId: demoEvent.labEventId, rollNos: [w.students[3].rollNo, w.students[4].rollNo] });
+  w.ok(w.faculty, 'events.addGuest', { labEventId: demoEvent.labEventId, name: 'Demo Guest', organisation: 'Karunya Innovation Centre' });
+  w.ok(w.students[8].email, 'research.request', { labId: w.lab2.labId, facultyId: w.facultyId, date: '2026-10-15', startTime: '14:00', endTime: '16:00', purpose: 'IoT sensor calibration research' });
+
+  // Loans include a current checkout and an overdue example for the staff workflow.
+  w.ok(S, 'loans.issue', { idemKey: 'demo-current-loan-0001', borrowerType: 'student', borrowerId: w.students[3].studentId, labId: w.lab.labId, items: [{ assetId: espAssets[0].assetId }, { assetId: wireAsset.assetId, qty: 20 }], days: 4 });
+  w.e.setTime(NOW - 2 * 86400000);
+  w.ok(S, 'loans.issue', { idemKey: 'demo-overdue-loan-0001', borrowerType: 'student', borrowerId: w.students[4].studentId, labId: w.lab.labId, items: [{ assetId: espAssets[1].assetId }], days: 1 });
+
+  // Keep pending, approved and rejected reservations available to try from the student and staff screens.
+  w.e.setTime(NOW + 6 * 60000);
+  const bookingStart = NOW + 86400000, bookingEnd = bookingStart + 2 * 3600000;
+  w.ok(w.students[5].email, 'booking.request', { labId: w.lab.labId, resourceType: 'kit', resourceId: w.eval("Db.readAll('Kits')[0].kitId"), startAt: bookingStart, endAt: bookingEnd, purpose: 'Prepare the IoT project demonstration' });
+  const approved = w.ok(w.students[6].email, 'booking.request', { labId: w.lab2.labId, resourceType: 'asset', resourceId: workstations[0].assetId, startAt: bookingStart, endAt: bookingEnd, purpose: 'Train the image classifier' }).reservation;
+  w.ok(S, 'booking.decide', { reservationId: approved.reservationId, approve: true, note: 'Approved for the scheduled project work.' });
+  const rejected = w.ok(w.students[7].email, 'booking.request', { labId: w.lab2.labId, resourceType: 'asset', resourceId: workstations[1].assetId, startAt: bookingStart, endAt: bookingEnd, purpose: 'Use the GPU workstation for coursework' }).reservation;
+  w.ok(S, 'booking.decide', { reservationId: rejected.reservationId, approve: false, note: 'Please use the next available slot.' });
   lab.studentsMeta = rows;
 }
 
 /** Past days: the IoT class runs with kiosk QR check-ins; most students scan out, a few forget. */
 function history(lab, days) {
   const w = lab.w, today = Date.UTC(2026, 9, 14, 4, 30);
-  let done = 0;
-  for (let back = 1; done < days && back < 30; back++) {
+  const backs = [];
+  for (let back = 1; backs.length < days && back < 30; back++) {
     const t = today - back * 86400000, dow = new Date(t + 330 * 60000).getUTCDay();
-    if (dow === 0) continue;
+    if (dow !== 0) backs.push(back);
+  }
+  backs.reverse().forEach((back) => {
+    const t = today - back * 86400000;
     w.e.setTime(t - 2 * 60000);
     const date = w.eval('U.local(U.now()).date');
     const ses = w.ok(w.faculty, 'sessions.day', { date }).sessions.find((s) => s.labId === w.lab.labId);
-    if (!ses) continue;
+    if (!ses) return;
     w.e.setTime(t);
     w.ok(w.faculty, 'sessions.open', { sessionId: ses.sessionId });
     // readings vary like real indoor GPS (identical readings across sessions are what the spoofing detector looks for)
-    w.students.forEach((s, i) => { if ((i + back) % 6 === 0) return; w.e.setTime(t + i * 9000); w.checkin(s, { geo: w.at(2 + Math.random() * 12, 6 + Math.random() * 18) }); });
+    w.students.forEach((s, i) => { if ((i + back) % 6 === 0) return; w.e.setTime(t + i * 9000); w.checkin(s, { geo: w.at(2 + ((i * 7 + back * 3) % 13), 6 + ((i * 11 + back * 5) % 18)) }); });
     w.e.setTime(t + 110 * 60000);
-    w.students.forEach((s, i) => { if ((i + back) % 6 === 0 || (i + back) % 7 === 0) return; w.checkin(s, { action: 'out', geo: w.at(1 + Math.random() * 10, 5 + Math.random() * 15) }); });
+    w.students.forEach((s, i) => { if ((i + back) % 6 === 0 || (i + back) % 7 === 0) return; w.checkin(s, { action: 'out', geo: w.at(1 + ((i * 5 + back * 2) % 11), 5 + ((i * 7 + back * 3) % 15)) }); });
     w.e.setTime(t + 121 * 60000);
     w.ok(w.faculty, 'sessions.close', { sessionId: ses.sessionId });
-    done++;
-  }
+  });
 }
 
 /** Build a fresh Test Lab world. */

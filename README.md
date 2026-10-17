@@ -10,7 +10,7 @@ Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mod
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 137 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 138 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
 | 74 browser checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
@@ -66,12 +66,24 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 137 backend tests
+npm run check      # syntax lint of every .gs/.html script + 138 backend tests
 npm run dev        # http://localhost:8787/?as=student1@karunya.edu   (also admin@, staff@, faculty@, kiosk1@karunya.edu)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. `?as=` picks the identity **in the dev server only**; production has no such parameter. The fakes prove logic, not Google's behaviour.
+
+### Try the seeded demo
+
+Run `npm run dev`, then open [http://localhost:8787/lab](http://localhost:8787/lab). In **Overview**, choose a preset and use **Rebuild world** to reset the demo data. The presets seed 12, 30 or 60 rostered students, plus a separate pending-verification sample, with attendance history, and include:
+
+- An open class with live attendance, an event/workshop, a class representative and a student coordinator.
+- Labs, kiosks, courses, timetables, inventory, kits and a project group.
+- A pending student verification, equipment request and research visit; a flagged check-in and a pending spot check.
+- Current and overdue loans, pending/approved/rejected bookings, and a workshop with registered students and a guest.
+- Local app links for the admin, faculty, staff, student and kiosk roles. The links are also available directly, for example `http://localhost:8787/?as=admin@karunya.edu` or `http://localhost:8787/?as=student1@karunya.edu`.
+
+The demo lives only in memory. Rebuilding it or restarting the dev server discards its data; nothing is written to Google Sheets or a deployed app.
 
 ## Layout
 
