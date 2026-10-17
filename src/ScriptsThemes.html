@@ -23,6 +23,11 @@ LF.SKINS = {
           h('div', { class: 'hero-meta' }, meta.map(([ic, text]) => h('span', null, icon(ic), text)))));
     },
     foot() { return h('footer', { class: 'skin-foot' }, h('span', null, '© ' + new Date().getFullYear() + ' Karunya Institute of Technology and Sciences'), h('span', null, 'Powered by LABFLOW')); }
+  },
+  'neo-brutalism': {
+    label: 'Neo-brutalism', layout: 'topnav', color: '#fdf3ea',
+    fonts: FONTS + 'Lexend:wght@400;500;600;700',
+    foot() { return h('footer', { class: 'skin-foot' }, h('span', null, 'Labflow · Karunya CSE laboratories'), h('span', { class: 'nb-dots', 'aria-hidden': 'true' }, ['#f26b6b', '#8f7cf2', '#3fc4ae', '#f9d84b', '#6aa7f4', '#f69d5a'].map((c) => h('i', { style: { background: c } })))); }
   }
 };
 const DEFAULT = 'karunya';
