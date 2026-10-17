@@ -1,6 +1,7 @@
 @import "./logo.css";
 @import "./themes/karunya.css";
 @import "./themes/neo-brutalism.css";
+@import "./themes/pixel-art.css";
 
 @tailwind base;
 @tailwind components;
@@ -99,6 +100,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 
   .shell { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
   .stage { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+  .stage > .main { flex: 1 0 auto; }
   .sidebar { position: sticky; top: 0; height: 100vh; border-right: 1px solid var(--line); padding: 0 10px 16px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: var(--card); }
   .nav-list { display: flex; flex-direction: column; gap: 2px; }
   /* the brand block and the top bar share one height, so the rule under them is one continuous line */

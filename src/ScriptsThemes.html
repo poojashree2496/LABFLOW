@@ -28,6 +28,11 @@ LF.SKINS = {
     label: 'Neo-brutalism', layout: 'topnav', color: '#fdf3ea',
     fonts: FONTS + 'Lexend:wght@400;500;600;700',
     foot() { return h('footer', { class: 'skin-foot' }, h('span', null, 'Labflow · Karunya CSE laboratories'), h('span', { class: 'nb-dots', 'aria-hidden': 'true' }, ['#f26b6b', '#8f7cf2', '#3fc4ae', '#f9d84b', '#6aa7f4', '#f69d5a'].map((c) => h('i', { style: { background: c } })))); }
+  },
+  'pixel-art': {
+    label: 'Pixel art', layout: 'sidebar', color: '#121212',
+    fonts: FONTS + 'Silkscreen:wght@400;700&family=Pixelify+Sans:wght@700&family=Space+Mono:wght@400;700',
+    foot() { return h('footer', { class: 'skin-foot' }, h('span', null, 'Labflow · Karunya CSE labs'), h('span', { class: 'px-press', 'aria-hidden': 'true' }, 'Press start')); }
   }
 };
 const DEFAULT = 'karunya';
