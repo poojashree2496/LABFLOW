@@ -206,6 +206,11 @@ var Checkin = {
       c.geofence = 'pass'; c.assurance = 'standard';
     } },
     { id: 'code_once', locked: true, label: 'Kiosk code used once by this student (FR-10)', run: function (c) {
+      // Validation and location acquisition can outlive account changes or the pass itself.
+      if (U.now() / 1000 > c.passExp) fail('PASS_EXPIRED', 'This check-in pass has expired. Scan the code on the lab screen again.');
+      c.student = Attend._verifiedStudent(c.studentId);
+      Checkin._kioskAndLab(c);
+      if (c.labId !== c.passLabId) fail('BAD_PASS', 'This pass is for another lab.');
       c.nonce = Checkin._onceKey(c.kioskId, c.step, c.studentId); c.redeemPurpose = 'K';
       if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'You already used this code. Scan the current code on the lab screen.');
     } },

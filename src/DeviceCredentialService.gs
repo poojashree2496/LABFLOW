@@ -100,6 +100,8 @@ var Creds = {
     if (!Creds.verifySignature(publicKey, p.challenge, signature)) { Audit.tryLog({ actor: ctx.email, role: 'student', action: 'cred.register', entityType: 'DeviceCredential', result: 'rejected', detail: { reason: 'bad proof of possession' } }); fail('BAD_SIGNATURE', 'The device could not prove it holds the key.'); }
 
     return Locks.with(function () {
+      if (U.now() / 1000 > Number(parts[3])) fail('EXPIRED', 'Registration timed out. Start again.');
+      st = Attend._verifiedStudent(st.studentId);
       if (Tokens.wasRedeemed(parts[2])) fail('REPLAY', 'This registration code was already used.');
       var all = Db.whereEq('DeviceCredentials', { studentId: st.studentId });
       var active = all.filter(function (c) { return c.status === 'active'; });
@@ -157,11 +159,13 @@ var Creds = {
     V.obj(p);
     var credentialId = V.id(p.credentialId, 'Credential', 'cred');
     var reason = V.str(p.reason, 'Reason', { min: 3, max: 200 });
-    var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
-    if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
-    var next = Db.update('DeviceCredentials', credentialId, { status: 'revoked', revokedAt: U.now(), revokedBy: ctx.email, revokeReason: 'rejected: ' + reason });
-    Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: 'cred.reject', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason } });
-    return { credential: Creds._pub(next) };
+    return Locks.with(function () {
+      var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
+      if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
+      var next = Db.update('DeviceCredentials', credentialId, { status: 'revoked', revokedAt: U.now(), revokedBy: ctx.email, revokeReason: 'rejected: ' + reason });
+      Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: 'cred.reject', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason } });
+      return { credential: Creds._pub(next) };
+    });
   },
 
   /** Revoke. Students may revoke their own (lost phone); staff/admin may revoke anyone's. Effective immediately. */
@@ -169,13 +173,15 @@ var Creds = {
     V.obj(p);
     var credentialId = V.id(p.credentialId, 'Credential', 'cred');
     var reason = V.str(p.reason, 'Reason', { optional: true, max: 200, def: 'no reason given' });
-    var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
-    var own = ctx.student && ctx.student.studentId === c.studentId;
-    if (!own && !ctx.has('staff') && !ctx.has('admin')) fail('FORBIDDEN', 'You cannot revoke this device.');
-    if (c.status === 'revoked' || c.status === 'replaced') fail('INVALID_STATE', 'Already revoked.');
-    var next = Db.update('DeviceCredentials', credentialId, { status: 'revoked', revokedAt: U.now(), revokedBy: ctx.email, revokeReason: reason });
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'cred.revoke', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason, self: !!own } });
-    return { credential: Creds._pub(next) };
+    return Locks.with(function () {
+      var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
+      var own = ctx.student && ctx.student.studentId === c.studentId;
+      if (!own && !ctx.has('staff') && !ctx.has('admin')) fail('FORBIDDEN', 'You cannot revoke this device.');
+      if (c.status === 'revoked' || c.status === 'replaced') fail('INVALID_STATE', 'Already revoked.');
+      var next = Db.update('DeviceCredentials', credentialId, { status: 'revoked', revokedAt: U.now(), revokedBy: ctx.email, revokeReason: reason });
+      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'cred.revoke', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason, self: !!own } });
+      return { credential: Creds._pub(next) };
+    });
   },
 
   revokeAllFor: function (studentId, actorEmail, reason) {
