@@ -245,7 +245,7 @@ LF.register({ role: 'admin', id: 'settings', label: 'Settings', icon: 'settings'
       e.preventDefault(); msg.hidden = true; const values = {};
       Object.keys(inputs).forEach((k) => { const { f, s } = inputs[k]; const v = f.get(); if (String(v) !== String(s.value)) values[k] = s.type === 'int' ? Number(v) : v; });
       if (!Object.keys(values).length) { LF.toast('Nothing changed'); return; }
-      try { const x = await api('settings.set', { values }); LF.toast(x.changed.length + ' setting(s) saved', 'good'); LF.go('settings'); } catch (err) { msg.textContent = LF.errMsg(err); msg.hidden = false; }
+      try { const x = await api('settings.set', { values }); LF.toast(x.changed.length + ' setting(s) saved', 'good'); if (values.uiTheme) { LF.me.settings.uiTheme = values.uiTheme; LF.applySkin(values.uiTheme); } LF.go('settings'); } catch (err) { msg.textContent = LF.errMsg(err); msg.hidden = false; }
     } }, groups.map(([title, keys]) => h('section', { class: 'card', style: { display: 'grid', gap: '12px' } }, h('h2', { class: 't-h2' }, title), keys.filter((k) => by[k]).map((k) => fieldFor(by[k])))), msg, h('div', null, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save changes')));
   });
 } });

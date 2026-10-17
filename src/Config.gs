@@ -138,7 +138,9 @@ var Cfg = (function () {
     reportTemplateDocId: { group: 'Reports and email', type: 'str', def: '', desc: 'Optional Google Docs template for PDF reports, with {{title}}, {{generated}}, {{summary}} and {{table}} placeholders (FR-38).' },
 
     // audit
-    auditCheckpointEvery: { group: 'Audit', type: 'int', def: 50, min: 5, max: 1000, desc: 'Store an audit checkpoint every N audit events.' }
+    auditCheckpointEvery: { group: 'Audit', type: 'int', def: 50, min: 5, max: 1000, desc: 'Store an audit checkpoint every N audit events.' },
+    // appearance
+    uiTheme: { group: 'Appearance', type: 'enum', def: 'karunya', values: ['karunya'], desc: 'The design theme for every user, the kiosks and the sign-in screen. Each theme changes the layout as well as the look.' }
   };
 
   var LAB_TYPES = ['iot', 'computing', 'gpu', 'research', 'other'];

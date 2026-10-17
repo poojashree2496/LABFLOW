@@ -1,0 +1,44 @@
+<script>
+/* Site themes. The administrator picks one (Settings > Appearance > uiTheme) and it applies to every user, the kiosks
+   and the sign-in screen. A theme is a CSS file (styles/themes/<id>.css, every rule under [data-skin="<id>"]) plus the
+   entry below: its fonts, the browser bar colour, the shell layout and optional hero / footer blocks for the shell.
+   Layouts: 'sidebar' (menu on the left) or 'topnav' (menu across the top); a theme's CSS can rearrange further.
+   Themes never restyle the QR codes or the camera preview: those stay black on white at full size so they scan. */
+(function () {
+'use strict';
+const LF = window.LF, h = LF.h, icon = LF.icon;
+const FONTS = 'https://fonts.googleapis.com/css2?display=swap&family=';
+
+LF.SKINS = {
+  karunya: {
+    label: 'Karunya', layout: 'sidebar', color: '#ffffff',
+    fonts: FONTS + 'Roboto:wght@400;500;700',
+    hero(me, role) {
+      const s = me.student, f = me.faculty;
+      const meta = [s ? ['key', s.rollNo] : null, s && s.department ? ['book', [s.department, s.year ? 'Year ' + s.year : '', s.section ? 'Section ' + s.section : ''].filter(Boolean).join(' · ')] : null, f && f.department ? ['book', f.department] : null,
+        ['users', { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator' }[role] || role], ['inbox', me.email]].filter(Boolean);
+      return h('section', { class: 'skin-hero', 'aria-label': 'Your profile' },
+        h('div', { class: 'hero-photo', 'aria-hidden': 'true' }, icon('user'), h('i', { class: 'hero-dot' })),
+        h('div', { class: 'hero-body' }, h('div', { class: 'hero-name' }, me.displayName, h('span', { class: 'hero-tick', title: 'Verified university account' }, icon('verified'))),
+          h('div', { class: 'hero-meta' }, meta.map(([ic, text]) => h('span', null, icon(ic), text)))));
+    },
+    foot() { return h('footer', { class: 'skin-foot' }, h('span', null, '© ' + new Date().getFullYear() + ' Karunya Institute of Technology and Sciences'), h('span', null, 'Powered by LABFLOW')); }
+  }
+};
+const DEFAULT = 'karunya';
+
+LF.skin = () => LF.SKINS[document.documentElement.getAttribute('data-skin')] || LF.SKINS[DEFAULT];
+/** Switch the whole site to a theme: the data-skin hook for the CSS, only that theme's fonts, the browser bar colour. */
+LF.applySkin = (id) => {
+  if (!LF.SKINS[id]) id = DEFAULT;
+  const root = document.documentElement, skin = LF.SKINS[id];
+  root.setAttribute('data-skin', id); LF.pref('lf-skin', id);
+  let link = document.getElementById('skin-fonts');
+  if (!link) { link = document.createElement('link'); link.id = 'skin-fonts'; link.rel = 'stylesheet'; document.head.appendChild(link); }
+  if (link.getAttribute('href') !== skin.fonts) link.setAttribute('href', skin.fonts);
+  const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.setAttribute('content', skin.color);
+};
+/* Wear the last theme this device saw until the server says otherwise (no flash of the default on every load). */
+LF.applySkin(LF.pref('lf-skin') || DEFAULT);
+})();
+</script>

@@ -225,3 +225,28 @@ test('frequent manual check-ins and repeated missing exits are flagged', () => {
   assert.ok(types.includes('frequent_manual:S001'));
   assert.ok(types.includes('never_scans_out:S002'));
 });
+
+test('site theme: the admin sets one theme for everyone, the kiosk and the sign-in screen', () => {
+  const w = world({ students: 0 });
+  const values = w.eval('Cfg.SETTINGS.uiTheme.values'), pick = values[values.length - 1];
+  assert.equal(w.ok(w.faculty, 'me').settings.uiTheme, 'karunya', 'Karunya is the default');
+  assert.equal(w.err(w.faculty, 'settings.set', { values: { uiTheme: pick } }).code, 'FORBIDDEN');
+  assert.equal(w.err(w.admin, 'settings.set', { values: { uiTheme: 'comic-sans' } }).code, 'BAD_INPUT');
+  w.ok(w.admin, 'settings.set', { values: { uiTheme: pick } });
+  assert.equal(w.ok(w.faculty, 'me').settings.uiTheme, pick);
+  assert.equal(w.ok(w.kioskEmail, 'me').settings.uiTheme, pick);
+  const r = JSON.parse(w.e.run("doPost({ postData: { contents: JSON.stringify({ action: 'ui.theme' }) } }).getContent()"));
+  assert.deepEqual(r, { ok: true, data: { uiTheme: pick } }, 'no session needed, and nothing but the theme comes back');
+});
+
+test('every selectable theme has its registry entry and its stylesheet', () => {
+  const fs = require('fs'), path = require('path');
+  const w = world({ students: 0 }), values = w.eval('Cfg.SETTINGS.uiTheme.values');
+  const reg = fs.readFileSync(path.join(__dirname, '..', 'src', 'ScriptsThemes.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'input.css'), 'utf8');
+  for (const id of values) {
+    assert.ok(new RegExp("^  '?" + id + "'?: \{", 'm').test(reg), id + ' is in LF.SKINS');
+    assert.ok(fs.existsSync(path.join(__dirname, '..', 'styles', 'themes', id + '.css')), id + '.css exists');
+    assert.ok(css.includes('@import "./themes/' + id + '.css";'), id + '.css is imported');
+  }
+});

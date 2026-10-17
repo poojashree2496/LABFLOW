@@ -14,7 +14,7 @@ const TYPE = { IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed
 LF.register({ role: 'kiosk', id: 'kiosk', label: 'Kiosk', icon: 'scan', render(root) {
   const k = LF.me.kiosk;
   let stopped = false, mode = null, lastSeenEvent = null, displayTimer = null, flashTimer = null;
-  const clock = h('div', { class: 't-big t-data', style: { fontSize: '44px' } }), labName = h('div', { class: 'hint', style: { color: 'rgb(255 255 255 / .85)' } }), modeBadge = h('span', { class: 'badge' });
+  const clock = h('div', { class: 't-big t-data', style: { fontSize: '44px' } }), labName = h('div', { class: 'hint kiosk-sub' }), modeBadge = h('span', { class: 'badge' });
   const count = h('div', { class: 't-big', style: { fontSize: '56px' } }, '-'), capLine = h('div', { class: 'hint' }), openLine = h('div', { class: 'hint', role: 'status' });
   const grid = h('div', { class: 'kiosk-grid' });
 
@@ -97,7 +97,7 @@ LF.register({ role: 'kiosk', id: 'kiosk', label: 'Kiosk', icon: 'scan', render(r
   const tick = () => { clock.textContent = fmt.time(LF.now()); };
   LF.every(1000, tick, true);
   LF.every(30000, () => { api('kiosk.ping').catch(() => {}); });
-  clear(root).appendChild(h('div', { class: 'kiosk-shell' }, h('header', { class: 'kiosk-head' }, h('div', null, h('div', { class: 'wordmark', style: { fontSize: '30px' } }, 'Labflow'), h('div', { class: 'wordmark-sub' }, k.name), labName), h('div', { class: 'toolbar' }, modeBadge, clock)), h('main', { id: 'main' }, grid)));
+  clear(root).appendChild(h('div', { class: 'kiosk-shell' }, h('header', { class: 'kiosk-head' }, h('div', { class: 'kiosk-brand' }, LF.brand(k.name), labName), h('div', { class: 'toolbar' }, modeBadge, clock)), h('main', { id: 'main' }, grid)));
   refreshDisplay();
   return () => { stopped = true; clearTimeout(displayTimer); clearTimeout(flashTimer); scanner.stop(); document.removeEventListener('click', refocus); };
 } });

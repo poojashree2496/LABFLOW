@@ -309,7 +309,7 @@ function tabs(items, initial) {
 }
 LF.ui.tabs = tabs;
 
-function stat(label, value, sub, kind) { return h('div', { class: 'card ' + (kind || '') }, h('div', { class: 't-label', style: kind ? { color: 'inherit', opacity: .75 } : null }, label), h('div', { class: 't-big', style: { margin: '4px 0' } }, value), sub ? h('div', { class: 'hint', style: kind ? { color: 'inherit', opacity: .8 } : null }, sub) : null); }
+function stat(label, value, sub, kind) { return h('div', { class: 'card stat ' + (kind || '') }, h('div', { class: 't-label stat-label' }, label), h('div', { class: 't-big stat-value' }, value), sub ? h('div', { class: 'hint stat-sub' }, sub) : null); }
 LF.ui.stat = stat;
 
 /** Tiny SVG bar chart over real data: data = [{ label, a, b? }]. */
@@ -384,14 +384,6 @@ LF.every = (ms, fn, immediate) => {
 LF.onLeave = (fn) => LF.cleanups.push(fn);
 function runCleanups() { LF.timers.forEach(clearInterval); LF.timers = []; LF.cleanups.splice(0).forEach((f) => { try { f(); } catch (e) { /* ignore */ } }); }
 
-/* ------------------------------------------------------------------ theme */
-function applyTheme(t) {
-  if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
-  try { if (t) localStorage.setItem('lf-theme', t); } catch (e) { /* storage may be unavailable in sandboxed frames */ }
-}
-function currentThemeIsDark() { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches; }
-try { const t = localStorage.getItem('lf-theme'); if (t) applyTheme(t); } catch (e) { /* ignore */ }
-
 /* ------------------------------------------------------------------ routing & shell */
 /** Views register themselves: LF.register({ role, id, label, icon, when?(me), render(root) -> optional cleanup }).
     `when` hides a view unless it applies to this account (for example the class representative page). */
@@ -412,31 +404,39 @@ LF.go = (id, role) => {
 };
 
 let unreadCount = 0;
+/* The shell is one DOM for every theme: the sidebar nav, a stage (top bar, an optional theme hero, the page, an
+   optional theme footer) and the mobile bottom nav. The site theme (ScriptsThemes.html) sets data-layout and the CSS
+   rearranges it; a theme may also fill the hero and the footer. */
 function renderShell() {
   runCleanups();
-  const me = LF.me, roles = ROLE_ORDER.filter((r) => me.roles.includes(r));
-  const list = visible(LF.role);
-  const navBtn = (v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => LF.go(v.id) }, icon(v.icon || 'list'), h('span', null, v.label));
+  const me = LF.me, roles = ROLE_ORDER.filter((r) => me.roles.includes(r)), skin = LF.skin();
+  const list = visible(LF.role), home = list[0] && LF.current && LF.current.id === list[0].id;
+  const navBtn = (v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => LF.go(v.id) }, icon(v.icon || 'list'), h('span', { class: 'nav-label' }, v.label), h('span', { class: 'nav-chev', 'aria-hidden': 'true' }, icon('chevron')));
   const main = h('main', { id: 'main', class: 'main', tabindex: '-1' });
   const bell = h('button', { class: 'btn btn-ghost', 'aria-label': 'Notifications', onclick: openNotifications }, icon('bell'), h('span', { id: 'unread', class: 'badge gold', hidden: unreadCount === 0 }, String(unreadCount)));
-  const roleSel = roles.length > 1 ? h('select', { class: 'input', 'aria-label': 'Switch role', style: { width: 'auto', minHeight: '36px' }, onchange: (e) => LF.go(undefined, e.target.value) }, roles.map((r) => h('option', { value: r, selected: r === LF.role }, ROLE_LABEL[r]))) : badge(ROLE_LABEL[LF.role]);
-  const top = h('header', { class: 'topbar' }, h('div', { class: 'wordmark', 'aria-hidden': 'true' }, 'Labflow'), h('div', { style: { flex: 1 } }),
+  const roleSel = roles.length > 1 ? h('select', { class: 'input role-select', 'aria-label': 'Switch role', onchange: (e) => LF.go(undefined, e.target.value) }, roles.map((r) => h('option', { value: r, selected: r === LF.role }, ROLE_LABEL[r]))) : badge(ROLE_LABEL[LF.role]);
+  const shell = h('div', { class: 'shell' + (LF.pref('lf-collapsed') === '1' ? ' collapsed' : ''), 'data-layout': skin.layout });
+  const collapse = h('button', { class: 'btn btn-ghost collapse-btn', 'aria-label': 'Collapse or expand the menu', onclick: () => { const c = shell.classList.toggle('collapsed'); LF.pref('lf-collapsed', c ? '1' : '0'); } }, icon('collapse'));
+  const top = h('header', { class: 'topbar' }, collapse, h('div', { class: 'wordmark', 'aria-hidden': 'true' }, 'Labflow'), h('div', { class: 'top-gap' }),
     roleSel, bell,
-    h('button', { class: 'btn btn-ghost', 'aria-label': currentThemeIsDark() ? 'Switch to light theme' : 'Switch to dark theme', onclick: () => { applyTheme(currentThemeIsDark() ? 'light' : 'dark'); renderShell(); } }, icon(currentThemeIsDark() ? 'sun' : 'moon')),
-    h('button', { class: 'btn btn-ghost', 'aria-label': 'Account: ' + me.email, title: me.email, onclick: accountMenu, style: { maxWidth: '220px', minWidth: '44px', flex: '0 1 auto', overflow: 'hidden', gap: '8px' } },
-      h('span', { 'aria-hidden': 'true', style: { flex: 'none', width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', fontWeight: 700, background: 'rgb(255 255 255 / .18)' } }, (me.displayName || me.email || '?').trim().charAt(0).toUpperCase()),
-      h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, me.displayName)));
-  const brand = h('div', { class: 'side-brand' }, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya CSE laboratories'));
+    h('button', { class: 'btn btn-ghost account-btn', 'aria-label': 'Account: ' + me.email, title: me.email, onclick: accountMenu },
+      h('span', { class: 'avatar', 'aria-hidden': 'true' }, (me.displayName || me.email || '?').trim().charAt(0).toUpperCase()),
+      h('span', { class: 'account-name' }, me.displayName)));
   const mobileNav = list.length > 5 ? list.slice(0, 4).concat([{ id: '__more', label: 'More', icon: 'list' }]) : list;
-  const more = () => { const m = modal('Menu', h('div', { style: { display: 'grid', gap: '6px' } }, list.map((v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => { m.close(); LF.go(v.id); } }, icon(v.icon || 'list'), h('span', null, v.label))))); };
-  const shell = h('div', { class: 'shell' }, h('nav', { class: 'sidebar', 'aria-label': 'Main' }, brand, list.map(navBtn)), h('div', null, top, main),
-    h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, mobileNav.map((v) => v.id === '__more' ? h('button', { class: 'nav-item', onclick: more }, icon('list'), h('span', null, 'More')) : navBtn(v))));
+  const more = () => { const m = modal('Menu', h('div', { class: 'menu-list' }, list.map((v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => { m.close(); LF.go(v.id); } }, icon(v.icon || 'list'), h('span', { class: 'nav-label' }, v.label))))); };
+  shell.append(h('nav', { class: 'sidebar', 'aria-label': 'Main' }, LF.brand(), h('div', { class: 'nav-list' }, list.map(navBtn))),
+    h('div', { class: 'stage' }, top, home && skin.hero ? skin.hero(me, LF.role) : null, main, skin.foot ? skin.foot() : null),
+    h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, mobileNav.map((v) => v.id === '__more' ? h('button', { class: 'nav-item', onclick: more }, icon('list'), h('span', { class: 'nav-label' }, 'More')) : navBtn(v))));
   clear(appRoot()).appendChild(shell);
-  if (roleSel.tagName === 'SELECT') roleSel.addEventListener('change', () => {}, { once: true });
   const cleanup = LF.current.render(main);
   if (typeof cleanup === 'function') LF.onLeave(cleanup);
   main.focus({ preventScroll: true });
 }
+/** The brand block: the theme's logo (a CSS background, hidden where the theme has none) and the wordmark. */
+LF.brand = (sub) => h('div', { class: 'side-brand' }, h('div', { class: 'brand-logo', role: 'img', 'aria-label': 'Karunya Institute of Technology and Sciences' }),
+  h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, sub || 'Karunya CSE laboratories'));
+/** Per-device conveniences (a collapsed menu, the last site theme). Storage can be unavailable in sandboxed frames. */
+LF.pref = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* ignore */ } return null; };
 
 async function refreshUnread() {
   try { const r = await api('notifications.list'); unreadCount = r.unread; const b = $('#unread'); if (b) { b.textContent = String(r.unread); b.hidden = r.unread === 0; } return r; } catch (e) { return null; }
@@ -455,9 +455,9 @@ async function openNotifications() {
 /* ------------------------------------------------------------------ gate screens */
 function authShell(title, lead, content) {
   return h('div', { class: 'auth-wrap' },
-    h('section', { class: 'auth-art' }, h('div', null, h('div', { class: 'wordmark', style: { fontSize: '34px' } }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya Institute of Technology and Sciences · CSE')),
-      h('div', null, h('h1', { class: 't-h1', style: { color: 'inherit' } }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' }, 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
-    h('main', { id: 'main', style: { padding: '32px 20px', display: 'grid', alignContent: 'center', maxWidth: '540px', width: '100%', margin: '0 auto', gap: '12px' } }, h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
+    h('section', { class: 'auth-art' }, h('div', null, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya Institute of Technology and Sciences · CSE')),
+      h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' }, 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
+    h('main', { id: 'main', class: 'auth-main' }, h('div', { class: 'auth-logo', role: 'img', 'aria-label': 'Karunya' }), h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
 }
 
 /* ------------------------------------------------------------------ privacy notice (DPDP Act, SRS section 13) */
@@ -499,6 +499,7 @@ function devIdToken(email) {
 }
 function signInScreen(note) {
   runCleanups(); LF.me = null;
+  if (LF.hosted) rawCall('ui.theme').then((t) => { if (LF.SKINS[t.uiTheme] && t.uiTheme !== document.documentElement.getAttribute('data-skin')) { LF.applySkin(t.uiTheme); signInScreen(note); } }).catch(() => { /* keep the cached theme */ });
   const err = h('div', { class: 'err', role: 'alert', hidden: true }), slot = h('div', { style: { minHeight: '44px' } });
   const done = async (idToken) => {
     err.hidden = true;
@@ -592,7 +593,7 @@ async function boot() {
   if (LF.hosted && !LF.session.get()) return signInScreen();
   let me;
   try { me = await api('me', {}, { retry: true }); } catch (e) { return blocked(e); }
-  LF.me = me; LF.setServerNow(me.serverNow);
+  LF.me = me; LF.setServerNow(me.serverNow); LF.applySkin(me.settings.uiTheme);
   if (me.kiosk) { LF.role = 'kiosk'; LF.current = (LF.routes.kiosk || [])[0]; return renderKiosk(); }
   if (me.onboardingRequired) return onboarding();
   const roles = ROLE_ORDER.filter((r) => me.roles.includes(r));

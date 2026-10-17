@@ -37,7 +37,7 @@ var Users = {
                   requireExitScan: s.requireExitScan, loanDefaultDays: s.loanDefaultDays, bookingMaxAdvanceDays: s.bookingMaxAdvanceDays,
                   bookingMaxDays: s.bookingMaxDays, studentQrRotateSeconds: s.studentQrRotateSeconds, qrFreshSeconds: s.qrFreshSeconds,
                   occupancyRefreshSeconds: s.occupancyRefreshSeconds, defaultCheckinMode: s.defaultCheckinMode, requireMobile: s.requireMobile,
-                  requireCheckinForRequests: s.requireCheckinForRequests, minScanGapSeconds: s.minScanGapSeconds },
+                  requireCheckinForRequests: s.requireCheckinForRequests, minScanGapSeconds: s.minScanGapSeconds, uiTheme: s.uiTheme },
       consentVersion: Cfg.CONSENT_VERSION,
       webAppUrl: Setup.webAppUrl(),
       serverNow: U.now(), tz: Cfg.TZ

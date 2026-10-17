@@ -1,0 +1,148 @@
+/* Karunya: the university portal look (white logo sidebar, sky-blue pill for the current page, grey canvas, white
+   rounded panels, a profile header with dashed stat boxes, a centred sign-in card). The sky blue is a shade deeper
+   than the portal's so white text on it passes WCAG AA. */
+:root[data-skin="karunya"] {
+  --paper: #f4f6fa; --card: #ffffff; --ink: #1f2430; --ink-soft: #626b7a; --line: #e2e6ee; --hair: #eef1f5; --fill: #f3f5f9;
+  --brand: #233b7a; --brand-deep: #1a2d5e; --on-brand: #ffffff; --gold: #b8975a;
+  --accent: #0a78c9; --accent-hover: #0868b0; --on-accent: #ffffff; --accent-soft: #e7f3fd; --on-accent-soft: #0a5a96;
+  --good: #1f9254; --good-soft: #e3f6ec; --warn: #b26b00; --warn-soft: #fff3df; --bad: #d42a4f; --bad-soft: #fde8ec; --info: #0a78c9; --info-soft: #e7f3fd;
+  --focus: #0a78c9;
+  --f-display: "Roboto", system-ui, sans-serif; --f-head: "Roboto", system-ui, sans-serif; --f-body: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r-card: 18px; --r-ctl: 6px; --btn-shadow: none; --card-shadow: 0 1px 3px rgb(31 36 48 / .04);
+  --bar-h: 88px; --side-w: 290px;
+}
+[data-skin="karunya"] body { font-size: 15px; }
+[data-skin="karunya"] .t-h1 { font-weight: 700; letter-spacing: -.01em; font-size: clamp(24px, 3.4vw, 30px); }
+[data-skin="karunya"] .t-h2 { font-weight: 700; font-size: 20px; }
+[data-skin="karunya"] .t-big { font-weight: 700; font-size: 34px; letter-spacing: 0; }
+[data-skin="karunya"] .t-display { font-weight: 700; text-transform: none; letter-spacing: -.01em; }
+[data-skin="karunya"] .t-label { letter-spacing: .04em; }
+[data-skin="karunya"] .main h1.t-h1::after { width: 44px; height: 3px; margin: 10px 0 8px; }
+
+/* sidebar: logo on white, plain rows with a chevron, a filled pill for the current page */
+[data-skin="karunya"] .sidebar { background: #fff; border-right: 0; box-shadow: 1px 0 0 var(--hair), 6px 0 24px rgb(31 36 48 / .03); padding: 0 20px 16px; gap: 0; }
+[data-skin="karunya"] .side-brand { margin: 0 -20px 18px; padding: 6px 18px; background: #fff; color: var(--ink); border: 0; }
+[data-skin="karunya"] .side-brand .brand-logo { display: block; height: 78px; width: 100%; }
+[data-skin="karunya"] .side-brand :is(.wordmark, .wordmark-sub) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+[data-skin="karunya"] .nav-list { gap: 6px; }
+[data-skin="karunya"] .nav-item { padding: 13px 14px; gap: 14px; border-radius: 6px; font-size: 16px; font-weight: 500; color: #2b2f38; }
+[data-skin="karunya"] .nav-item .icon { color: #59606e; width: 20px; height: 20px; stroke-width: 1.7; }
+[data-skin="karunya"] .sidebar .nav-chev { display: inline-flex; color: #8a909c; }
+[data-skin="karunya"] .sidebar .nav-chev .icon { width: 16px; height: 16px; }
+[data-skin="karunya"] .nav-item:hover { background: var(--fill); }
+[data-skin="karunya"] .nav-item[aria-current="page"] { background: var(--accent); color: #fff; box-shadow: none; font-weight: 700; }
+[data-skin="karunya"] .nav-item[aria-current="page"] :is(.icon, .nav-chev) { color: #fff; }
+[data-skin="karunya"] .shell.collapsed .side-brand .brand-logo { background-image: var(--logo-square); background-position: center; }
+
+/* top bar: white, the collapse arrow on the left, a round avatar on the right */
+[data-skin="karunya"] .topbar { background: #fff; color: var(--ink); border-bottom: 0; box-shadow: 0 1px 0 var(--hair); padding: 8px 28px; }
+[data-skin="karunya"] .topbar .btn-ghost { color: #2b2f38; }
+[data-skin="karunya"] .topbar .btn-ghost:hover:not(:disabled) { background: var(--fill); }
+[data-skin="karunya"] .topbar .collapse-btn { display: inline-flex; }
+[data-skin="karunya"] .topbar .collapse-btn .icon { width: 24px; height: 24px; stroke-width: 2.4; }
+[data-skin="karunya"] .topbar select.input { background: #fff; color: var(--ink); border-color: var(--line); }
+[data-skin="karunya"] .topbar .badge { background: var(--accent-soft); color: var(--on-accent-soft); }
+[data-skin="karunya"] .topbar .badge.gold { background: var(--bad); color: #fff; }
+[data-skin="karunya"] .avatar { width: 46px; height: 46px; background: #c9ccd2; color: #fff; font-size: 18px; }
+[data-skin="karunya"] .account-name { display: none; }
+[data-skin="karunya"] .account-btn { padding: 2px; border-radius: 50%; min-height: 50px; }
+
+/* canvas */
+[data-skin="karunya"] .main { padding: 32px clamp(16px, 4vw, 64px) 96px; max-width: 1440px; flex: 1; }
+[data-skin="karunya"] .card { border-color: transparent; padding: calc(22px * var(--d)); }
+[data-skin="karunya"] .card.flat { border-color: var(--hair); }
+[data-skin="karunya"] .grid-cards > .card { transition: box-shadow .15s, border-color .15s; border-bottom: 2px solid transparent; }
+[data-skin="karunya"] .grid-cards > .card:hover { box-shadow: 0 8px 24px rgb(31 36 48 / .08); border-bottom-color: var(--accent); }
+[data-skin="karunya"] .grid-cards > .card:hover :is(.t-h2, .t-h3) { color: var(--accent); }
+
+/* profile header on each role's home page */
+[data-skin="karunya"] .skin-hero { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; margin: 28px clamp(16px, 4vw, 64px) 0; padding: 32px; background: #fff; border-radius: 22px; box-shadow: var(--card-shadow); max-width: 1312px; }
+[data-skin="karunya"] .hero-photo { position: relative; flex: none; width: 150px; height: 150px; border-radius: 18px; background: linear-gradient(#dfe1e5, #cfd2d8); display: grid; place-items: end center; overflow: visible; }
+[data-skin="karunya"] .hero-photo > .icon { width: 128px; height: 128px; color: #fff; fill: #fff; stroke: none; margin-bottom: -6px; }
+[data-skin="karunya"] .hero-dot { position: absolute; right: -8px; top: 50%; width: 18px; height: 18px; border-radius: 50%; background: #22c55e; border: 3px solid #fff; }
+[data-skin="karunya"] .hero-body { display: grid; gap: 12px; min-width: 0; }
+[data-skin="karunya"] .hero-name { display: flex; align-items: center; gap: 8px; font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: .01em; color: #111; }
+[data-skin="karunya"] .hero-tick .icon { width: 26px; height: 26px; fill: var(--accent); stroke: #fff; stroke-width: 1.6; }
+[data-skin="karunya"] .hero-meta { display: flex; flex-wrap: wrap; gap: 6px 22px; color: var(--ink-soft); font-size: 15.5px; }
+[data-skin="karunya"] .hero-meta > span { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+[data-skin="karunya"] .hero-meta .icon { width: 16px; height: 16px; }
+
+/* stat boxes: dashed outlines in green, purple, rose and blue, as on the portal dashboard */
+[data-skin="karunya"] .grid-stats { gap: 18px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+[data-skin="karunya"] .grid-stats > .card { --c: #1f9254; background: #fff; border: 1.5px dashed var(--c); border-radius: 4px; box-shadow: none; padding: 16px 18px; color: var(--ink); }
+[data-skin="karunya"] .grid-stats > .card:nth-child(4n+2) { --c: #7c3aed; }
+[data-skin="karunya"] .grid-stats > .card:nth-child(4n+3) { --c: #d42a4f; }
+[data-skin="karunya"] .grid-stats > .card:nth-child(4n+4) { --c: #0a78c9; }
+[data-skin="karunya"] .grid-stats > .card .t-big { color: var(--c); font-size: 30px; font-weight: 500; order: -1; }
+[data-skin="karunya"] .grid-stats > .card { display: flex; flex-direction: column; }
+[data-skin="karunya"] .grid-stats > .card .t-label { order: 0; font-size: 15px; letter-spacing: 0; text-transform: none; font-weight: 500; color: #3a404c; opacity: 1; }
+[data-skin="karunya"] .grid-stats > .card .hint { order: 1; color: var(--ink-soft); opacity: 1; }
+
+/* controls */
+[data-skin="karunya"] .btn { font-weight: 500; font-size: 14.5px; }
+[data-skin="karunya"] .btn-primary { background: var(--accent); border-color: var(--accent); }
+[data-skin="karunya"] .btn-gold { background: var(--accent); border-color: var(--accent); color: #fff; }
+[data-skin="karunya"] .badge.lime, [data-skin="karunya"] .badge.gold { background: var(--accent); color: #fff; }
+[data-skin="karunya"] .input:focus { outline-color: var(--accent); }
+[data-skin="karunya"] .tabs { border-bottom: 1px solid var(--line); gap: 8px; }
+[data-skin="karunya"] .tab { border: 0; border-radius: 0; padding: 10px 6px; margin-right: 14px; font-weight: 500; font-size: 15px; }
+[data-skin="karunya"] .tab[aria-selected="true"] { background: none; color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); margin-bottom: 0; }
+[data-skin="karunya"] .tbl-wrap { border-color: transparent; box-shadow: var(--card-shadow); }
+[data-skin="karunya"] .tbl th { background: #f7f8fb; letter-spacing: .04em; }
+[data-skin="karunya"] .row { border-color: var(--hair); }
+[data-skin="karunya"] .notice { border-left-color: var(--accent); }
+[data-skin="karunya"] .modal { border-top: 0; border-radius: 18px; padding: 26px; box-shadow: 0 20px 60px rgb(31 36 48 / .25); }
+[data-skin="karunya"] .toast { background: #1f2430; border-left-color: var(--accent); }
+[data-skin="karunya"] .chart-bar { fill: var(--accent); } [data-skin="karunya"] .chart-bar2 { fill: #7c3aed; }
+[data-skin="karunya"] .progress.gold > i { background: var(--accent); }
+[data-skin="karunya"] .step.now .dot { background: var(--accent); border-color: var(--accent); }
+
+/* footer */
+[data-skin="karunya"] .skin-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 22px clamp(16px, 4vw, 40px); background: #fff; box-shadow: 0 -1px 0 var(--hair); color: #4a505c; font-size: 15px; }
+
+/* sign-in: a white card in the middle of a grey page, the square logo, a soft pill button */
+[data-skin="karunya"] .auth-wrap { grid-template-columns: 1fr; place-items: center; background: #f5f5f5; padding: 24px 16px; }
+[data-skin="karunya"] .auth-art { display: none; }
+[data-skin="karunya"] .auth-main { background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgb(0 0 0 / .05); padding: 34px 36px 40px; max-width: 600px; text-align: center; justify-items: center; gap: 14px; }
+[data-skin="karunya"] .auth-main > .t-h1 { order: -1; font-size: 26px; font-weight: 700; }
+[data-skin="karunya"] .auth-main > .t-muted { max-width: 440px; }
+[data-skin="karunya"] .auth-logo { display: block; width: 210px; height: 210px; margin: 4px auto 6px; }
+[data-skin="karunya"] .auth-main > :last-child { width: 100%; justify-items: center; }
+[data-skin="karunya"] .auth-main .btn { border-radius: 999px; background: #f2f5f9; border-color: transparent; color: #2b2f38; min-height: 50px; }
+[data-skin="karunya"] .auth-main .btn-primary { background: var(--accent); color: #fff; }
+[data-skin="karunya"] .auth-main > :last-child > * { width: min(100%, 420px); justify-self: center; }
+[data-skin="karunya"] .auth-main > :last-child > div:first-child { display: grid; justify-items: center; }
+[data-skin="karunya"] .auth-main form { width: 100%; }
+[data-skin="karunya"] .auth-main .notice { text-align: left; }
+
+/* kiosk: the logo on a white header */
+[data-skin="karunya"] .kiosk-head { background: #fff; color: var(--ink); border-bottom: 3px solid var(--accent); padding: 12px 28px; }
+[data-skin="karunya"] .kiosk-brand { display: flex; align-items: center; gap: 18px; }
+[data-skin="karunya"] .kiosk-brand .brand-logo { display: block; width: 230px; height: 74px; }
+[data-skin="karunya"] .kiosk-brand .wordmark { font-size: 24px; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--brand); }
+[data-skin="karunya"] .kiosk-brand .wordmark-sub { text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--ink-soft); opacity: 1; }
+[data-skin="karunya"] .kiosk-head .badge { background: var(--accent-soft); color: var(--on-accent-soft); }
+[data-skin="karunya"] .qr-frame { border-color: var(--brand); box-shadow: 0 0 0 4px var(--accent-soft); }
+
+/* phones: logo-free white bars, a white bottom menu with the blue pill */
+@media (max-width: 860px) {
+  [data-skin="karunya"] { --bar-h: 64px; }
+  [data-skin="karunya"] .topbar { padding: 8px 14px; }
+  [data-skin="karunya"] .topbar .wordmark { display: block; width: 150px; height: 46px; font-size: 0; background: var(--logo-rect) left center / contain no-repeat; }
+  [data-skin="karunya"] .avatar { width: 38px; height: 38px; }
+  [data-skin="karunya"] .account-btn { min-height: 42px; }
+  [data-skin="karunya"] .skin-hero { margin: 16px 16px 0; padding: 20px; gap: 16px; }
+  [data-skin="karunya"] .hero-photo { width: 84px; height: 84px; border-radius: 14px; }
+  [data-skin="karunya"] .hero-photo > .icon { width: 72px; height: 72px; }
+  [data-skin="karunya"] .hero-name { font-size: 18px; }
+  [data-skin="karunya"] .hero-meta { font-size: 14px; }
+  [data-skin="karunya"] .main { padding: 20px 16px 96px; }
+  [data-skin="karunya"] .skin-foot { padding: 16px 16px calc(84px + var(--safe-b)); font-size: 13px; }
+  [data-skin="karunya"] .bottomnav { background: #fff; border-top: 1px solid var(--hair); box-shadow: 0 -4px 16px rgb(31 36 48 / .05); padding: 6px 6px calc(6px + var(--safe-b)); gap: 4px; }
+  [data-skin="karunya"] .bottomnav .nav-item { border-radius: 10px; font-weight: 500; }
+  [data-skin="karunya"] .bottomnav .nav-item[aria-current="page"] { background: var(--accent); color: #fff; box-shadow: none; }
+  [data-skin="karunya"] .bottomnav .nav-item[aria-current="page"] .icon { color: #fff; }
+  [data-skin="karunya"] .kiosk-brand .brand-logo { width: 150px; height: 50px; }
+  [data-skin="karunya"] .auth-main { padding: 26px 20px 30px; }
+  [data-skin="karunya"] .auth-logo { width: 150px; height: 150px; }
+}

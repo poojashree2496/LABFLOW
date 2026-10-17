@@ -13,7 +13,7 @@
  * rl = [maxCalls, windowSeconds] per caller; default is DEFAULT_RL. Denials are audited (throttled).
  */
 var DEFAULT_RL = [150, 60];
-var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk'];
+var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk', 'ScriptsThemes'];
 
 var ROUTES = {
   // identity / onboarding
@@ -188,13 +188,15 @@ function doGet(e) {
  * JSON API for the hosted app. The browser POSTs text/plain (a "simple" request, so no CORS preflight, which Apps
  * Script cannot answer) with body {action, payload, session}. Identity comes ONLY from the session: a call without
  * one is refused even if the browser happens to carry Google cookies for the owner (no cross-site request forgery).
- * 'auth.google' is the one action that runs without a session; it exchanges a Google ID token for one.
+ * Two actions run without a session: 'auth.google' exchanges a Google ID token for one, and 'ui.theme' returns only
+ * the site theme so the sign-in screen can wear it.
  */
 function doPost(e) {
   var body = null;
   try { body = JSON.parse(e && e.postData && e.postData.contents || ''); } catch (x) { body = null; }
   if (!body || typeof body !== 'object' || typeof body.action !== 'string') return json_({ ok: false, error: { code: 'BAD_INPUT', message: 'Invalid request.' } });
   if (body.action === 'auth.google') return json_(signIn_(body.payload));
+  if (body.action === 'ui.theme') return json_({ ok: true, data: { uiTheme: Settings.get('uiTheme') } });
   return json_(rpc(body.action, body.payload, typeof body.session === 'string' ? body.session : '', true));
 }
 
