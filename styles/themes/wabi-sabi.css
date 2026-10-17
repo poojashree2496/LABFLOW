@@ -42,7 +42,7 @@
 [data-skin="wabi-sabi"] .side-brand { padding: 0; }
 [data-skin="wabi-sabi"] .side-brand .wordmark { font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 30px; text-transform: none; letter-spacing: .02em; }
 [data-skin="wabi-sabi"] .side-brand .wordmark-sub { text-transform: none; letter-spacing: .04em; font-size: 12px; opacity: 1; color: var(--ink-soft); margin-top: 2px; }
-[data-skin="wabi-sabi"] .shell .nav-list { justify-content: center; gap: 2px 26px; }
+[data-skin="wabi-sabi"] .nav-list { justify-content: center; gap: 2px 26px; }
 [data-skin="wabi-sabi"] .sidebar .nav-item { position: relative; padding: 6px 0; border: 0; background: none; font-weight: 300; font-size: 15px; color: var(--ink-soft); letter-spacing: .02em; }
 [data-skin="wabi-sabi"] .sidebar .nav-item .icon { display: none; }
 [data-skin="wabi-sabi"] .sidebar .nav-item:hover { background: none; color: var(--ink); }

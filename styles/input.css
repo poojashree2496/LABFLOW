@@ -5,6 +5,7 @@
 @import "./themes/wabi-sabi.css";
 @import "./themes/cybercore.css";
 @import "./themes/maximal-library.css";
+@import "./themes/scrapbook.css";
 
 @tailwind base;
 @tailwind components;
@@ -135,14 +136,15 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   .card.stat:is(.good, .warn, .bad, .sky, .accent, .brand) .stat-label { color: inherit; opacity: .75; }
   .card.stat:is(.good, .warn, .bad, .sky, .accent, .brand) .stat-sub { color: inherit; opacity: .8; }
   /* topnav layout: the menu runs across the top under the brand; the stage's children join the page grid */
-  .shell[data-layout="topnav"] { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; }
-  .shell[data-layout="topnav"] .stage { display: contents; }
-  .shell[data-layout="topnav"] .stage > * { grid-column: 1 / -1; }
-  .shell[data-layout="topnav"] .stage > .topbar { grid-column: 2; grid-row: 1; position: static; min-height: 0; }
-  .shell[data-layout="topnav"] .sidebar { grid-column: 1; grid-row: 1; position: static; height: auto; flex-direction: row; align-items: center; gap: 8px; padding: 0 16px; border-right: 0; overflow: visible; }
-  .shell[data-layout="topnav"] .side-brand { margin: 0; height: auto; padding: 10px 0; background: none; color: inherit; border: 0; }
-  .shell[data-layout="topnav"] .nav-list { flex-direction: row; flex-wrap: wrap; gap: 4px; flex: 1; justify-content: flex-end; }
-  .shell[data-layout="topnav"] .nav-item { width: auto; }
+  /* :where() keeps these at one class of weight, so any theme rule ([data-skin] .x) overrides them */
+  .shell:where([data-layout="topnav"]) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; }
+  :where(.shell[data-layout="topnav"]) .stage { display: contents; }
+  :where(.shell[data-layout="topnav"] .stage > *) { grid-column: 1 / -1; }
+  :where(.shell[data-layout="topnav"] .stage) > .topbar { grid-column: 2; grid-row: 1; position: static; min-height: 0; }
+  :where(.shell[data-layout="topnav"]) .sidebar { grid-column: 1; grid-row: 1; position: static; height: auto; flex-direction: row; align-items: center; gap: 8px; padding: 0 16px; border-right: 0; overflow: visible; }
+  :where(.shell[data-layout="topnav"]) .side-brand { margin: 0; height: auto; padding: 10px 0; background: none; color: inherit; border: 0; }
+  :where(.shell[data-layout="topnav"]) .nav-list { flex-direction: row; flex-wrap: wrap; gap: 4px; flex: 1; justify-content: flex-end; }
+  :where(.shell[data-layout="topnav"]) .nav-item { width: auto; }
   /* sidebar layout, collapsed: icons only */
   .shell.collapsed { --side-w: 76px; }
   .shell.collapsed .sidebar :is(.nav-label, .nav-chev, .wordmark, .wordmark-sub) { display: none; }
@@ -155,7 +157,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   @media (max-width: 860px) {
     .shell { grid-template-columns: minmax(0, 1fr); }
     .sidebar, .shell[data-layout] .sidebar, .collapse-btn { display: none !important; }
-    .shell[data-layout="topnav"] .stage > .topbar { grid-column: 1 / -1; position: sticky; top: 0; }
+    :where(.shell[data-layout="topnav"] .stage) > .topbar { grid-column: 1 / -1; position: sticky; top: 0; }
     .topbar .wordmark { display: block; font-size: 22px; }
     .bottomnav { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--card); border-top: 1px solid var(--line); padding-bottom: var(--safe-b); }
     .bottomnav .nav-item { flex-direction: column; gap: 2px; font-size: 11px; padding: 8px 2px; justify-content: center; text-align: center; border-radius: 0; }
