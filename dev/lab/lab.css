@@ -68,10 +68,6 @@ td { border-bottom: 1px solid rgb(38 52 83 / .6); padding: 6px 8px; vertical-ali
 .frame-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .relay { display: grid; gap: 6px; }
 .relay .item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
-.swatch { display: grid; grid-template-columns: 28px 1fr 90px; gap: 8px; align-items: center; }
-.swatch input[type=color] { width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
-.preset { display: flex; gap: 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); height: 20px; }
-.preset i { flex: 1; }
 .result { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .result > header { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel-2); cursor: pointer; }
 .result.ok > header { box-shadow: inset 3px 0 0 var(--good); } .result.bad > header { box-shadow: inset 3px 0 0 var(--bad); }

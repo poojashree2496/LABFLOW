@@ -190,6 +190,8 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     const THEMES = w.eval('Cfg.SETTINGS.uiTheme.values'), TSHOTS = path.join(SHOTS, 'themes');
     fs.mkdirSync(TSHOTS, { recursive: true });
     const thd = await browser.newContext(desktop), thm = await browser.newContext(mobile);
+    // a menu collapsed under Karunya must not leak into themes that have no collapse button
+    for (const c of [thd, thm]) await c.addInitScript(() => { try { localStorage.setItem('lf-collapsed', '1'); } catch (e) { /* ignore */ } });
     for (const id of THEMES) {
       w.call('admin@karunya.edu', 'settings.set', { values: { uiTheme: id } });
       const bad = [];
@@ -200,6 +202,8 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
         await p.waitForTimeout(700);
         const vw = await p.evaluate(() => innerWidth), sw = await p.evaluate(() => document.documentElement.scrollWidth);
         if (sw > vw + 1) bad.push(name + ' scrolls sideways (' + sw + ' > ' + vw + ')');
+        const blank = await p.evaluate(() => Array.from(document.querySelectorAll('button')).filter((el) => el.offsetParent && !(el.innerText || '').trim() && !el.getAttribute('aria-label') && !el.getAttribute('title')).length);
+        if (blank) bad.push(name + ' has ' + blank + ' visible button(s) with no label');
         await p.screenshot({ path: path.join(TSHOTS, id + '-' + name + '.png') });
         if (name === 'kiosk') {
           await p.waitForSelector('.qr-frame svg');
@@ -208,7 +212,7 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
         }
         await p.close();
       }
-      check(id + ': student (phone), faculty, admin, kiosk and sign-in render without sideways scroll', bad.length === 0, bad.join('; '));
+      check(id + ': student (phone), faculty, admin, kiosk and sign-in render without sideways scroll or blank buttons', bad.length === 0, bad.join('; '));
     }
     w.call('admin@karunya.edu', 'settings.set', { values: { uiTheme: 'karunya' } });
   } catch (e) {

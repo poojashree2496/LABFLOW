@@ -95,7 +95,7 @@
 [data-skin="bohemian"] .occ-card .meter, [data-skin="bohemian"] .progress { height: 9px; border: 1px solid var(--bo-ink); border-radius: 0; background: transparent; }
 [data-skin="bohemian"] .occ-card .meter > i, [data-skin="bohemian"] .progress > i { background: var(--bo-check); }
 [data-skin="bohemian"] .occ-card.over .meter > i { background: var(--bad); }
-[data-skin="bohemian"] .empty { background: transparent; color: var(--bo-plate); border: 1px solid var(--bo-rule); border-radius: 0; font-size: 19px; }
+[data-skin="bohemian"] .empty { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 0; font-size: 19px; }
 [data-skin="bohemian"] .notice { background: var(--bo-plate); color: var(--bo-ink); border: 0; border-left: 4px solid var(--bo-ink); border-radius: 0; }
 [data-skin="bohemian"] .notice .hint { color: var(--bo-ink) !important; }
 [data-skin="bohemian"] .step { background: var(--bo-plate); color: var(--bo-ink); border: 0; border-radius: 0; }
@@ -108,19 +108,27 @@
 [data-skin="bohemian"] .photo { border-radius: 0; clip-path: var(--bo-notch); border: 0; }
 [data-skin="bohemian"] .main > :is(.t-h2, .t-h3, h2, h3) { color: var(--bo-plate); }
 
-/* controls */
-[data-skin="bohemian"] .btn { background: transparent; color: var(--bo-ink); border: 1px solid var(--bo-ink); border-radius: 0; font: 400 11px/1.2 var(--bo-mono); letter-spacing: .14em; text-transform: uppercase; }
-[data-skin="bohemian"] .main > .btn, [data-skin="bohemian"] .main > .toolbar > .btn, [data-skin="bohemian"] .main > .toolbar .btn:not(.btn-primary) { color: var(--bo-plate); border-color: var(--bo-plate); }
-[data-skin="bohemian"] .btn:hover:not(:disabled) { background: rgb(35 36 29 / .08); }
-[data-skin="bohemian"] .btn-primary, [data-skin="bohemian"] .btn-primary:hover:not(:disabled) { background: var(--bo-ink); color: var(--bo-plate); border-color: var(--bo-ink); }
-[data-skin="bohemian"] .main > .toolbar .btn-primary, [data-skin="bohemian"] .main > .btn-primary { background: var(--bo-plate); color: var(--bo-ink); border-color: var(--bo-plate); }
+/* controls: light on the night, ink inside a plate */
+[data-skin="bohemian"] .btn { background: transparent; color: var(--bo-plate); border: 1px solid var(--bo-plate); border-radius: 0; font: 400 11px/1.2 var(--bo-mono); letter-spacing: .14em; text-transform: uppercase; }
+[data-skin="bohemian"] .btn:hover:not(:disabled) { background: rgb(220 215 196 / .1); }
+[data-skin="bohemian"] .btn-primary, [data-skin="bohemian"] .btn-primary:hover:not(:disabled) { background: var(--bo-plate); color: var(--bo-ink); border-color: var(--bo-plate); }
 [data-skin="bohemian"] .btn-danger, [data-skin="bohemian"] .btn-danger:hover:not(:disabled) { background: var(--bad); color: #f3eee0; border-color: var(--bad); }
 [data-skin="bohemian"] .btn-gold, [data-skin="bohemian"] .btn-gold:hover:not(:disabled) { background: var(--bo-plate); color: var(--bo-ink); border-color: var(--bo-ink); }
 [data-skin="bohemian"] .btn-ghost { border-color: transparent; }
-[data-skin="bohemian"] .input, [data-skin="bohemian"] select.input, [data-skin="bohemian"] textarea.input { background: transparent; color: var(--bo-ink); border: 0; border-bottom: 1px solid var(--bo-ink); border-radius: 0; padding-left: 0; font: 500 17px/1.3 "Cormorant Garamond", serif; }
-[data-skin="bohemian"] textarea.input { border: 1px solid var(--bo-ink); padding-left: 10px; }
-[data-skin="bohemian"] .main > .input, [data-skin="bohemian"] .main > .toolbar .input, [data-skin="bohemian"] .main > .toolbar select.input { color: var(--bo-plate); border-bottom-color: var(--bo-plate); color-scheme: dark; }
+[data-skin="bohemian"] .input, [data-skin="bohemian"] select.input, [data-skin="bohemian"] textarea.input { background: transparent; color: var(--bo-plate); border: 0; border-bottom: 1px solid var(--bo-plate); border-radius: 0; padding-left: 0; font: 500 17px/1.3 "Cormorant Garamond", serif; color-scheme: dark; }
+[data-skin="bohemian"] select.input option { color: var(--bo-ink); }
+[data-skin="bohemian"] textarea.input { border: 1px solid var(--bo-plate); padding-left: 10px; }
 [data-skin="bohemian"] .input:focus { outline: 0; border-bottom-width: 2px; }
+[data-skin="bohemian"] .badge { background: transparent; color: var(--bo-plate); border: 1px solid currentColor; border-radius: 0; font: 400 9.5px/1.4 var(--bo-mono); letter-spacing: .12em; text-transform: uppercase; }
+[data-skin="bohemian"] .badge:is(.good, .warn, .bad, .info) { background: transparent; border-color: currentColor; color: var(--bo-plate); }
+[data-skin="bohemian"] .badge.lime, [data-skin="bohemian"] .badge.gold { background: var(--bo-plate); color: var(--bo-ink); border-color: var(--bo-plate); }
+/* inside a plate (or the header plate) everything turns ink */
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head, .sidebar, .topbar, .toast) :is(.btn, .input, .badge) { color: var(--bo-ink); border-color: var(--bo-ink); color-scheme: light; }
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head) .badge:is(.good, .warn, .bad, .info) { color: var(--bo-ink); }
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head) .btn:hover:not(:disabled) { background: rgb(35 36 29 / .08); }
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head) :is(.btn-primary, .badge.lime, .badge.gold) { background: var(--bo-ink); color: var(--bo-plate); border-color: var(--bo-ink); }
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head) .btn-danger { background: var(--bad); color: #f3eee0; border-color: var(--bad); }
+[data-skin="bohemian"] :is(.card, .modal, .occ-card, .row, .tbl-wrap, .step, .result, .choice, .notice, .auth-main, .kiosk-head) .btn-ghost { border-color: transparent; }
 [data-skin="bohemian"] .field > label, [data-skin="bohemian"] .field > .lbl { font: 400 10.5px/1.3 var(--bo-mono); letter-spacing: .14em; text-transform: uppercase; }
 [data-skin="bohemian"] input[type="checkbox"] { accent-color: var(--bo-ink); }
 [data-skin="bohemian"] .badge { background: transparent; color: var(--bo-ink); border: 1px solid currentColor; border-radius: 0; font: 400 9.5px/1.4 var(--bo-mono); letter-spacing: .12em; text-transform: uppercase; }

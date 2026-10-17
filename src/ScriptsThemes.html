@@ -3,6 +3,7 @@
    and the sign-in screen. A theme is a CSS file (styles/themes/<id>.css, every rule under [data-skin="<id>"]) plus the
    entry below: its fonts, the browser bar colour, the shell layout and optional hero / footer blocks for the shell.
    Layouts: 'sidebar' (menu on the left) or 'topnav' (menu across the top); a theme's CSS can rearrange further.
+   collapse: true gives the sidebar a collapse button (and only then is a saved collapsed state honoured).
    Themes never restyle the QR codes or the camera preview: those stay black on white at full size so they scan. */
 (function () {
 'use strict';
@@ -11,7 +12,7 @@ const FONTS = 'https://fonts.googleapis.com/css2?display=swap&family=';
 
 LF.SKINS = {
   karunya: {
-    label: 'Karunya', layout: 'sidebar', color: '#ffffff',
+    label: 'Karunya', layout: 'sidebar', color: '#ffffff', collapse: true,
     fonts: FONTS + 'Roboto:wght@400;500;700',
     hero(me, role) {
       const s = me.student, f = me.faculty;

@@ -34,7 +34,7 @@ Status as of 17 Oct 2026. Implementation deadline: 23 Oct 2026, 5:00 PM (aim to 
 - Pipeline fault injection with live step traces.
 - 27 scripted scenarios: the class rush and every SRS 15.4 attack.
 - Stage with the kiosk and two phones side by side, a QR relay and simulated GPS.
-- Live theme editor with presets, and data/mail/audit browsers.
+- A site-theme switcher with a live preview as any role, and data/mail/audit browsers.
 
 **Hosted app**
 - Google sign-in, signed LABFLOW sessions and a JSON API to the Apps Script backend, served as an installable app from Vercel.

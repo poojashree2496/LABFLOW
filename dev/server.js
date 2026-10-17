@@ -54,9 +54,6 @@ function devScript(as, hosted) {
     }).catch(function () { err && err({ code: 2, message: 'Position unavailable' }); });
   }
   try { Object.defineProperty(navigator, 'geolocation', { configurable: true, value: { getCurrentPosition: function (ok, err) { devPosition(ok, err); }, watchPosition: function (ok, err) { devPosition(ok, err); return 1; }, clearWatch: function () {} } }); } catch (e) { /* keep the real one */ }
-  // Live theme from the Test Lab editor (same origin, so localStorage + storage events reach every app tab and frame).
-  function applyDevTheme() { try { var t = JSON.parse(localStorage.getItem('lf-dev-theme') || 'null'); var el = document.getElementById('lf-dev-theme'); if (!el) { el = document.createElement('style'); el.id = 'lf-dev-theme'; document.head.appendChild(el); } el.textContent = t && t.css ? t.css : ''; } catch (e) { /* ignore */ } }
-  applyDevTheme(); window.addEventListener('storage', function (e) { if (e.key === 'lf-dev-theme') applyDevTheme(); });
   // QR relay for the Test Lab stage: every QR this page draws is announced; the stage can hand a code to another frame,
   // which then behaves as if its camera had opened the link.
   var bc = 'BroadcastChannel' in window ? new BroadcastChannel('labflow-dev') : null;

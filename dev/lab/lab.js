@@ -47,7 +47,7 @@ const SECTIONS = [
   { id: 'stage', label: 'Stage (simulate a class)', render: stage },
   { id: 'pipeline', label: 'Verification pipeline', render: pipelines },
   { id: 'scenarios', label: 'Scenario runs', render: scenariosView },
-  { id: 'theme', label: 'Theme editor', render: themeView },
+  { id: 'theme', label: 'Site themes', render: themeView },
   { id: 'data', label: 'Data and mail', render: dataView }
 ];
 let current = null;
@@ -195,62 +195,29 @@ function scenariosView(root) {
   api('scenarios').then((r) => { list = r.scenarios; render(list); });
 }
 
-/* ------------------------------------------------------------------ Theme editor */
-const TOKENS = [
-  ['Surfaces', [['--paper', 'Page'], ['--card', 'Cards'], ['--fill', 'Fills'], ['--line', 'Borders'], ['--hair', 'Hairlines']]],
-  ['Text', [['--ink', 'Text'], ['--ink-soft', 'Secondary text']]],
-  ['Brand', [['--brand', 'Header / brand'], ['--brand-deep', 'Brand dark'], ['--on-brand', 'On brand'], ['--gold', 'Rule / highlight']]],
-  ['Actions', [['--accent', 'Primary button'], ['--accent-hover', 'Primary hover'], ['--on-accent', 'On primary'], ['--accent-soft', 'Selected background'], ['--on-accent-soft', 'Selected text']]],
-  ['Status', [['--good', 'Good'], ['--good-soft', 'Good background'], ['--warn', 'Warning'], ['--warn-soft', 'Warning background'], ['--bad', 'Bad'], ['--bad-soft', 'Bad background'], ['--info', 'Info'], ['--info-soft', 'Info background']]]
-];
-const PRESETS = {
-  'Karunya': { '--paper': '#f3f6fb', '--card': '#ffffff', '--ink': '#0f1b33', '--ink-soft': '#4f5d78', '--line': '#c3cde0', '--hair': '#e1e7f1', '--fill': '#eef2f9', '--brand': '#143d8f', '--brand-deep': '#0b2a66', '--on-brand': '#ffffff', '--gold': '#e0a30d', '--accent': '#143d8f', '--accent-hover': '#0f3378', '--on-accent': '#ffffff', '--accent-soft': '#e4ecfb', '--on-accent-soft': '#0b2a66', '--good': '#1c8a55', '--good-soft': '#def4e8', '--warn': '#b7791f', '--warn-soft': '#fdf1d8', '--bad': '#c53030', '--bad-soft': '#fde4e4', '--info': '#2563eb', '--info-soft': '#e1ebfe', '--f-display': 'Barlow Condensed', '--f-head': 'Source Serif 4', '--f-body': 'Inter', '--r-card': 12, '--r-ctl': 8, '--d': 1 },
-  'Karunya night': { '--paper': '#0b1220', '--card': '#111b2e', '--ink': '#e6ecf7', '--ink-soft': '#9aa8c2', '--line': '#2b3a59', '--hair': '#1d2a44', '--fill': '#16223a', '--brand': '#0f2f6e', '--brand-deep': '#0a2252', '--on-brand': '#ffffff', '--gold': '#f2b83a', '--accent': '#3d72dc', '--accent-hover': '#4d80e6', '--on-accent': '#ffffff', '--accent-soft': '#1a2b4f', '--on-accent-soft': '#cfdcf7', '--good': '#38c27d', '--good-soft': '#10301f', '--warn': '#f0b84a', '--warn-soft': '#33270d', '--bad': '#f26b6b', '--bad-soft': '#3a1515', '--info': '#6d9cf5', '--info-soft': '#13254a', '--f-display': 'Barlow Condensed', '--f-head': 'Source Serif 4', '--f-body': 'Inter', '--r-card': 12, '--r-ctl': 8, '--d': 1 },
-  'Cream and lime': { '--paper': '#f7f6f0', '--card': '#ffffff', '--ink': '#0c0c0b', '--ink-soft': '#55554e', '--line': '#0c0c0b', '--hair': '#d6dacd', '--fill': '#eceee5', '--brand': '#0c0c0b', '--brand-deep': '#000000', '--on-brand': '#ffffff', '--gold': '#e2f65a', '--accent': '#e2f65a', '--accent-hover': '#d6eb44', '--on-accent': '#0c0c0b', '--accent-soft': '#f1f9c4', '--on-accent-soft': '#0c0c0b', '--good': '#16a34a', '--good-soft': '#d9fbe6', '--warn': '#b45309', '--warn-soft': '#fff1cc', '--bad': '#dc2626', '--bad-soft': '#ffe1dd', '--info': '#2563eb', '--info-soft': '#dbe7fd', '--f-display': 'Anton', '--f-head': 'Instrument Serif', '--f-body': 'Inter', '--r-card': 12, '--r-ctl': 6, '--d': 1 },
-  'High contrast': { '--paper': '#ffffff', '--card': '#ffffff', '--ink': '#000000', '--ink-soft': '#1f1f1f', '--line': '#000000', '--hair': '#5c5c5c', '--fill': '#f0f0f0', '--brand': '#000000', '--brand-deep': '#000000', '--on-brand': '#ffffff', '--gold': '#ffd400', '--accent': '#0040c1', '--accent-hover': '#00308f', '--on-accent': '#ffffff', '--accent-soft': '#dbe6ff', '--on-accent-soft': '#000000', '--good': '#006b2e', '--good-soft': '#d7f5e2', '--warn': '#7a4b00', '--warn-soft': '#fff0c2', '--bad': '#b00020', '--bad-soft': '#ffd9df', '--info': '#003fb3', '--info-soft': '#dce7ff', '--f-display': 'Barlow Condensed', '--f-head': 'Source Serif 4', '--f-body': 'Inter', '--r-card': 4, '--r-ctl': 4, '--d': 1.1 },
-  'Forest': { '--paper': '#f4f7f2', '--card': '#ffffff', '--ink': '#13261a', '--ink-soft': '#52655a', '--line': '#c4d3c8', '--hair': '#e2eae3', '--fill': '#edf3ee', '--brand': '#1d5a3a', '--brand-deep': '#123d27', '--on-brand': '#ffffff', '--gold': '#d4a72c', '--accent': '#1d5a3a', '--accent-hover': '#164a2f', '--on-accent': '#ffffff', '--accent-soft': '#e1f0e6', '--on-accent-soft': '#123d27', '--good': '#1c8a55', '--good-soft': '#def4e8', '--warn': '#a16207', '--warn-soft': '#fdf1d8', '--bad': '#b91c1c', '--bad-soft': '#fde4e4', '--info': '#1d4ed8', '--info-soft': '#e1ebfe', '--f-display': 'Space Grotesk', '--f-head': 'Merriweather', '--f-body': 'Inter', '--r-card': 16, '--r-ctl': 10, '--d': 1 }
-};
-const FONTS = { display: ['Barlow Condensed', 'Anton', 'Oswald', 'Space Grotesk', 'Bebas Neue', 'Inter'], head: ['Source Serif 4', 'Instrument Serif', 'Merriweather', 'Playfair Display', 'Inter', 'Poppins'], body: ['Inter', 'Poppins', 'IBM Plex Sans', 'Nunito Sans', 'Roboto', 'Source Sans 3'] };
-function loadTheme() { try { return JSON.parse(localStorage.getItem('lf-dev-theme') || 'null'); } catch (e) { return null; } }
-function themeCss(t) {
-  const fam = (f) => f.replace(/ /g, '+') + ':wght@400;600;700';
-  const fonts = [t['--f-display'], t['--f-head'], t['--f-body']].filter((f, i, a) => f && a.indexOf(f) === i);
-  const vars = Object.keys(t).filter((k) => k.indexOf('--') === 0).map((k) => {
-    let v = t[k]; if (k === '--r-card' || k === '--r-ctl') v += 'px'; if (k.indexOf('--f-') === 0) v = '"' + v + '", system-ui, sans-serif';
-    return '  ' + k + ': ' + v + ' !important;';
-  });
-  return '@import url("https://fonts.googleapis.com/css2?' + fonts.map((f) => 'family=' + fam(f)).join('&') + '&display=swap");\n:root {\n' + vars.join('\n') + '\n}\n';
+/* ------------------------------------------------------------------ Site themes */
+/** Switches the site theme the way the administrator does (settings.set as admin) and shows it live. */
+async function asUser(as, action, payload) {
+  const r = await (await fetch('/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ as, action, payload }) })).json();
+  if (!r.ok) throw new Error(r.error ? r.error.message : 'request failed'); return r.data;
 }
-function saveTheme(t) { try { localStorage.setItem('lf-dev-theme', JSON.stringify({ tokens: t, css: themeCss(t) })); } catch (e) { toast('Could not save the theme (storage blocked)', true); } }
 function themeView(root) {
-  const saved = loadTheme(); let t = Object.assign({}, PRESETS.Karunya, saved && saved.tokens);
-  root.append(h('h1', null, 'Theme editor'), h('p', { class: 'lead' }, 'Change colours, fonts, corner radius and spacing; every open LABFLOW tab and frame on this server updates live. When you like a theme, copy the CSS into styles/input.css (the :root block) and run npm run build:css to make it the shipped default.'));
-  const preview = h('iframe', { title: 'Theme preview', src: appUrl('admin@karunya.edu'), style: { width: '100%', height: '720px', border: '0', borderRadius: '8px', background: '#fff' } });
+  try { localStorage.removeItem('lf-dev-theme'); } catch (e) { /* old token-editor overrides, no longer used */ }
+  root.append(h('h1', null, 'Site themes'), h('p', { class: 'lead' }, 'The administrator picks one theme for everyone (Settings > Appearance). Pick one here to switch this world, as the admin would, and look at it as any role.'));
+  const preview = h('iframe', { title: 'Theme preview', src: appUrl('admin@karunya.edu'), style: { width: '100%', height: '760px', border: '0', borderRadius: '8px', background: '#fff' } });
   const previewAs = h('select', { class: 'input' }, ['admin@karunya.edu', 'faculty@karunya.edu', 'staff@karunya.edu', 'student1@karunya.edu', 'kiosk1@karunya.edu'].map((a) => h('option', { value: a }, a)));
   previewAs.addEventListener('change', () => { preview.src = appUrl(previewAs.value); });
-  const editor = h('div', { class: 'stack' }), css = h('textarea', { class: 'input mono', rows: 10, readonly: true, style: { width: '100%' } });
-  function apply() { saveTheme(t); css.value = themeCss(t).replace(/ !important/g, ''); }
-  function draw() {
-    clear(editor);
-    editor.append(h('section', { class: 'panel stack' }, h('h2', null, 'Presets'), h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' } }, Object.keys(PRESETS).map((name) => {
-      const p = PRESETS[name];
-      return h('button', { class: 'btn stack', style: { textAlign: 'left' }, onclick: () => { t = Object.assign({}, p); apply(); draw(); toast('Preset: ' + name); } }, h('strong', null, name), h('div', { class: 'preset' }, ['--brand', '--gold', '--accent', '--paper', '--card', '--ink'].map((k) => h('i', { style: { background: p[k] } }))));
-    }))));
-    TOKENS.forEach(([group, list]) => editor.append(h('section', { class: 'panel stack' }, h('h2', null, group), list.map(([k, label]) => {
-      const col = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(t[k]) ? t[k] : '#000000', 'aria-label': label }), txt = h('input', { class: 'input mono', value: t[k] || '', 'aria-label': label + ' value' });
-      col.addEventListener('input', () => { t[k] = col.value; txt.value = col.value; apply(); });
-      txt.addEventListener('change', () => { t[k] = txt.value.trim(); if (/^#[0-9a-f]{6}$/i.test(t[k])) col.value = t[k]; apply(); });
-      return h('div', { class: 'swatch' }, col, h('span', null, label, h('div', { class: 'hint mono' }, k)), txt);
-    }))));
-    const font = (k, kind, label) => { const s = h('select', { class: 'input' }, FONTS[kind].map((f) => h('option', { value: f, selected: f === t[k] }, f))); s.addEventListener('change', () => { t[k] = s.value; apply(); }); return h('label', { class: 'f' }, label, s); };
-    const slider = (k, label, min, max, step) => { const v = h('span', { class: 'mono' }, String(t[k])), r = h('input', { type: 'range', min, max, step, value: t[k] }); r.addEventListener('input', () => { t[k] = Number(r.value); v.textContent = r.value; apply(); }); return h('label', { class: 'f' }, label, h('div', { class: 'row' }, r, v)); };
-    editor.append(h('section', { class: 'panel stack' }, h('h2', null, 'Type and shape'), font('--f-display', 'display', 'Display (big numbers, kiosk)'), font('--f-head', 'head', 'Headings'), font('--f-body', 'body', 'Body text'),
-      slider('--r-card', 'Card corner radius (px)', 0, 24, 1), slider('--r-ctl', 'Control corner radius (px)', 0, 16, 1), slider('--d', 'Spacing density', 0.75, 1.35, 0.05)));
-    editor.append(h('section', { class: 'panel stack' }, h('h2', null, 'Export'), css, h('div', { class: 'row' }, btn('Copy CSS', async () => { await navigator.clipboard.writeText(css.value); toast('Copied'); }, 'primary'), btn('Back to the shipped theme', () => { try { localStorage.removeItem('lf-dev-theme'); } catch (e) { /* ignore */ } t = Object.assign({}, PRESETS.Karunya); css.value = ''; draw(); toast('Shipped theme restored'); }, 'danger'))));
-    apply();
+  const list = h('div', { class: 'stack' });
+  async function draw() {
+    const s = (await asUser('admin@karunya.edu', 'settings.get', {})).settings.find((x) => x.key === 'uiTheme');
+    clear(list).append(...s.values.map((id) => btn((id === s.value ? '● ' : '') + id.replace(/-/g, ' '), async () => {
+      await asUser('admin@karunya.edu', 'settings.set', { values: { uiTheme: id } }); toast('Theme: ' + id); preview.src = appUrl(previewAs.value); draw();
+    }, id === s.value ? 'primary' : '')));
   }
-  draw();
-  root.append(h('div', { style: { display: 'grid', gap: '14px', gridTemplateColumns: 'minmax(320px, 440px) minmax(0, 1fr)', alignItems: 'start' } }, editor, h('section', { class: 'panel stack', style: { position: 'sticky', top: '76px' } }, h('div', { class: 'row' }, h('h2', null, 'Live preview'), previewAs), preview)));
+  draw().catch((e) => toast(String(e.message || e), true));
+  root.append(h('div', { style: { display: 'grid', gap: '14px', gridTemplateColumns: 'minmax(200px, 260px) minmax(0, 1fr)', alignItems: 'start' } },
+    h('section', { class: 'panel stack' }, h('h2', null, 'Theme'), list),
+    h('section', { class: 'panel stack', style: { position: 'sticky', top: '76px' } }, h('div', { class: 'row' }, h('h2', null, 'Live preview'), previewAs), preview)));
 }
 
 /* ------------------------------------------------------------------ Data and mail */

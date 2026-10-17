@@ -113,7 +113,9 @@
 [data-skin="post-internet"] .choice label { background: #fff; color: #000; border: 0; border-radius: 0; box-shadow: var(--pi-in); }
 [data-skin="post-internet"] .choice label:has(input:checked) { background: var(--pi-navy); color: #fff; box-shadow: var(--pi-in); }
 [data-skin="post-internet"] .photo { border-radius: 0; border: 0; box-shadow: var(--pi-in); filter: none; }
-[data-skin="post-internet"] .dl dt { color: #3a3a3a; }
+[data-skin="post-internet"] .dl dt { color: #b9b9b9; }
+[data-skin="post-internet"] :is(.card, .modal, .tabs + *, .result) .dl dt { color: #3a3a3a; }
+[data-skin="post-internet"] :is(.card, .modal, .tabs + *, .result) .empty { color: #000; border-color: #000; }
 
 /* controls: Win95 buttons and sunken fields */
 [data-skin="post-internet"] .btn { background: var(--pi-grey); color: #000; border: 0; border-radius: 0; box-shadow: var(--pi-btn); font: 400 13px var(--pi-win); min-height: 34px; padding: 4px 18px; }
