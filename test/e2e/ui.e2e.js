@@ -36,6 +36,28 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
   const desktop = { viewport: { width: 1280, height: 820 } };
   const kioskCode = (k) => w.call(k, 'kiosk.display', {}).data.code;
   try {
+    // ---------------- local-only demo login, account switching and sign-out
+    const demo = await browser.newPage({ viewport: { width: 900, height: 760 } });
+    demo.on('pageerror', (e) => errors.push('demo-login pageerror: ' + e.message));
+    await demo.goto(base + '/');
+    await demo.getByText('Local demo sign in').waitFor();
+    await demo.locator('select[aria-label="Choose a seeded demo account"] option[value="staff@karunya.edu"]').waitFor({ state: 'attached' });
+    await demo.locator('select[aria-label="Choose a seeded demo account"]').selectOption('staff@karunya.edu');
+    await demo.getByRole('button', { name: 'Continue as demo account' }).click();
+    await demo.waitForURL(/as=staff%40karunya\.edu/);
+    await demo.locator('button[aria-label="Account: staff@karunya.edu"]').waitFor();
+    await demo.locator('button[aria-label="Account: staff@karunya.edu"]').click();
+    await demo.getByRole('button', { name: 'Switch demo account' }).click();
+    await demo.getByText('Local demo sign in').waitFor();
+    await demo.locator('select[aria-label="Choose a seeded demo account"]').selectOption('student1@karunya.edu');
+    await demo.getByRole('button', { name: 'Continue as demo account' }).click();
+    await demo.waitForURL(/as=student1%40karunya\.edu/);
+    await demo.locator('button[aria-label="Account: student1@karunya.edu"]').click();
+    await demo.getByRole('button', { name: 'Sign out' }).click();
+    await demo.getByText('Local demo sign in').waitFor();
+    check('local app offers explicit demo login, account switching and sign-out', await demo.evaluate(() => !new URL(location.href).searchParams.has('as')));
+    await demo.close();
+
     // ---------------- student phone: home, compatibility check, device registration (for device-QR labs)
     setClock(IST(10, 1)); await tick(); // the 10:00 IoT class opens by itself from the timetable
     const sctx = await browser.newContext(mobile), s1 = await page(sctx, 'student1@karunya.edu', 'student');
@@ -54,11 +76,11 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     const kctx = await browser.newContext({ viewport: { width: 1440, height: 900 } }), k1 = await page(kctx, 'kiosk1@karunya.edu', 'kiosk-A');
     await k1.waitForSelector('svg[aria-label="Attendance QR code"]'); await k1.waitForTimeout(500); await shot(k1, '02-kiosk-qr-display');
     check('kiosk in mode A shows a rotating check-in QR', await k1.locator('text=Scan to check in').count() === 1);
-    await s1.goto(base + '/?as=student1@karunya.edu&k=' + encodeURIComponent(kioskCode('kiosk1@karunya.edu')));
-    await s1.waitForSelector('text=What are you here for?'); await shot(s1, '03-student-checkin-pass');
-    check('the scanned code is validated as the page opens, with the timetabled class pre-selected', await s1.locator('input[name="kc-ses"]:checked').count() === 1);
-    await s1.getByRole('button', { name: /Send location and check in/ }).click();
-    await s1.waitForSelector('text=Location check passed'); await shot(s1, '04-student-checked-in');
+    const s3 = await page(sctx, 'student3@karunya.edu', 'student3', '&k=' + encodeURIComponent(kioskCode('kiosk1@karunya.edu')));
+    await s3.waitForSelector('text=What are you here for?'); await shot(s3, '03-student-checkin-pass');
+    check('the scanned code is validated as the page opens, with the timetabled class pre-selected', await s3.locator('input[name="kc-ses"]:checked').count() === 1);
+    await s3.getByRole('button', { name: /Send location and check in/ }).click();
+    await s3.waitForSelector('text=Location check passed'); await shot(s3, '04-student-checked-in');
     check('Version A check-in accepted with the simulated GPS inside the geofence', true);
     await post('geo', { mode: 'outside', lab: 'A', offsetM: 250 });
     const s4 = await page(sctx, 'student4@karunya.edu', 'student4', '&k=' + encodeURIComponent(kioskCode('kiosk1@karunya.edu')));
@@ -93,11 +115,15 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     await t.locator('section', { hasText: 'Equipment requests' }).getByRole('button', { name: 'Issue' }).first().click();
     await t.waitForSelector('text=Filling a request');
     await t.getByLabel('Search equipment to add').fill('ESP'); await t.getByRole('button', { name: /ESP32 DevKit/ }).first().click();
+    const loansBeforeIssue = new Set(w.call(w.staff, 'loans.list', { status: 'active' }).data.loans.map((loan) => loan.loanId));
     await shot(t, '13-staff-issue'); await t.getByRole('button', { name: 'Issue items' }).click(); await t.waitForSelector('text=Issued.');
+    const issuedLoan = w.call(w.staff, 'loans.list', { status: 'active' }).data.loans.find((loan) => !loansBeforeIssue.has(loan.loanId));
+    if (!issuedLoan) throw new Error('The equipment issue did not create an active loan.');
     check('staff issues the requested item and the request closes', w.call('student1@karunya.edu', 'equipment.mine', {}).data.requests[0].status === 'fulfilled');
-    await t.getByRole('tab', { name: 'Return' }).click(); await t.getByRole('button', { name: /Aarav/ }).click();
+    await t.evaluate((loanId) => { LF.sel = LF.sel || {}; LF.sel.loanId = loanId; LF.go('desk'); }, issuedLoan.loanId);
+    await t.getByRole('button', { name: 'All back' }).waitFor();
     await t.getByRole('button', { name: 'All back' }).first().click(); await t.getByRole('button', { name: 'Record return' }).click(); await t.waitForSelector('text=Loan closed');
-    check('staff records the return; the loan closes', w.call(w.staff, 'loans.list', { status: 'active' }).data.loans.length === 0);
+    check('staff records the return; the issued loan closes', w.call(w.staff, 'loans.get', { loanId: issuedLoan.loanId }).data.loan.status === 'closed');
 
     // ---------------- Version B: device QR at the GPU lab kiosk scanner, and a teacher phone opening the QR link
     setClock(IST(14, 1)); await tick();

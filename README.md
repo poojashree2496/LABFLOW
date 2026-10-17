@@ -67,11 +67,11 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
 npm run check      # syntax lint of every .gs/.html script + 138 backend tests
-npm run dev        # http://localhost:8787/?as=student1@karunya.edu   (also admin@, staff@, faculty@, kiosk1@karunya.edu)
+npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 ```
 
-The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. `?as=` picks the identity **in the dev server only**; production has no such parameter. The fakes prove logic, not Google's behaviour.
+The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.
 
 ### Try the seeded demo
 
@@ -81,7 +81,7 @@ Run `npm run dev`, then open [http://localhost:8787/lab](http://localhost:8787/l
 - Labs, kiosks, courses, timetables, inventory, kits and a project group.
 - A pending student verification, equipment request and research visit; a flagged check-in and a pending spot check.
 - Current and overdue loans, pending/approved/rejected bookings, and a workshop with registered students and a guest.
-- Local app links for the admin, faculty, staff, student and kiosk roles. The links are also available directly, for example `http://localhost:8787/?as=admin@karunya.edu` or `http://localhost:8787/?as=student1@karunya.edu`.
+- Local app links for the admin, faculty, staff, student and kiosk roles. Direct local testing links are also available, for example `http://localhost:8787/?as=admin@karunya.edu` or `http://localhost:8787/?as=student1@karunya.edu`.
 
 The demo lives only in memory. Rebuilding it or restarting the dev server discards its data; nothing is written to Google Sheets or a deployed app.
 

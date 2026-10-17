@@ -3,7 +3,8 @@
    so server data can never inject markup. The server (rpc) is the only authority: nothing here grants access. */
 (function () {
 'use strict';
-const LF = window.LF = { routes: {}, ui: {}, util: {}, fmt: {}, me: null, role: null, current: null, cleanups: [], timers: [] };
+const LF = window.LF = { routes: {}, ui: {}, util: {}, fmt: {}, me: null, role: null, current: null, cleanups: [], timers: [],
+  dev: !!(window.LF_DEV && !(window.LF_CONFIG && window.LF_CONFIG.apiUrl)) };
 const TZ = 'Asia/Kolkata', IST_MIN = 330;
 
 /* ------------------------------------------------------------------ DOM helpers */
@@ -458,7 +459,8 @@ function authShell(title, lead, content) {
   const skin = LF.skin();
   return h('div', { class: 'auth-wrap' }, skin.decor ? skin.decor() : null,
     h('section', { class: 'auth-art' }, h('div', null, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya Institute of Technology and Sciences · CSE')),
-      h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' }, 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
+      h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' },
+        LF.dev ? 'Local demo mode: choose a simulated test identity. No Google sign-in is performed.' : 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
     h('main', { id: 'main', class: 'auth-main' }, h('div', { class: 'auth-logo', role: 'img', 'aria-label': 'Karunya' }), h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));
 }
 
@@ -468,7 +470,7 @@ const PRIVACY = [
   ['Location', 'When you check in by scanning the lab screen, your phone sends its location once. LABFLOW works out the distance to the lab and keeps only the result (inside or outside, the distance and the reported accuracy). Your coordinates are never stored.'],
   ['Device key', 'If your lab uses device QR codes, your phone creates a signing key. Only its public half is stored. It identifies your phone, not you, and you can revoke it at any time.'],
   ['Why', 'To record lab attendance and hours, manage borrowed equipment, and detect proxy attendance. Data stays in the university\'s Google Workspace and is visible only to the staff who need it.'],
-  ['Your choices', 'You can see your own records under History. Ask the lab office to correct anything that is wrong.']
+  ['Your choices', 'You can see your own attendance records under Attendance. Ask the lab office to correct anything that is wrong.']
 ];
 LF.privacyNotice = () => h('div', { class: 'notice', style: { display: 'grid', gap: '6px' } }, h('div', { class: 't-h3' }, 'Privacy notice'), PRIVACY.map(([k, v]) => h('div', { class: 'hint', style: { color: 'var(--ink)' } }, h('strong', null, k + '. '), v)));
 
@@ -503,6 +505,38 @@ function signInScreen(note) {
   runCleanups(); LF.me = null;
   if (LF.hosted) rawCall('ui.theme').then((t) => { if (LF.SKINS[t.uiTheme] && t.uiTheme !== document.documentElement.getAttribute('data-skin')) { LF.applySkin(t.uiTheme); signInScreen(note); } }).catch(() => { /* keep the cached theme */ });
   const err = h('div', { class: 'err', role: 'alert', hidden: true }), slot = h('div', { style: { minHeight: '44px' } });
+  if (LF.dev) {
+    const emailPattern = /^[a-z0-9._%+'-]+@karunya\.edu(?:\.in)?$/;
+    const email = h('input', { class: 'input', type: 'email', autocomplete: 'username', 'aria-label': 'Demo account email', placeholder: 'you@karunya.edu', required: true });
+    const choices = h('select', { class: 'input', 'aria-label': 'Choose a seeded demo account' },
+      h('option', { value: '' }, 'Choose a seeded demo account'));
+    choices.addEventListener('change', () => { if (choices.value) email.value = choices.value; });
+    const form = h('form', { style: { display: 'grid', gap: '10px' }, onsubmit: (e) => {
+      e.preventDefault(); err.hidden = true;
+      const value = email.value.trim().toLowerCase();
+      if (!emailPattern.test(value)) { err.textContent = 'Enter an @karunya.edu or @karunya.edu.in email address.'; err.hidden = false; return; }
+      try { window.LF_DEV.switchAccount(value); }
+      catch (e) { err.textContent = e.message; err.hidden = false; }
+    } }, h('label', { for: 'demo-account-choice' }, 'Seeded accounts'), choices,
+    h('label', { for: 'demo-account-email' }, 'Or enter a Karunya email'), email,
+    h('button', { class: 'btn btn-primary', type: 'submit' }, 'Continue as demo account'));
+    choices.id = 'demo-account-choice'; email.id = 'demo-account-email';
+    slot.append(form);
+    fetch('/dev/api/state').then((r) => {
+      if (!r.ok) throw new Error('Could not load the local demo accounts.');
+      return r.json();
+    }).then((state) => {
+      const accounts = state.users.map((u) => ({ email: u.email, label: u.name + ' — ' + (Array.isArray(u.roles) ? u.roles.join(', ') : u.roles) }))
+        .concat(state.kiosks.map((k) => ({ email: k.email, label: k.name + ' — kiosk' })))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      accounts.forEach((a) => choices.appendChild(h('option', { value: a.email }, a.label + ' (' + a.email + ')')));
+    }).catch((e) => { err.textContent = e.message || 'Could not load the local demo accounts.'; err.hidden = false; });
+    const noteText = note ? note + ' ' : '';
+    clear(appRoot()).appendChild(authShell('Local demo sign in', h('span', null, noteText,
+      'This selects a simulated test identity only. It does not sign in to Google or verify that you own this email.'),
+      h('div', { style: { display: 'grid', gap: '14px' } }, slot, err)));
+    return;
+  }
   const done = async (idToken) => {
     err.hidden = true;
     try { const r = await rawCall('auth.google', { idToken }); LF.session.set(r.session); await boot(); }
@@ -540,7 +574,12 @@ function accountMenu() {
   const me = LF.me;
   const m = modal('Account', h('div', { style: { display: 'grid', gap: '10px' } },
     h('div', null, h('strong', null, me.displayName), h('div', { class: 'hint' }, me.email)), installHint(),
-    LF.hosted ? h('button', { class: 'btn', onclick: () => { m.close(); signOut(); } }, icon('logout'), 'Sign out') : h('div', { class: 'hint' }, 'To switch accounts, use the Google account menu and reload.')));
+    LF.dev ? h('div', { style: { display: 'grid', gap: '8px' } },
+      h('div', { class: 'notice hint' }, 'Local demo identity only; this is not Google authentication.'),
+      h('button', { class: 'btn', onclick: () => { m.close(); window.LF_DEV.signOut(); } }, icon('logout'), 'Sign out'),
+      h('button', { class: 'btn', onclick: () => { m.close(); window.LF_DEV.signOut(); } }, 'Switch demo account'))
+      : LF.hosted ? h('button', { class: 'btn', onclick: () => { m.close(); signOut(); } }, icon('logout'), 'Sign out')
+        : h('div', { class: 'hint' }, 'To switch accounts, use the Google account menu and reload.')));
 }
 
 function blocked(e) {
@@ -592,6 +631,7 @@ function onboarding() {
 
 /* ------------------------------------------------------------------ boot */
 async function boot() {
+  if (LF.dev && !window.LF_DEV.as) return signInScreen();
   if (LF.hosted && !LF.session.get()) return signInScreen();
   let me;
   try { me = await api('me', {}, { retry: true }); } catch (e) { return blocked(e); }
