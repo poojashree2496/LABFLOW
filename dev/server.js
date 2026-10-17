@@ -3,7 +3,7 @@
  * Local preview server and Test Lab (development only, never deployed).
  *
  *   npm run dev            http://localhost:8787/lab   (Test Lab)
- *                          http://localhost:8787/?as=student1@karunya.edu   (the app as any seeded account)
+ *                          http://localhost:8787/   (local demo account picker)
  *                          http://localhost:8787/app   (the hosted-app build: sign-in screen, fetch transport, doPost)
  *
  * The app pages are the real src/Index.html + Scripts*.html with a mock google.script.run that calls the real server
@@ -38,11 +38,20 @@ function devScript(as, hosted) {
   return `<script>
 (function () {
   var as = ${JSON.stringify(as)}, hosted = ${hosted ? 'true' : 'false'};
+  var emailPattern = /^[a-z0-9._%+'-]+@karunya\\.edu(?:\\.in)?$/;
+  function goAs(email) {
+    email = String(email || '').trim().toLowerCase();
+    if (!emailPattern.test(email)) throw new Error('Enter an @karunya.edu or @karunya.edu.in email address.');
+    var u = new URL(location.href); u.searchParams.set('as', email); u.searchParams.delete('k'); u.searchParams.delete('s'); location.assign(u.pathname + u.search + u.hash);
+  }
+  function signOut() {
+    var u = new URL(location.href); u.searchParams.delete('as'); u.searchParams.delete('k'); u.searchParams.delete('s'); location.assign(u.pathname + u.search + u.hash);
+  }
   function chain(ok, bad) { return { withSuccessHandler: function (f) { return chain(f, bad); }, withFailureHandler: function (f) { return chain(ok, f); },
     rpc: function (action, payload) { fetch('/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ as: as, action: action, payload: payload }) })
       .then(function (r) { return r.json(); }).then(function (r) { if (ok) ok(r); }).catch(function (e) { if (bad) bad(e); }); } }; }
   if (!hosted) window.google = { script: { run: chain(null, null) } };
-  window.LF_DEV = { as: as };
+  window.LF_DEV = { as: as || '', switchAccount: goAs, signOut: signOut };
   // Simulated location: the Test Lab decides where this "phone" is (inside, outside, spoofed accuracy, denied, or real GPS).
   var realGeo = navigator.geolocation;
   function devPosition(ok, err) {
@@ -93,8 +102,8 @@ function start(port, opts) {
     const p = url.pathname;
     try {
       if (req.method === 'GET' && p === '/') {
-        const as = url.searchParams.get('as') || 'student1@karunya.edu';
-        if (!ID_OK.test(as)) return send(res, 400, 'Bad ?as identity', 'text/plain');
+        const as = url.searchParams.get('as') || '';
+        if (as && !ID_OK.test(as)) return send(res, 400, 'Bad ?as identity', 'text/plain');
         const html = render('Index').replace('<?!= launch ?>', launchJson(url.searchParams)).replace('<body>', '<body>' + devScript(as));
         return send(res, 200, html, 'text/html; charset=utf-8');
       }
@@ -211,7 +220,7 @@ if (require.main === module) {
   const preset = (process.argv.find((a) => a.startsWith('--preset=')) || '').split('=')[1];
   start(port, { preset }).then(({ lab }) => {
     console.log('LABFLOW Test Lab   http://localhost:' + port + '/lab');
-    console.log('The app            http://localhost:' + port + '/?as=student1@karunya.edu   (also admin@, staff@, faculty@, kiosk1@karunya.edu)');
+    console.log('The app            http://localhost:' + port + '/   (local demo account picker; ?as=email is a testing shortcut)');
     console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 10:06 IST.');
   });
 }

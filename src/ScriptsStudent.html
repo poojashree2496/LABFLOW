@@ -250,7 +250,7 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
   LF.every(15000, () => { if (!document.querySelector('.modal-back')) reload(); });
 } });
 /* ------------------------------------------------------------------ History */
-LF.register({ role: 'student', id: 'history', label: 'History', icon: 'clock', render(root) {
+LF.register({ role: 'student', id: 'history', label: 'Attendance', icon: 'calendar', render(root) {
   const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Attendance history'), out);
   ui.loadInto(out, async () => {
     const r = await api('attend.history', { limit: 200 }), t = r.totals;
