@@ -11,7 +11,7 @@ const LAST = ['Kumar', 'Raj', 'Nair', 'Menon', 'Iyer', 'Thomas', 'Joseph', 'Pill
 const LAB_C = north(LAB_A, -140);
 const PRESETS = { small: { students: 12, historyDays: 2 }, demo: { students: 30, historyDays: 5 }, large: { students: 60, historyDays: 10 } };
 // Steps that only check something (safe to skip in the Test Lab to see what that check protects against).
-const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'enrolment', 'attendance_state',
+const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'authorization_recheck', 'enrolment', 'attendance_state',
   'code_mac', 'code_age', 'code_unused', 'pass_fresh', 'geo_plausible', 'geofence', 'code_once', 'pass_mac'];
 
 /** A clock that runs in real time from a chosen moment and can be paused, advanced or set. */

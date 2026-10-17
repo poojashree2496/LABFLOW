@@ -1,14 +1,15 @@
 # LABFLOW test plan and results
 
-Last full run on the build in this repository: `npm run check` and `npm run e2e`.
+Latest workflow audit: `npm run check` and `npm run sim` passed. `npm run e2e` could not start because `playwright-core` is absent in this checkout. Browser results below are from the previously recorded run. Details: [workflow audit](docs/workflow-audit.md).
 
 ## A. What actually ran
 
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1) | `npm test` | **138 pass, 0 fail** |
-| Browser E2E (Playwright, real Chromium) | `npm run e2e` | **74 pass, 0 fail** |
+| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1), workflow-audit (29) | `npm test` | **167 pass, 0 fail** |
+| Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
+| Browser E2E (Playwright, real Chromium), previous run | `npm run e2e` | **74 pass, 0 fail** previously; not rerun after the workflow audit |
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
