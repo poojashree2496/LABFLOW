@@ -6,6 +6,7 @@
 @import "./themes/cybercore.css";
 @import "./themes/maximal-library.css";
 @import "./themes/scrapbook.css";
+@import "./themes/post-internet.css";
 
 @tailwind base;
 @tailwind components;

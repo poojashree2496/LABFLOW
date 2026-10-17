@@ -76,6 +76,11 @@ LF.SKINS = {
         svg('sb-heart', '0 0 30 28', ['M15 26 C 2 16, 0 8, 6 4 C 11 1, 15 6, 15 9 C 15 6, 19 1, 24 4 C 30 8, 28 16, 15 26 Z']));
     },
     foot() { return h('footer', { class: 'skin-foot' }, h('span', null, 'kept by hand at the Karunya CSE labs'), h('span', { 'aria-hidden': 'true' }, '♡')); }
+  },
+  'post-internet': {
+    label: 'Post-internet', layout: 'sidebar', color: '#050505',
+    fonts: FONTS + 'Anton&family=Space+Mono:wght@400;700&family=Pixelify+Sans:wght@400;700',
+    foot() { const t = 'LABFLOW ✦ KARUNYA CSE LABS ✦ EVERY LAB SESSION, ACCOUNTED FOR ✦ SCAN IN ✦ SCAN OUT ✦ '; return h('footer', { class: 'skin-foot', 'aria-hidden': 'true' }, h('span', null, t + t)); }
   }
 };
 const DEFAULT = 'karunya';
