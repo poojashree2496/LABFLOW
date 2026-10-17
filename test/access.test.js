@@ -137,6 +137,7 @@ test('owner-only setup wrappers refuse web callers', () => {
   w.e.state.activeUser = 'student1@karunya.edu';
   assert.throws(() => w.e.run('setupSelfTest()'), /Owner only/);
   assert.throws(() => w.e.run('setupInstallTriggers()'), /Owner only/);
+  assert.throws(() => w.e.run('setupBenchmarkScans(5)'), /Owner only/);
   w.e.state.activeUser = w.e.state.effectiveUser = 'owner@karunya.edu';
   assert.doesNotThrow(() => w.e.run('ownerOnly_()'));
 });
@@ -155,4 +156,15 @@ test('rate limit: a route with a small budget returns RATE_LIMITED after it is s
   assert.equal(codes.indexOf('RATE_LIMITED'), 10, JSON.stringify(codes));
   // a different caller has their own budget
   assert.notEqual(w.call('rl2@karunya.edu', 'onboard', {}).error.code, 'RATE_LIMITED');
+});
+
+test('a pending student profile is verified by staff or admin only, and the action is audited', () => {
+  const w = world({ students: 1 });
+  const p = w.ok('walkin@karunya.edu', 'onboard', { rollNo: 'W001', name: 'Walk In', consent: true, mobile: '9876500000' }).student;
+  assert.equal(p.status, 'pending');
+  assert.equal(w.err(w.students[0].email, 'students.verify', { studentId: p.studentId, approve: true }).code, 'FORBIDDEN');
+  assert.equal(w.err(w.faculty, 'students.verify', { studentId: p.studentId, approve: true }).code, 'FORBIDDEN');
+  w.ok(w.admin, 'students.verify', { studentId: p.studentId, approve: true });
+  assert.equal(w.eval(`Db.get('StudentProfiles', ${JSON.stringify(p.studentId)}).status`), 'verified');
+  assert.ok(w.eval("Db.readAll('AuditEvents')").some((a) => a.action === 'student.verify' && a.entityId === p.studentId && a.actor === w.admin));
 });

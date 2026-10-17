@@ -276,3 +276,4 @@ function setupInstallTriggers() { ownerOnly_(); return Triggers.install(); }
 function setupBootstrapAdmin(email) { ownerOnly_(); return Setup.setBootstrapAdmin(email); }
 function setupGoogleSignIn(clientId) { ownerOnly_(); return Setup.setGoogleSignIn(clientId); }
 function setupAppUrl(url) { ownerOnly_(); return Setup.setAppUrl(url); }
+function setupBenchmarkScans(students) { ownerOnly_(); return Setup.benchmarkScans(students); }
