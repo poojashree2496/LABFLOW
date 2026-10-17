@@ -6,9 +6,10 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-17)
 
-- Automated tests at last update: **94 backend tests pass**, **35 browser checks pass** (real Chromium against the real server code, on fakes). Lint passes.
-- Code is in `poojashree2496/LABFLOW` on `main`, up to the first release. Later doc-only commits (this file, tasks.md) are local until pushed.
+- Automated tests at last update: **137 backend tests pass**, **27 of 27 scenarios pass**, **74 browser checks pass** (real Chromium against the real server code, on fakes, including every theme on every role). Lint passes.
+- Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
+- The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
 
 ## Deployment results
 
@@ -21,50 +22,70 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 ## What is built
 
 **Foundation**
-- Sheets data layer: schema creation, header-mismatch refusal, text-format columns, locks, idempotency keys
-- Settings with validated ranges
+- Sheets data layer: schema creation, header-mismatch refusal, text-format columns, locks, idempotency keys, additive schema migration
+- Settings stored in PropertiesService with validated ranges
 - Hash-chained audit log with checkpoints (sheet, script property, emailed anchors)
 - Single `rpc` gateway: role check, rate limit, payload size limit, error shapes
 
 **Auth and roles**
 - Fail-closed identity; both Karunya domains accepted in code
 - Student, faculty, staff, admin, kiosk roles enforced on the server
+- Privacy notice on first login (DPDP), mobile number, roll number taken from the email and locked
+- Student verification by staff or admin; in-person approval for any second or replacement device
 
-**Attendance**
-- Device-bound ECDSA registration (real WebCrypto in browser, P-256 verified on server)
-- Reverse QR: challenge, signature, HMAC token, expiry, single use, replay refusal, concurrent duplicates
-- Kiosk scanning (USB scanner, camera, paste box)
-- Rescans, spot checks, exit scans, "exit not scanned" handling
-- Corrections, voids, admin approval of old corrections
-- In-person approval for any second or replacement device
-- Live roster; student history including open sessions
+**Check-in, both versions from the SRS**
+- Version A (the specification's flow): the lab kiosk shows a QR that rotates every 5-10 s; the student's phone camera opens the app with the code; the code is checked the moment the page opens and the student gets a 2-minute pass; one GPS reading is checked against the lab geofence with the reported accuracy allowed for. Coordinates are never stored (FR-7 to FR-17, FR-31).
+- Version B: device-bound ECDSA key (WebCrypto in the browser, P-256 verified on the server); the phone re-signs a server nonce every 3 s; the QR is a link that the teacher's, lab staff's, class rep's or coordinator's phone opens, or the kiosk scanner reads (USB scanner, camera, paste box).
+- Check-in mode per lab (A, B or both), with a default in Settings.
+- Both modes run as traced verification pipelines (ordered named steps; the replay check and the write run inside the lock). Expiry, single use, replay refusal, concurrent duplicates.
+- Rescans, spot checks, exit scans, "exit not scanned" handling; corrections, voids, admin approval of old corrections.
+- Entry reasons with timetable prefill. Self-work sessions behind workstation bookings. Research visits open on arrival. Timetabled classes open by themselves.
+- Flags for review: impossible GPS accuracy, identical readings, impossible travel between labs, replayed or stale codes, two students on one phone, desktop device registration, frequent manual check-ins, repeated missing exits.
+- Live roster and live occupancy on every dashboard; student history including open sessions.
+
+**People and events**
+- Class representatives: session operator, scan classmates (session-only, roster-only, never themselves, tagged).
+- Events: registration list or open to all, lunch break excluded from hours, capacity warning, coordinator rights that expire, guests.
 
 **Sessions and timetable**
 - Sessions across labs, open/close/cancel, auto-close job
 - Timetable with faculty and lab conflict detection and admin override
-- Labs, courses, rosters, faculty-course mapping, research visit approval
+- Labs (with geofence and lab hours, overstay alerts at closing), courses, rosters, faculty-course mapping
 
 **Inventory and bookings**
 - Assets, categories, kits, CSV import, condition checks, history
 - Issue/return with idempotency, reservations, overdue handling, reconciliation
-- Advance bookings with capacity check and staff approval
+- Equipment requests need an active check-in (FR-21) and are filled on the issue screen; students see availability without checking in
+- Advance bookings with capacity check and staff approval; workstation no-show released after 15 minutes, used slots counted
 
 **Reports and jobs**
-- Daily, monthly, student and faculty reports as CSV and PDF, formula-injection safe
-- Four time-driven jobs and a daily email digest
+- Evening per-lab digest with PDF to lab incharges, monthly audit on the 1st to the HOD, custom range, session log, ERP export with fixed columns, PDF from a Docs template; CSV formula-injection safe
+- Four time-driven jobs; admin quota-usage panel
 
 **UI**
-- Student, faculty, staff, admin and kiosk screens; light/dark; no horizontal scroll at 390 px
-- Loading, empty and error states; working search and filters
+- Screens for every role, including the kiosk display / scanner / split view, the phone scanner with photo, flags review, events, class reps and lab geofence editing. Light/dark; no horizontal scroll at 390 px; loading, empty and error states.
+- Ten site themes, chosen by the administrator in Settings > Appearance and applied to every user, the kiosks and the sign-in screen. Each one changes the layout as well as the look: Karunya (the default), neo-brutalism, pixel art, wabi-sabi, cybercore, maximal library, scrapbook, post-internet, luxury type and bohemian. Only the active theme's fonts load. No theme may restyle a QR code or the camera preview.
+
+**Hosted app**
+- Google sign-in, signed LABFLOW sessions and a JSON API to the Apps Script backend, served as an installable app from Vercel.
+
+**Test Lab (`npm run dev`, then /lab; local only)**
+- Seeded department world and a simulated clock; trigger jobs on demand.
+- Pipeline fault injection with live step traces.
+- 27 scripted scenarios: the class rush and every SRS 15.4 attack.
+- Stage with the kiosk and two phones side by side, a QR relay and simulated GPS.
+- A site-theme switcher with a live preview as any role, and data/mail/audit browsers.
 
 **Docs**
-- README, SECURITY, TEST_PLAN, docs/tasks.md, docs/progress.md
+- README, SECURITY, TEST_PLAN, docs/tasks.md, docs/progress.md, the SRS PDF
 
 ## Log
 
 | Date | What changed | What ran |
 |---|---|---|
-| 2026-10-17 | Split tracking into `docs/tasks.md` (to do) and `docs/progress.md` (done); removed root `PROGRESS.md` | docs only, no code change |
-| 2026-10-14 | Added rate-limit test (94 backend tests total) | `npm run check`: 94 pass |
-| 2026-10-14 | Frontend for all roles, kiosk, dev server, browser E2E, README/SECURITY/TEST_PLAN; device-swap approval; student history for open sessions; faculty roster label fix | `npm run check` 94 pass; `npm run e2e` 35 pass |
+| 2026-10-17 | Verify button on the admin Students table; `setupBenchmarkScans` editor wrapper; merged root `PROGRESS.md` into these two files and corrected the counts; SRS PDF into `docs/` | `npm run check`: 137 pass; `npm run e2e`: 74 pass |
+| 2026-10-17 | Split tracking into `docs/tasks.md` (to do) and `docs/progress.md` (done) | docs only, no code change |
+| 2026-10-17 | Ten site themes; every theme checked in the browser; Test Lab theme switcher | `npm run check`: 136 pass; `npm run e2e`: 74 pass |
+| 2026-10-16 | Version A kiosk QR + GPS check-in, both modes as pipelines, events, class reps, flags, equipment requests, SRS reports, Test Lab, hosted app on Vercel | `npm run check`, `npm run sim`: 27 of 27, `npm run e2e` |
+| 2026-10-14 | Frontend for all roles, kiosk, dev server, browser E2E, README/SECURITY/TEST_PLAN; device-swap approval; student history for open sessions | `npm run check`: 94 pass; `npm run e2e`: 35 pass |
 | 2026-10-14 | Backend: data layer, auth, attendance, sessions, inventory, bookings, reports, triggers | backend tests |
