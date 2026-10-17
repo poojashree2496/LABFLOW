@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-17)
 
-- Automated tests at last update: **137 backend tests pass**, **27 of 27 scenarios pass**, **74 browser checks pass** (real Chromium against the real server code, on fakes, including every theme on every role). Lint passes.
+- Automated tests: **138 backend tests pass**, **27 of 27 scenarios pass**, **74 browser checks pass** (real Chromium against the real server code, on fakes, including every theme on every role). Lint passes.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -83,6 +83,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-17 | Expanded the local Test Lab seed with live attendance, a pending student and research request, equipment request, flagged check-in, spot check, current/overdue loans, booking states and workshop registrations; made historical GPS sample points deterministic; documented the demo and added a seed regression test | `npm run check`: lint passed; 138 tests passed |
 | 2026-10-17 | Verify button on the admin Students table; `setupBenchmarkScans` editor wrapper; merged root `PROGRESS.md` into these two files and corrected the counts; SRS PDF into `docs/` | `npm run check`: 137 pass; `npm run e2e`: 74 pass |
 | 2026-10-17 | Split tracking into `docs/tasks.md` (to do) and `docs/progress.md` (done) | docs only, no code change |
 | 2026-10-17 | Ten site themes; every theme checked in the browser; Test Lab theme switcher | `npm run check`: 136 pass; `npm run e2e`: 74 pass |

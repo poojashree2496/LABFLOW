@@ -212,6 +212,6 @@ if (require.main === module) {
   start(port, { preset }).then(({ lab }) => {
     console.log('LABFLOW Test Lab   http://localhost:' + port + '/lab');
     console.log('The app            http://localhost:' + port + '/?as=student1@karunya.edu   (also admin@, staff@, faculty@, kiosk1@karunya.edu)');
-    console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 09:54 IST.');
+    console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 10:06 IST.');
   });
 }
