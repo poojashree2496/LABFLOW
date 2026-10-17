@@ -53,6 +53,15 @@ LF.SKINS = {
         cell('cc-red', 'Karunya / CSE', h('b', null, now.toISOString().slice(11, 16))), cell('cc-noise', ''), cell('cc-checker', 'labs / live'));
     },
     foot() { return h('footer', { class: 'skin-foot' }, h('span', null, 'Labflow / Karunya CSE laboratories / ' + new Date().getFullYear()), h('b', null, 'Every lab session, accounted for')); }
+  },
+  'maximal-library': {
+    label: 'Maximal library', layout: 'sidebar', color: '#ffffff',
+    fonts: FONTS + 'Inter+Tight:wght@400;500;600;700&family=Archivo+Black&family=Anton',
+    decor() {
+      return h('div', { class: 'skin-decor', 'aria-hidden': 'true' }, h('div', { class: 'ml-blur' }, h('b', null, 'LAB'), h('b', null, 'FLOW'), h('i'), h('i')),
+        h('div', { class: 'ml-fan' }, h('i'), h('i'), h('i'), h('i', null, 'Lab'), h('i'), h('i')));
+    },
+    foot() { return h('footer', { class: 'skin-foot' }, ['#111', '#c9cbcd', '#f5e43a', '#f2479a', '#4be37a'].map((c) => h('i', { 'aria-hidden': 'true', style: { background: c } })), h('span', null, 'Labflow · Karunya CSE laboratories')); }
   }
 };
 const DEFAULT = 'karunya';

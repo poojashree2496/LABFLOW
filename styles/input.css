@@ -4,6 +4,7 @@
 @import "./themes/pixel-art.css";
 @import "./themes/wabi-sabi.css";
 @import "./themes/cybercore.css";
+@import "./themes/maximal-library.css";
 
 @tailwind base;
 @tailwind components;
