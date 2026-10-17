@@ -3,6 +3,7 @@
 @import "./themes/neo-brutalism.css";
 @import "./themes/pixel-art.css";
 @import "./themes/wabi-sabi.css";
+@import "./themes/cybercore.css";
 
 @tailwind base;
 @tailwind components;
