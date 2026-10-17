@@ -185,6 +185,32 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     await H.getByRole('button', { name: /^Account:/ }).click(); await H.getByRole('button', { name: 'Sign out' }).click();
     await H.waitForSelector('text=You are signed out.');
     check('hosted app signs out and forgets the session', await H.evaluate(() => !localStorage.getItem('lf-session')));
+
+    // ---------------- every site theme: each role renders without sideways scroll, and the kiosk QR is never restyled
+    const THEMES = w.eval('Cfg.SETTINGS.uiTheme.values'), TSHOTS = path.join(SHOTS, 'themes');
+    fs.mkdirSync(TSHOTS, { recursive: true });
+    const thd = await browser.newContext(desktop), thm = await browser.newContext(mobile);
+    for (const id of THEMES) {
+      w.call('admin@karunya.edu', 'settings.set', { values: { uiTheme: id } });
+      const bad = [];
+      for (const [who, ctx, name] of [['student1@karunya.edu', thm, 'student'], ['faculty@karunya.edu', thd, 'faculty'], ['admin@karunya.edu', thd, 'admin'], ['kiosk1@karunya.edu', thd, 'kiosk'], [null, thd, 'sign-in']]) {
+        const p = who ? await page(ctx, who, id + '/' + name) : await ctx.newPage();
+        if (!who) { p.on('pageerror', (e) => errors.push(id + '/sign-in pageerror: ' + e.message)); await p.goto(base + '/app'); }
+        await p.waitForFunction((t) => document.documentElement.getAttribute('data-skin') === t && document.querySelector(location.pathname === '/app' ? '.auth-wrap' : '#main, .kiosk-shell'), id);
+        await p.waitForTimeout(700);
+        const vw = await p.evaluate(() => innerWidth), sw = await p.evaluate(() => document.documentElement.scrollWidth);
+        if (sw > vw + 1) bad.push(name + ' scrolls sideways (' + sw + ' > ' + vw + ')');
+        await p.screenshot({ path: path.join(TSHOTS, id + '-' + name + '.png') });
+        if (name === 'kiosk') {
+          await p.waitForSelector('.qr-frame svg');
+          const qr = await p.evaluate(() => { const out = []; for (let el = document.querySelector('.qr-frame svg'); el && el !== document.documentElement; el = el.parentElement) { const cs = getComputedStyle(el); if (cs.transform !== 'none' || cs.filter !== 'none' || cs.mixBlendMode !== 'normal' || cs.opacity !== '1' || cs.clipPath !== 'none') out.push(el.tagName + '.' + el.className.baseVal + el.className); } return out; });
+          check(id + ': the kiosk QR and everything above it carry no transform, filter, blend, clip or fade', qr.length === 0, qr.join(', '));
+        }
+        await p.close();
+      }
+      check(id + ': student (phone), faculty, admin, kiosk and sign-in render without sideways scroll', bad.length === 0, bad.join('; '));
+    }
+    w.call('admin@karunya.edu', 'settings.set', { values: { uiTheme: 'karunya' } });
   } catch (e) {
     check('e2e flow completed without exception', false, e.message.split('\n')[0]);
     console.error(e);

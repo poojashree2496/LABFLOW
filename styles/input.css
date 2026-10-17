@@ -243,4 +243,9 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   .feed { display: grid; gap: 6px; } .feed .row { padding: 6px 10px; }
   .notice { border-left: 4px solid var(--gold); padding: 10px 14px; background: var(--card); border-radius: var(--r-ctl); border-top: 1px solid var(--hair); border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
 }
+/* Scan surfaces stay scannable in every theme: no theme may rotate, clip, filter, blend or fade a QR code, the camera
+   preview or anything that contains them. */
+:is(.qr-frame, .scanbox), :is(.card, .result, .modal, .notice, .occ-card, .row, .kiosk-flash, .kiosk-grid, .kiosk-shell, main, .main):has(.qr-frame, .scanbox) {
+  transform: none !important; clip-path: none !important; filter: none !important; mix-blend-mode: normal !important; opacity: 1 !important; }
+.qr-frame svg, .qr-frame img { filter: none !important; mix-blend-mode: normal !important; }
 @media print { .sidebar, .topbar, .bottomnav, .toasts, .no-print { display: none !important; } .shell { display: block; } .main { padding: 0; } }

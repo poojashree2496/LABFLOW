@@ -10,8 +10,8 @@ Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mod
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 94 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 35 browser checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 136 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 74 browser checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
 Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
@@ -66,7 +66,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 94 backend tests
+npm run check      # syntax lint of every .gs/.html script + 136 backend tests
 npm run dev        # http://localhost:8787/?as=student1@karunya.edu   (also admin@, staff@, faculty@, kiosk1@karunya.edu)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 ```

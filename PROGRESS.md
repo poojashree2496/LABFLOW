@@ -1,6 +1,6 @@
 # Progress
 
-Status as of 16 Oct 2026. Implementation deadline: 23 Oct 2026, 5:00 PM (aim to be demo-ready by 21 Oct).
+Status as of 17 Oct 2026. Implementation deadline: 23 Oct 2026, 5:00 PM (aim to be demo-ready by 21 Oct).
 
 ## Built
 
@@ -25,7 +25,7 @@ Status as of 16 Oct 2026. Implementation deadline: 23 Oct 2026, 5:00 PM (aim to 
 - Admin quota-usage panel. Settings stored in PropertiesService. Additive schema migration.
 
 **UI**
-- Karunya blue and gold theme, with a gold rule under every header.
+- Ten site themes, chosen by the administrator in Settings > Appearance and applied to every user, the kiosks and the sign-in screen. Each one changes the layout as well as the look: Karunya (the default: the university portal look with the Karunya logo, a profile header and dashed stat boxes), neo-brutalism, pixel art, wabi-sabi, cybercore, maximal library, scrapbook, post-internet, luxury type and bohemian. Only the active theme's fonts load. No theme may restyle a QR code or the camera preview.
 - Screens for every role, including the kiosk display / scanner / split view, the phone scanner with photo, flags review, events, class reps and lab geofence editing.
 
 **Test Lab (`npm run dev`, then /lab; local only)**
@@ -36,18 +36,21 @@ Status as of 16 Oct 2026. Implementation deadline: 23 Oct 2026, 5:00 PM (aim to 
 - Stage with the kiosk and two phones side by side, a QR relay and simulated GPS.
 - Live theme editor with presets, and data/mail/audit browsers.
 
+**Hosted app**
+- Google sign-in, signed LABFLOW sessions and a JSON API to the Apps Script backend, served as an installable app from Vercel.
+
 **Checks**
-- 127 backend tests pass.
+- 136 backend tests pass.
 - 27 of 27 scenarios pass.
-- Browser E2E: 17 of 18 checks pass.
+- Browser E2E: 74 of 74 checks pass, including every theme on every role and a check that no theme touches the kiosk QR.
 
 ## Left
 
-- [ ] E2E: move the equipment-request step before the clock jumps to 14:00 (the 10:00 class auto-closes, so the student is no longer inside). This is a test-ordering issue, not an app bug.
 - [ ] `docs/` folder: architecture, attendance (both modes and the pipeline), data model, deployment, testing and Test Lab, FR traceability matrix (FR-1 to FR-39 mapped to tests), the SRS PDF.
 - [ ] Rewrite README.md (screenshots from `.build/shots`, features, quick start, team) and refresh SECURITY.md and TEST_PLAN.md for both modes.
 - [ ] Copy the new screenshots into `docs/screens/`.
 - [ ] Add a `.gitattributes` (LF line endings).
-- [ ] Force-push the rewritten history to origin/main once the above is committed.
+- [ ] Docs: a page on the site themes (how to pick one, what each changes, and how to add one: a stylesheet in `styles/themes/`, an entry in `src/ScriptsThemes.html`, the id in the `uiTheme` setting).
+- [ ] Theme CSS ships for all ten themes on every page load (Styles.html is about 270 KB). Split it per theme if load time on the campus network is a problem.
 - [ ] Deployment checks that need the real Workspace (TEST_PLAN section B): identity for both domains first, then GPS and camera inside the HtmlService iframe, key persistence on iPhone, `Setup.benchmarkScans()` timings, trigger runs, quota use.
 - [ ] Measured cost: about 38 sheet operations per kiosk check-in and 20 per device-QR scan. Measure on the real runtime with `Setup.benchmarkScans()` and trim the locked section if the 9 AM rush is slow.
