@@ -7,6 +7,7 @@
 @import "./themes/maximal-library.css";
 @import "./themes/scrapbook.css";
 @import "./themes/post-internet.css";
+@import "./themes/luxury-type.css";
 
 @tailwind base;
 @tailwind components;

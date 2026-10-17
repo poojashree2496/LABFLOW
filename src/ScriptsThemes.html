@@ -81,6 +81,14 @@ LF.SKINS = {
     label: 'Post-internet', layout: 'sidebar', color: '#050505',
     fonts: FONTS + 'Anton&family=Space+Mono:wght@400;700&family=Pixelify+Sans:wght@400;700',
     foot() { const t = 'LABFLOW ✦ KARUNYA CSE LABS ✦ EVERY LAB SESSION, ACCOUNTED FOR ✦ SCAN IN ✦ SCAN OUT ✦ '; return h('footer', { class: 'skin-foot', 'aria-hidden': 'true' }, h('span', null, t + t)); }
+  },
+  'luxury-type': {
+    label: 'Luxury type', layout: 'topnav', color: '#eceef0',
+    fonts: FONTS + 'Instrument+Serif:ital@0;1&family=Monsieur+La+Doulaise',
+    foot() {
+      return h('footer', { class: 'skin-foot' }, h('div', null, h('span', { class: 'lx-caps' }, 'Every '), h('span', { class: 'lx-scr' }, 'lab'), h('span', { class: 'lx-caps' }, ' session, '), h('span', { class: 'lx-scr' }, 'accounted'), h('span', { class: 'lx-caps' }, ' for.')),
+        h('small', null, 'Labflow · Karunya CSE laboratories'));
+    }
   }
 };
 const DEFAULT = 'karunya';

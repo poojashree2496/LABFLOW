@@ -412,7 +412,7 @@ function renderShell() {
   const me = LF.me, roles = ROLE_ORDER.filter((r) => me.roles.includes(r)), skin = LF.skin();
   const list = visible(LF.role), home = list[0] && LF.current && LF.current.id === list[0].id;
   const navBtn = (v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => LF.go(v.id) }, icon(v.icon || 'list'), h('span', { class: 'nav-label' }, v.label), h('span', { class: 'nav-chev', 'aria-hidden': 'true' }, icon('chevron')));
-  const main = h('main', { id: 'main', class: 'main', tabindex: '-1', 'data-page': ROLE_LABEL[LF.role] + ' / ' + (LF.current ? LF.current.label : '') });
+  const main = h('main', { id: 'main', class: 'main', tabindex: '-1', 'data-page': ROLE_LABEL[LF.role] + ' / ' + (LF.current ? LF.current.label : ''), 'data-role': ROLE_LABEL[LF.role] });
   const bell = h('button', { class: 'btn btn-ghost', 'aria-label': 'Notifications', onclick: openNotifications }, icon('bell'), h('span', { id: 'unread', class: 'badge gold', hidden: unreadCount === 0 }, String(unreadCount)));
   const roleSel = roles.length > 1 ? h('select', { class: 'input role-select', 'aria-label': 'Switch role', onchange: (e) => LF.go(undefined, e.target.value) }, roles.map((r) => h('option', { value: r, selected: r === LF.role }, ROLE_LABEL[r]))) : badge(ROLE_LABEL[LF.role]);
   const shell = h('div', { class: 'shell' + (LF.pref('lf-collapsed') === '1' ? ' collapsed' : ''), 'data-layout': skin.layout });

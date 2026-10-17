@@ -140,7 +140,7 @@ var Cfg = (function () {
     // audit
     auditCheckpointEvery: { group: 'Audit', type: 'int', def: 50, min: 5, max: 1000, desc: 'Store an audit checkpoint every N audit events.' },
     // appearance
-    uiTheme: { group: 'Appearance', type: 'enum', def: 'karunya', values: ['karunya', 'neo-brutalism', 'pixel-art', 'wabi-sabi', 'cybercore', 'maximal-library', 'scrapbook', 'post-internet'], desc: 'The design theme for every user, the kiosks and the sign-in screen. Each theme changes the layout as well as the look.' }
+    uiTheme: { group: 'Appearance', type: 'enum', def: 'karunya', values: ['karunya', 'neo-brutalism', 'pixel-art', 'wabi-sabi', 'cybercore', 'maximal-library', 'scrapbook', 'post-internet', 'luxury-type'], desc: 'The design theme for every user, the kiosks and the sign-in screen. Each theme changes the layout as well as the look.' }
   };
 
   var LAB_TYPES = ['iot', 'computing', 'gpu', 'research', 'other'];
