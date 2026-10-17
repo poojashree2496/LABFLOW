@@ -89,6 +89,16 @@ LF.SKINS = {
       return h('footer', { class: 'skin-foot' }, h('div', null, h('span', { class: 'lx-caps' }, 'Every '), h('span', { class: 'lx-scr' }, 'lab'), h('span', { class: 'lx-caps' }, ' session, '), h('span', { class: 'lx-scr' }, 'accounted'), h('span', { class: 'lx-caps' }, ' for.')),
         h('small', null, 'Labflow · Karunya CSE laboratories'));
     }
+  },
+  bohemian: {
+    label: 'Bohemian', layout: 'topnav', color: '#171a14',
+    fonts: FONTS + 'Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400',
+    hero(me, role) {
+      const d = new Date(LF.now() + 330 * 60000).toISOString();
+      return h('section', { class: 'skin-hero', 'aria-hidden': 'true' }, h('div', { class: 'bo-ghost' }, 'Every lab, accounted for'),
+        h('div', { class: 'bo-plate' }, h('span', null, d.slice(11, 16)), h('div', null, h('b', null, 'Labflow'), h('small', null, 'Karunya CSE laboratories · ' + role)), h('span', null, d.slice(8, 10) + '/' + d.slice(5, 7))));
+    },
+    foot() { return h('footer', { class: 'skin-foot' }, h('span', null, '✳ Labflow'), h('small', null, 'Karunya CSE laboratories · ' + new Date().getFullYear())); }
   }
 };
 const DEFAULT = 'karunya';
