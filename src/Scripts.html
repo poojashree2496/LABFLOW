@@ -405,7 +405,7 @@ LF.go = (id, role) => {
 
 let unreadCount = 0;
 /* The shell is one DOM for every theme: the sidebar nav, a stage (top bar, an optional theme hero, the page, an
-   optional theme footer) and the mobile bottom nav. The site theme (ScriptsThemes.html) sets data-layout and the CSS
+   optional theme footer), the mobile bottom nav and an optional decoration layer. The site theme (ScriptsThemes.html) sets data-layout and the CSS
    rearranges it; a theme may also fill the hero and the footer. */
 function renderShell() {
   runCleanups();
@@ -426,7 +426,8 @@ function renderShell() {
   const more = () => { const m = modal('Menu', h('div', { class: 'menu-list' }, list.map((v) => h('button', { class: 'nav-item', 'aria-current': LF.current && LF.current.id === v.id ? 'page' : null, onclick: () => { m.close(); LF.go(v.id); } }, icon(v.icon || 'list'), h('span', { class: 'nav-label' }, v.label))))); };
   shell.append(h('nav', { class: 'sidebar', 'aria-label': 'Main' }, LF.brand(), h('div', { class: 'nav-list' }, list.map(navBtn))),
     h('div', { class: 'stage' }, top, home && skin.hero ? skin.hero(me, LF.role) : null, main, skin.foot ? skin.foot() : null),
-    h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, mobileNav.map((v) => v.id === '__more' ? h('button', { class: 'nav-item', onclick: more }, icon('list'), h('span', { class: 'nav-label' }, 'More')) : navBtn(v))));
+    h('nav', { class: 'bottomnav', 'aria-label': 'Main (mobile)' }, mobileNav.map((v) => v.id === '__more' ? h('button', { class: 'nav-item', onclick: more }, icon('list'), h('span', { class: 'nav-label' }, 'More')) : navBtn(v))),
+    skin.decor ? skin.decor() : null);
   clear(appRoot()).appendChild(shell);
   const cleanup = LF.current.render(main);
   if (typeof cleanup === 'function') LF.onLeave(cleanup);
@@ -454,7 +455,8 @@ async function openNotifications() {
 
 /* ------------------------------------------------------------------ gate screens */
 function authShell(title, lead, content) {
-  return h('div', { class: 'auth-wrap' },
+  const skin = LF.skin();
+  return h('div', { class: 'auth-wrap' }, skin.decor ? skin.decor() : null,
     h('section', { class: 'auth-art' }, h('div', null, h('div', { class: 'wordmark' }, 'Labflow'), h('div', { class: 'wordmark-sub' }, 'Karunya Institute of Technology and Sciences · CSE')),
       h('div', null, h('h1', { class: 't-h1' }, 'Every lab session, accounted for.'), h('span', { class: 'gold-rule' }), h('p', null, 'Attendance, live occupancy, equipment and bookings for the CSE laboratories.')), h('div', { class: 'hint' }, 'Sign in with your @karunya.edu or @karunya.edu.in Google account.')),
     h('main', { id: 'main', class: 'auth-main' }, h('div', { class: 'auth-logo', role: 'img', 'aria-label': 'Karunya' }), h('h2', { class: 't-h1' }, title), lead ? h('p', { class: 't-muted' }, lead) : null, content));

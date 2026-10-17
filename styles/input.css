@@ -2,6 +2,7 @@
 @import "./themes/karunya.css";
 @import "./themes/neo-brutalism.css";
 @import "./themes/pixel-art.css";
+@import "./themes/wabi-sabi.css";
 
 @tailwind base;
 @tailwind components;
@@ -208,7 +209,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   .bad-big { width: 120px; height: 120px; display: grid; place-items: center; border-radius: 50%; background: var(--bad); color: #fff; border: 4px solid var(--bad-soft); } .bad-big .icon { width: 60px; height: 60px; stroke-width: 3; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .split { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
-  .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; }
   .photo { width: 120px; height: 120px; object-fit: cover; border-radius: var(--r-card); border: 1px solid var(--line); background: var(--fill); }
   .scanbox { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: var(--r-card); border: 1px solid var(--line); object-fit: cover; }
 
