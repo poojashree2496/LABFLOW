@@ -17,17 +17,20 @@ async function loadMeta() {
 /** Searchable student picker. onPick(student). */
 function studentPicker(label, onPick, opts) {
   opts = opts || {};
+  let searchVersion = 0;
   const out = h('div', { class: 'hint', 'aria-live': 'polite' }), chosen = h('div'), list = h('div', { style: { display: 'grid', gap: '6px' } });
   const input = h('input', { class: 'input', type: 'search', 'aria-label': label, placeholder: 'Roll number or name', oninput: LF.util.debounce(async (e) => {
-    const q = e.target.value.trim(); clear(list); if (q.length < 2) { out.textContent = 'Type at least 2 characters.'; return; }
+    const version = searchVersion, q = e.target.value.trim(); clear(list); if (q.length < 2) { out.textContent = 'Type at least 2 characters.'; return; }
     out.textContent = 'Searching...';
     try {
       const r = await api('students.list', { q, limit: 8, status: opts.status });
+      if (version !== searchVersion) return;
       out.textContent = r.students.length ? '' : 'No student found.';
       r.students.forEach((s) => list.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { clear(list); out.textContent = ''; input.value = ''; setChosen(s); onPick(s); } }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), ui.status(s.status))));
-    } catch (x) { out.textContent = LF.errMsg(x); }
+    } catch (x) { if (version === searchVersion) out.textContent = LF.errMsg(x); }
   }, 250) });
-  function setChosen(s) { clear(chosen).append(h('div', { class: 'row' }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), h('span', { class: 'toolbar' }, ui.status(s.status), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { clear(chosen); onPick(null); } }, 'Change')))); }
+  input.addEventListener('input', () => { searchVersion++; clear(list); });
+  function setChosen(s) { searchVersion++; clear(list); out.textContent = ''; clear(chosen).append(h('div', { class: 'row' }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), h('span', { class: 'toolbar' }, ui.status(s.status), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { searchVersion++; clear(chosen); onPick(null); } }, 'Change')))); }
   return { el: h('div', { class: 'field' }, h('label', null, label), input, out, list, chosen), set: setChosen };
 }
 
@@ -111,27 +114,33 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const notes = ui.field({ name: 'notes', label: 'Notes', maxlength: 300 });
     const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
     let kitId = '', kitPicks = [], reservationId = '', requestId = request ? request.requestId : '';
+    let whoVersion = 0, bookingVersion = 0, kitVersion = 0, componentVersion = 0;
+    const requestCard = request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null;
+    function clearRequest() { requestId = ''; if (requestCard) requestCard.hidden = true; }
     if (request) lab.input.value = request.labId;
     function drawWho() {
+      const version = ++whoVersion; bookingVersion++;
       clear(who); borrower = null; group = null; reservationId = '';
       if (kind.get() === 'student') {
-        const picker = studentPicker('Student', (s) => { borrower = s; loadBookings(); }, { status: 'verified' });
+        const picker = studentPicker('Student', (s) => { borrower = s; if (requestId && (!s || s.studentId !== request.studentId)) clearRequest(); loadBookings(); }, { status: 'verified' });
         const idBtn = ui.button('Identify by the student\'s QR', { size: 'sm', icon: 'qr', onClick: () => {
-          let m; const sc = ui.scanner({ title: 'Student QR', onCode: async (code) => { try { const r = await api('student.identify', { qr: code }); m.close(); borrower = r.student; picker.set(r.student); loadBookings(); LF.toast('Identified ' + r.student.name, 'good'); } catch (e) { LF.fail(e); } } });
+          let m; const sc = ui.scanner({ title: 'Student QR', onCode: async (code) => { try { const r = await api('student.identify', { qr: code }); if (version !== whoVersion) return; m.close(); borrower = r.student; if (requestId && r.student.studentId !== request.studentId) clearRequest(); picker.set(r.student); loadBookings(); LF.toast('Identified ' + r.student.name, 'good'); } catch (e) { LF.fail(e); } } });
           m = LF.modal('Identify the borrower', h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Ask the student to open their live QR. This ties the loan to the person holding the registered phone.'), sc.el), { onClose: () => sc.stop() }); sc.focus();
         } });
         who.append(picker.el, idBtn);
-        if (request && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
+        if (requestId && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
       }
-      else api('groups.list').then((r) => { const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
+      else api('groups.list').then((r) => { if (version !== whoVersion) return; const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
       clear(bookingBox);
     }
     async function loadBookings() {
+      const version = ++bookingVersion, selectedLab = lab.get(), selectedKind = kind.get();
       clear(bookingBox); reservationId = '';
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group; if (!id) return;
       try {
-        const r = await api('booking.list', { status: 'approved', labId: lab.get() });
-        const mine = r.reservations.filter((b) => b.requesterId === id && b.endAt > LF.now());
+        const r = await api('booking.list', { status: 'approved', labId: selectedLab });
+        if (version !== bookingVersion) return;
+        const mine = r.reservations.filter((b) => b.requesterType === selectedKind && b.requesterId === id && b.endAt > LF.now());
         if (!mine.length) return;
         const sel = ui.field({ name: 'rsv', label: 'Collect an advance booking (optional)', type: 'select', options: [{ value: '', label: 'No, issue directly' }].concat(mine.map((b) => ({ value: b.reservationId, label: b.resourceName + ' × ' + b.quantity + ' · ' + fmt.dt(b.startAt) }))) });
         sel.input.addEventListener('change', () => { reservationId = sel.get(); });
@@ -139,14 +148,17 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       } catch (e) { /* optional */ }
     }
     async function drawKits() {
+      const version = ++kitVersion, selectedLab = lab.get(); componentVersion++;
       clear(kitBox); kitId = ''; kitPicks = [];
-      const r = await api('kits.list', { labId: lab.get() }), kits = r.kits.filter((k) => k.status === 'active'); if (!kits.length) return;
+      const r = await api('kits.list', { labId: selectedLab }), kits = r.kits.filter((k) => k.status === 'active'); if (version !== kitVersion || !kits.length) return;
       const sel = ui.field({ name: 'kit', label: 'Issue a kit (optional)', type: 'select', options: [{ value: '', label: 'No kit' }].concat(opt(kits, 'kitId', 'name')) });
       const comps = h('div', { style: { display: 'grid', gap: '8px' } });
       sel.input.addEventListener('change', async () => {
+        const componentLoad = ++componentVersion;
         kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId); if (!k) return;
         for (const c of k.components) {
-          const av = await api('assets.list', { labId: lab.get(), categoryId: c.categoryId, status: 'available', limit: 200 });
+          const av = await api('assets.list', { labId: selectedLab, categoryId: c.categoryId, status: 'available', limit: 200 });
+          if (version !== kitVersion || componentLoad !== componentVersion) return;
           const pick = ui.field({ name: 'c' + c.componentId, label: meta.catName(c.categoryId) + ' × ' + c.quantity, type: 'select', options: [{ value: '', label: 'Choose item' }].concat(av.assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
           pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.componentId !== c.componentId); if (pick.get()) kitPicks.push({ componentId: c.componentId, assetId: pick.get(), qty: c.quantity }); });
           comps.append(pick.el);
@@ -155,10 +167,12 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       kitBox.append(sel.el, comps);
     }
     function drawItems() {
+      let searchVersion = 0;
       clear(itemBox); const q = h('input', { class: 'input', type: 'search', placeholder: 'Scan tag or search equipment', 'aria-label': 'Search equipment to add', oninput: LF.util.debounce(async (e) => {
-        const v = e.target.value.trim(); clear(res); if (v.length < 2) return;
-        try { const r = await api('assets.list', { labId: lab.get(), q: v, status: 'available', limit: 8 }); r.assets.forEach((a) => res.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { addLine(a); e.target.value = ''; clear(res); } }, h('span', null, h('strong', null, a.name), a.assetTag ? ' · ' + a.assetTag : ''), h('span', { class: 'hint' }, a.trackingMode === 'quantity' ? a.quantityAvailable + ' available' : 'single item')))); if (!r.assets.length) res.append(h('div', { class: 'hint' }, 'Nothing available matches.')); } catch (x) { LF.fail(x); }
+        const version = searchVersion, selectedLab = lab.get(), v = e.target.value.trim(); clear(res); if (v.length < 2) return;
+        try { const r = await api('assets.list', { labId: selectedLab, q: v, status: 'available', limit: 8 }); if (version !== searchVersion || selectedLab !== lab.get() || !q.isConnected) return; r.assets.forEach((a) => res.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { addLine(a); searchVersion++; e.target.value = ''; clear(res); } }, h('span', null, h('strong', null, a.name), a.assetTag ? ' · ' + a.assetTag : ''), h('span', { class: 'hint' }, a.trackingMode === 'quantity' ? a.quantityAvailable + ' available' : 'single item')))); if (!r.assets.length) res.append(h('div', { class: 'hint' }, 'Nothing available matches.')); } catch (x) { if (version === searchVersion && q.isConnected) LF.fail(x); }
       }, 250) });
+      q.addEventListener('input', () => { searchVersion++; clear(res); });
       const res = h('div', { style: { display: 'grid', gap: '6px' } }); itemBox.append(h('div', { class: 'field' }, h('label', null, 'Add individual items'), q), res);
     }
     function addLine(a) { const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
@@ -166,20 +180,20 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       clear(cart); if (!lines.length) return;
       cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
     }
-    kind.input.addEventListener('change', drawWho);
-    lab.input.addEventListener('change', () => { lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
-    drawWho(); drawKits(); drawItems();
+    kind.input.addEventListener('change', () => { clearRequest(); drawWho(); });
+    lab.input.addEventListener('change', () => { clearRequest(); lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
+    drawWho(); drawKits(); drawItems(); loadBookings();
     const submit = ui.button('Issue items', { kind: 'primary', icon: 'check', onClick: async () => {
       msg.hidden = true; clear(result);
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
       if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
       try {
         const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
-        idem = LF.util.uuid(); lines = []; kitPicks = []; requestId = ''; drawCart(); drawKits();
+        idem = LF.util.uuid(); lines = []; kitPicks = []; clearRequest(); drawCart(); drawKits(); loadBookings();
         result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
     } });
-    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null, lab.el, kind.el, who, bookingBox, days.el, notes.el),
+    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, requestCard, lab.el, kind.el, who, bookingBox, days.el, notes.el),
       h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, msg, submit, result));
     return root;
   }

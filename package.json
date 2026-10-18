@@ -11,6 +11,7 @@
     "test": "node --test test/*.test.js",
     "sim": "node dev/scenarios.js",
     "e2e": "node test/e2e/ui.e2e.js",
+    "e2e:issue": "node test/e2e/issue.e2e.js",
     "dev": "node dev/server.js",
     "check": "npm run lint && npm test"
   },
