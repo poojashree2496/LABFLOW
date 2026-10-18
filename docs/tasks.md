@@ -20,7 +20,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 - [ ] Version A on a phone: GPS and camera inside the HtmlService iframe; the geofence check at the real lab door.
 - [ ] Device key survives closing the browser (Android Chrome and iPhone Safari).
 - [ ] Kiosk with a USB scanner; kiosk with camera mode in Chrome.
-- [ ] 30 students scanning within 2 minutes (latency, lock contention). Measured cost on fakes: about 38 sheet operations per kiosk check-in and 20 per device-QR scan. Time it by running `setupBenchmarkScans` from the editor (uses a throwaway spreadsheet) and trim the locked section if the 9 AM rush is slow.
+- [ ] 30 students scanning within 2 minutes (latency, lock contention). Re-measure after the workflow audit's additional authorization checks; earlier operation counts predate them. Run `setupBenchmarkScans` from the editor (uses a throwaway spreadsheet) and trim the locked section if the 9 AM rush is slow.
 - [ ] One day of email digests and one PDF report (quotas).
 - [ ] Audit anchor email arrives and is kept by someone other than the script owner.
 - [ ] Screen-reader pass (NVDA or VoiceOver) on the student and kiosk flows.
@@ -36,6 +36,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 
 ## 3. Build (after the demo)
 
+- [ ] Benchmark return recovery with a large AssetEvents ledger; consider indexing pending return plans to avoid scanning the complete ledger under the lock on each inventory mutation.
 - [ ] Theme CSS ships for all ten themes on every page load (Styles.html is about 270 KB). Split it per theme if load time on the campus network is a problem.
 - [ ] Frontend unit tests (the UI is covered only by the browser flow).
 - [ ] Run the browser flow in Safari and Firefox.

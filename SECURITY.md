@@ -11,6 +11,8 @@ Written to be read critically. Each section says what is enforced, what is only 
 - **Spreadsheet injection:** text columns are stored as plain text; values beginning with `=`, `+`, `-`, `@` are neutralised on CSV export. No data is written to the DOM with `innerHTML`.
 - **Concurrency:** state-changing operations run under `LockService`; loan/booking/attendance writes carry idempotency keys so retries do not duplicate.
 
+The [critical workflow audit](docs/workflow-audit.md) adds fresh student/account, scanner, lab and code-freshness checks inside the attendance write lock. Device rejection and revocation hold the lock across their state checks and updates. Equipment fulfilment is validated before writes, and interrupted returns persist a recovery plan before changing counters. These paths are tested with deterministic write failures and interleavings on fakes; real Workspace concurrency and throughput remain unverified.
+
 ## 2. Attendance: device-bound reverse QR
 
 Design: the phone proves possession of a registered key by signing a fresh server challenge; the kiosk only relays. The QR is `token~signature`, the token is an HMAC-protected, stateless blob bound to student, credential, session, lab and challenge.

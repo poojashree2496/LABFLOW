@@ -214,6 +214,25 @@ var Attend = {
     return { token: token, expiresAt: exp * 1000, ttl: ttl, serverNow: now, rotateSeconds: Settings.get('studentQrRotateSeconds'), freshSeconds: Settings.get('qrFreshSeconds'), url: Setup.webAppUrl() };
   },
 
+  _nonceFresh: function (c) {
+    var now = U.now();
+    if (now / 1000 > c.exp + 5) fail('EXPIRED', 'This code has expired. Keep the app open; it fetches a new one by itself.');
+    if (c.exp - now / 1000 > 200) fail('BAD_TOKEN', 'Invalid code timing.');
+  },
+  _qrFresh: function (c) {
+    var age = (U.now() - c.ts) / 1000;
+    if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
+    if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
+  },
+  _verifiedStudent: function (studentId) {
+    var st = Db.get('StudentProfiles', studentId);
+    if (!st) fail('UNKNOWN_STUDENT', 'Student not found.');
+    if (st.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
+    var user = st.userId ? Db.get('Users', st.userId) : null;
+    if (!user || user.status !== 'active' || String(user.roles).split(',').indexOf('student') < 0) fail('ACCOUNT_DISABLED', 'This student account is not active.');
+    return st;
+  },
+
   // ---- Version B verification pipeline -------------------------------------------------------------------------
   STEPS_B: [
     { id: 'payload', label: 'Code is a LABFLOW student QR (link or raw text)', run: function (c) {
@@ -230,16 +249,8 @@ var Attend = {
       if (!c.purpose) fail('BAD_TOKEN', 'Unrecognised code.');
       c.subject = { studentId: c.studentId, sessionId: c.sessionId, purpose: c.purpose };
     } },
-    { id: 'nonce_fresh', label: 'Server nonce is still valid', run: function (c) {
-      var now = U.now();
-      if (now / 1000 > c.exp + 5) fail('EXPIRED', 'This code has expired. Keep the app open; it fetches a new one by itself.');
-      if (c.exp - now / 1000 > 200) fail('BAD_TOKEN', 'Invalid code timing.');
-    } },
-    { id: 'qr_fresh', label: 'Rotating timestamp is fresh (screenshots go stale)', run: function (c) {
-      var age = (U.now() - c.ts) / 1000;
-      if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
-      if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
-    } },
+    { id: 'nonce_fresh', label: 'Server nonce is still valid', run: function (c) { Attend._nonceFresh(c); } },
+    { id: 'qr_fresh', label: 'Rotating timestamp is fresh (screenshots go stale)', run: function (c) { Attend._qrFresh(c); } },
     { id: 'mode_enabled', label: 'The lab accepts device QR check-in', run: function (c) {
       c.lab = Db.cachedGet('Labs', 'labId', c.labId, 120);
       if (!c.lab) fail('BAD_TOKEN', 'Unknown lab.');
@@ -268,8 +279,20 @@ var Attend = {
       if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'This code was already used.');
     } },
     { id: 'revocation_recheck', locked: true, label: 'Credential still active (revocation wins a race)', run: function (c) {
-      var again = Creds.get(c.credentialId);
-      if (!again || again.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
+      var again = Db.get('DeviceCredentials', c.credentialId);
+      if (!again || again.status !== 'active' || again.studentId !== c.studentId) fail('REVOKED', 'This device is no longer valid.');
+    } },
+    { id: 'authorization_recheck', locked: true, label: 'Fresh code, active student, lab and scanner at commit time', run: function (c) {
+      Attend._nonceFresh(c); Attend._qrFresh(c);
+      c.student = Attend._verifiedStudent(c.studentId);
+      c.lab = Db.get('Labs', c.labId);
+      if (!c.lab || c.lab.status !== 'active' || !Labs.allows(c.lab, 'B')) fail('MODE_DISABLED', 'This lab no longer accepts device QR check-in.');
+      if (c.scanner.kind === 'kiosk') {
+        var kiosk = Db.get('Kiosks', c.scanner.kiosk.kioskId);
+        if (!kiosk || kiosk.status !== 'active' || kiosk.authorizedEmail !== c.scannedBy) fail('KIOSK_INACTIVE', 'This kiosk is not active.');
+        c.scanner.kiosk = kiosk;
+      } else c.scanner.ctx = Auth._contextForEmail(c.scanner.ctx.email, true);
+      Attend._authorizeScanner(c);
     } },
     { id: 'session_open', locked: true, label: 'Session is open in this lab (or inside the exit grace)', run: function (c) {
       c.session = Db.get('Sessions', c.sessionId);
@@ -520,7 +543,7 @@ var Attend = {
           rec.type = 'CORR_IN';
         } else {
           if (!cur.inside) fail('NO_ENTRY', 'The student has no open entry to close.');
-          if (at < cur.firstIn) fail('BAD_INPUT', 'An exit cannot be before the entry.');
+          if (at < cur.lastIn) fail('BAD_INPUT', 'An exit cannot be before the current entry.');
           rec.type = 'CORR_OUT';
         }
         rec.at = at;
