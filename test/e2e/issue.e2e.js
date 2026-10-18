@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Focused equipment issue flows against the actual UI and backend on local Google-service fakes.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const { chromium } = require('playwright-core');
 const { start } = require('../../dev/server');
 
@@ -100,6 +101,69 @@ const { start } = require('../../dev/server');
     await page.getByLabel('Context component B × 1', { exact: true }).waitFor();
     await heldComponents.release();
     check('late component loading cannot mix picks from two different kits', await page.getByLabel('Context component A × 1', { exact: true }).count() === 0);
+
+    const requestFor = (resourceType, resourceId, quantity) => {
+      const before = w.eval('Settings.get("requireCheckinForRequests")');
+      w.ok(w.admin, 'settings.set', { values: { requireCheckinForRequests: false } });
+      try { return w.ok(w.students[9].email, 'equipment.request', { labId: w.lab2.labId, resourceType, resourceId, quantity }).request; }
+      finally { w.ok(w.admin, 'settings.set', { values: { requireCheckinForRequests: before } }); }
+    };
+    const checklist = page.getByRole('region', { name: 'Issue checklist' });
+    const quantityRequest = requestFor('category', category.categoryId, 2);
+    await openIssue(quantityRequest);
+    const beforeIssue = w.eval("Db.readAll('Loans').length");
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    check('a request checklist names the missing quantity before any stock is issued', /Request · Context stock: 0 \/ 2 selected/.test(await checklist.innerText()) && w.eval("Db.readAll('Loans').length") === beforeIssue);
+    await page.getByLabel('Search equipment to add').fill('Context new');
+    await page.getByRole('button', { name: /Context new stock/ }).click();
+    check('request fulfilment updates as equipment is selected', /Request · Context stock: 1 \/ 2 selected/.test(await checklist.innerText()));
+    const quantity = page.getByLabel('Quantity of Context new stock', { exact: true });
+    await quantity.fill('101'); await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    check('issue quantities above available stock are explained before submission', /only 100 available; 101 selected/.test(await checklist.innerText()) && w.eval("Db.readAll('Loans').length") === beforeIssue);
+    let invalidNumbers = true;
+    for (const value of ['-1', '1.5', '']) {
+      await quantity.fill(value); await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+      invalidNumbers = invalidNumbers && /enter a whole quantity of at least 1/.test(await checklist.innerText());
+    }
+    check('negative, fractional and blank issue quantities are rejected without rounding', invalidNumbers && w.eval("Db.readAll('Loans').length") === beforeIssue);
+    await quantity.fill('3');
+    check('extra items beyond a request receive a visible warning', /Extra 1/.test(await checklist.innerText()));
+    await quantity.fill('2'); await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    await page.getByText('Issued.', { exact: true }).waitFor();
+    check('a complete request issues successfully and its old request banner is cleared',
+      w.ok(w.students[9].email, 'equipment.mine').requests.find((r) => r.requestId === quantityRequest.requestId).status === 'fulfilled' && await page.getByText('Filling a request:', { exact: true }).isHidden());
+
+    const devices = w.ok(w.staff, 'categories.upsert', { name: 'Context devices', trackingMode: 'individual' }).category;
+    const boards = [1, 2].map((i) => w.ok(w.staff, 'assets.upsert', { labId: w.lab2.labId, categoryId: devices.categoryId, name: 'Context board ' + i, assetTag: 'CTX-BOARD-' + i }).asset);
+    const multiKit = w.ok(w.staff, 'kits.upsert', { name: 'Context multi-unit kit', labId: w.lab2.labId, components: [
+      { categoryId: devices.categoryId, quantity: 2 }, { categoryId: catB.categoryId, quantity: 3 }
+    ] }).kit;
+    const kitRequest = requestFor('kit', multiKit.kitId, 1);
+    await openIssue(kitRequest); await kitChoice.selectOption(multiKit.kitId);
+    const firstBoard = page.getByLabel('Context devices × 1 (item 1 of 2)', { exact: true });
+    const secondBoard = page.getByLabel('Context devices × 1 (item 2 of 2)', { exact: true });
+    await firstBoard.selectOption(boards[0].assetId); await secondBoard.selectOption(boards[0].assetId);
+    check('multi-unit individual kit components get separate picks and reject the same item twice', /Context board 1: only 1 available; 2 selected/.test(await checklist.innerText()));
+    await secondBoard.selectOption(boards[1].assetId);
+    check('missing kit components stay visible after other components are selected', /Kit · Context component B: 0 \/ 3 selected/.test(await checklist.innerText()));
+    const componentStock = w.ok(w.staff, 'assets.list', { labId: w.lab2.labId, categoryId: catB.categoryId }).assets[0];
+    await page.getByLabel('Context component B × 3', { exact: true }).selectOption(componentStock.assetId);
+    await page.getByLabel('Search equipment to add').fill('Component B stock');
+    await page.getByRole('button', { name: /Component B stock/ }).click();
+    await page.getByLabel('Quantity of Component B stock', { exact: true }).fill('98');
+    check('stock validation combines kit picks and separately added items', /only 100 available; 101 selected/.test(await checklist.innerText()));
+    await page.getByRole('button', { name: 'Remove Component B stock', exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    fs.mkdirSync('.build/shots', { recursive: true });
+    await checklist.screenshot({ path: '.build/shots/issue-checklist-mobile.png' });
+    check('issue checklist fits a phone and confirms the complete selection', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1) && /Selection ready/.test(await checklist.innerText()));
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click(); await page.getByText('Issued.', { exact: true }).waitFor();
+    check('a complete kit with two individual units can be issued from the phone layout', w.ok(w.students[9].email, 'equipment.mine').requests.find((r) => r.requestId === kitRequest.requestId).status === 'fulfilled');
+    await page.setViewportSize({ width: 1280, height: 820 });
+    const oversized = w.ok(w.staff, 'kits.upsert', { name: 'Context oversized kit', labId: w.lab2.labId, components: [{ categoryId: devices.categoryId, quantity: 81 }] }).kit;
+    await openIssue(); await page.getByLabel('Lab *', { exact: true }).selectOption(w.lab2.labId);
+    await kitChoice.selectOption(oversized.kitId);
+    check('oversized kits are explained without creating hundreds of unusable controls', /more than 80 picks/.test(await checklist.innerText()) && await page.getByRole('combobox').count() < 10);
     check('issue flows produce no uncaught browser errors', errors.length === 0);
     console.log('\n' + passed + ' issue checks passed.');
   } finally {

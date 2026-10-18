@@ -115,8 +115,60 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
     let kitId = '', kitPicks = [], reservationId = '', requestId = request ? request.requestId : '';
     let whoVersion = 0, bookingVersion = 0, kitVersion = 0, componentVersion = 0;
+    const knownAssets = new Map(), knownKits = new Map();
+    const checklist = h('section', { class: 'notice', 'aria-label': 'Issue checklist', 'aria-live': 'polite' });
+    let kitsLoading = true, componentsLoading = false, componentError = '';
     const requestCard = request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null;
-    function clearRequest() { requestId = ''; if (requestCard) requestCard.hidden = true; }
+    function clearRequest() { requestId = ''; if (requestCard) requestCard.hidden = true; refreshChecklist(); }
+    function rememberAssets(assets) { assets.forEach((a) => knownAssets.set(a.assetId, a)); }
+    function refreshChecklist() {
+      const errors = [], rows = [], byAsset = new Map(), byCategory = new Map(), required = new Map();
+      const selected = lines.concat(kitPicks);
+      selected.forEach((ln) => {
+        const a = knownAssets.get(ln.assetId);
+        if (!a) { errors.push('Choose an available item.'); return; }
+        if (!Number.isSafeInteger(ln.qty) || ln.qty < 1) { errors.push(a.name + ': enter a whole quantity of at least 1.'); return; }
+        byAsset.set(a.assetId, (byAsset.get(a.assetId) || 0) + ln.qty);
+        byCategory.set(a.categoryId, (byCategory.get(a.categoryId) || 0) + ln.qty);
+      });
+      byAsset.forEach((qty, id) => {
+        const a = knownAssets.get(id), tooMany = qty > a.quantityAvailable || (a.trackingMode === 'individual' && qty !== 1);
+        if (tooMany) errors.push(a.name + ': only ' + a.quantityAvailable + ' available; ' + qty + ' selected.');
+        rows.push(h('li', { class: tooMany ? 'err' : 'hint' }, a.name + ': ' + qty + ' selected · ' + a.quantityAvailable + ' available when selected'));
+      });
+      if (byAsset.size > 80) errors.push('A loan can contain at most 80 different items. Split this issue into smaller loans.');
+      function requirement(label, categoryId, needed, count) {
+        required.set(categoryId, Math.max(required.get(categoryId) || 0, needed));
+        const missing = Math.max(0, needed - count);
+        rows.push(h('li', { class: 'hint' }, label + ': ' + count + ' / ' + needed + ' selected ', ui.badge(missing ? 'Missing ' + missing : 'Ready', missing ? 'warn' : 'good')));
+        if (missing) errors.push(label + ': select ' + missing + ' more.');
+      }
+      if (kitId) {
+        const kit = knownKits.get(kitId);
+        if (componentError) errors.push(componentError);
+        else if (componentsLoading || !kit) errors.push('Wait for the kit components to finish loading.');
+        else kit.components.forEach((c) => requirement('Kit · ' + meta.catName(c.categoryId), c.categoryId, c.quantity,
+          kitPicks.filter((p) => p.componentId === c.componentId).reduce((sum, p) => sum + p.qty, 0)));
+      }
+      if (requestId) {
+        if (request.resourceType === 'category') requirement('Request · ' + request.resourceName, request.resourceId, request.quantity, byCategory.get(request.resourceId) || 0);
+        else {
+          const kit = knownKits.get(request.resourceId);
+          if (kitsLoading) errors.push('Wait for the requested kit details to load.');
+          else if (!kit || kit.status !== 'active') errors.push('The requested kit is no longer available.');
+          else kit.components.forEach((c) => requirement('Request · ' + meta.catName(c.categoryId), c.categoryId, c.quantity * request.quantity, byCategory.get(c.categoryId) || 0));
+        }
+      }
+      if (required.size) byCategory.forEach((qty, id) => {
+        const extra = qty - (required.get(id) || 0);
+        if (extra > 0) rows.push(h('li', { class: 'hint' }, ui.badge('Extra ' + extra, 'warn'), ' ' + meta.catName(id) + ' beyond the requested components.'));
+      });
+      if (!selected.length) errors.push('Select equipment or choose the kit components to issue.');
+      clear(checklist).append(h('h3', { class: 't-h3' }, 'Before you issue'),
+        rows.length ? h('ul', { style: { margin: '8px 0', paddingLeft: '20px', display: 'grid', gap: '6px' } }, rows) : h('p', { class: 'hint' }, 'Add equipment to see quantities and availability.'),
+        h('div', { class: 'hint' }, errors.length ? errors[0] : 'Selection ready. Availability is checked again when you issue.'));
+      return errors;
+    }
     if (request) lab.input.value = request.labId;
     function drawWho() {
       const version = ++whoVersion; bookingVersion++;
@@ -149,20 +201,41 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     }
     async function drawKits() {
       const version = ++kitVersion, selectedLab = lab.get(); componentVersion++;
-      clear(kitBox); kitId = ''; kitPicks = [];
-      const r = await api('kits.list', { labId: selectedLab }), kits = r.kits.filter((k) => k.status === 'active'); if (version !== kitVersion || !kits.length) return;
+      clear(kitBox); kitId = ''; kitPicks = []; componentsLoading = false; componentError = ''; kitsLoading = true; knownKits.clear(); refreshChecklist();
+      let r;
+      try { r = await api('kits.list', { labId: selectedLab }); }
+      catch (e) { if (version === kitVersion) { kitsLoading = false; clear(kitBox).append(ui.errorBox(e, drawKits)); refreshChecklist(); } return; }
+      if (version !== kitVersion) return;
+      kitsLoading = false; r.kits.forEach((k) => knownKits.set(k.kitId, k)); refreshChecklist();
+      const kits = r.kits.filter((k) => k.status === 'active'); if (!kits.length) return;
       const sel = ui.field({ name: 'kit', label: 'Issue a kit (optional)', type: 'select', options: [{ value: '', label: 'No kit' }].concat(opt(kits, 'kitId', 'name')) });
       const comps = h('div', { style: { display: 'grid', gap: '8px' } });
       sel.input.addEventListener('change', async () => {
         const componentLoad = ++componentVersion;
-        kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId); if (!k) return;
-        for (const c of k.components) {
-          const av = await api('assets.list', { labId: selectedLab, categoryId: c.categoryId, status: 'available', limit: 200 });
-          if (version !== kitVersion || componentLoad !== componentVersion) return;
-          const pick = ui.field({ name: 'c' + c.componentId, label: meta.catName(c.categoryId) + ' × ' + c.quantity, type: 'select', options: [{ value: '', label: 'Choose item' }].concat(av.assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
-          pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.componentId !== c.componentId); if (pick.get()) kitPicks.push({ componentId: c.componentId, assetId: pick.get(), qty: c.quantity }); });
-          comps.append(pick.el);
+        kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId);
+        componentsLoading = !!k; componentError = ''; refreshChecklist(); if (!k) return;
+        const slotsNeeded = k.components.reduce((n, c) => n + ((meta.cats.find((x) => x.categoryId === c.categoryId) || {}).trackingMode === 'individual' ? c.quantity : 1), 0);
+        if (slotsNeeded > 80) {
+          componentsLoading = false; componentError = 'This kit needs more than 80 picks. Ask the lab administrator to split it into smaller kits.';
+          comps.append(h('div', { class: 'err', role: 'alert' }, componentError)); refreshChecklist(); return;
         }
+        try {
+          const available = await Promise.all(k.components.map((c) => api('assets.list', { labId: selectedLab, categoryId: c.categoryId, status: 'available', limit: 200 })));
+          if (version !== kitVersion || componentLoad !== componentVersion) return;
+          k.components.forEach((c, index) => {
+            const individual = (meta.cats.find((x) => x.categoryId === c.categoryId) || {}).trackingMode === 'individual';
+            const slots = individual ? c.quantity : 1, qty = individual ? 1 : c.quantity;
+            const assets = available[index].assets.filter((a) => a.quantityAvailable >= qty); rememberAssets(assets);
+            for (let unit = 0; unit < slots; unit++) {
+              const slot = c.componentId + ':' + unit;
+              const label = meta.catName(c.categoryId) + ' × ' + qty + (slots > 1 ? ' (item ' + (unit + 1) + ' of ' + slots + ')' : '');
+              const pick = ui.field({ name: slot, label, type: 'select', options: [{ value: '', label: assets.length ? 'Choose item' : 'No suitable stock available' }].concat(assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
+              pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.slot !== slot); if (pick.get()) kitPicks.push({ slot, componentId: c.componentId, assetId: pick.get(), qty }); refreshChecklist(); });
+              comps.append(pick.el);
+            }
+          });
+          componentsLoading = false; refreshChecklist();
+        } catch (e) { if (version === kitVersion && componentLoad === componentVersion) { componentsLoading = true; componentError = 'Kit availability could not be loaded. Try again before issuing.'; clear(comps).append(ui.errorBox(e, () => sel.input.dispatchEvent(new Event('change')))); refreshChecklist(); } }
       });
       kitBox.append(sel.el, comps);
     }
@@ -175,10 +248,10 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       q.addEventListener('input', () => { searchVersion++; clear(res); });
       const res = h('div', { style: { display: 'grid', gap: '6px' } }); itemBox.append(h('div', { class: 'field' }, h('label', null, 'Add individual items'), q), res);
     }
-    function addLine(a) { const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
+    function addLine(a) { rememberAssets([a]); const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
     function drawCart() {
-      clear(cart); if (!lines.length) return;
-      cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
+      clear(cart); refreshChecklist(); if (!lines.length) return;
+      cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, step: 1, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = e.target.validity.badInput || e.target.value === '' ? NaN : e.target.valueAsNumber; refreshChecklist(); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
     }
     kind.input.addEventListener('change', () => { clearRequest(); drawWho(); });
     lab.input.addEventListener('change', () => { clearRequest(); lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
@@ -187,14 +260,17 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
       msg.hidden = true; clear(result);
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
       if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+      const errors = refreshChecklist();
+      if (errors.length) { msg.textContent = errors.join(' '); msg.hidden = false; return; }
+      if (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
       try {
-        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
+        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
         idem = LF.util.uuid(); lines = []; kitPicks = []; clearRequest(); drawCart(); drawKits(); loadBookings();
         result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
     } });
     root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, requestCard, lab.el, kind.el, who, bookingBox, days.el, notes.el),
-      h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, msg, submit, result));
+      h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, checklist, msg, submit, result));
     return root;
   }
 
