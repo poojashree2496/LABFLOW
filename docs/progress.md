@@ -4,9 +4,9 @@ The record of finished work, newest first, and the current state of the project.
 
 **Rules:** add an entry in the same commit as the change. Say what ran and the result. "Done" here means built and passing the automated tests on in-memory fakes of the Google services. Anything that needs a real Workspace is not done until it is listed under "Deployment results" with a date.
 
-## Current state (2026-10-17)
+## Current state (2026-10-18)
 
-- Latest local audit: **167 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The browser suite passes **75 checks** on the merged audit. See [workflow-audit.md](workflow-audit.md).
+- Latest local checks: **167 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The browser suite passes **83 checks**, including the staff return improvements (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -83,6 +83,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-18 | Improved the staff return screen with live per-item and whole-loan balances, local quantity validation, disabled consumption for individually tracked equipment, a return-all shortcut, and frozen payloads for retry after uncertain submission outcomes. Added eight browser checks and tracking-mode assertions in the inventory test. | `npm run check`: lint and 167 backend tests passed. `npm run sim`: 27/27 passed. `CHROMIUM_PATH=… npm run e2e` with Brave: 83 passed, 0 failed; mobile return form visually inspected. `git diff --check`: passed. |
 | 2026-10-18 | Merged the critical workflow audit with the Test Lab seed and QR fixes; reran the browser suite the audit could not run | `npm run check`: lint passed; 167 tests passed. `npm run sim`: 27/27 passed. `npm run e2e`: 75 passed |
 | 2026-10-17 | Critical workflow audit: locked scan authorization/freshness checks, named-asset booking protection, pre-write fulfilment validation, issue rollback for linked requests, durable return recovery, serialized device rejection/revocation, registration expiry recheck, current-entry correction validation and booking retry at limits; 29 regression cases. Details in [workflow-audit.md](workflow-audit.md). | `npm run check`: lint passed; 167 tests passed. `npm run sim`: 27/27 passed. `git diff --check`: passed. Browser suite could not start: missing `playwright-core`. |
 | 2026-10-17 | Expanded the local Test Lab seed with live attendance, a pending student and research request, equipment request, flagged check-in, spot check, current/overdue loans, booking states and workshop registrations; made historical GPS sample points deterministic; documented the demo and added a seed regression test | `npm run check`: lint passed; 138 tests passed |

@@ -332,7 +332,7 @@ var Loans = {
       var assets = {};
       o.items = Db.whereEq('LoanItems', { loanId: l.loanId }).map(function (i) {
         var a = assets[i.assetId] || (assets[i.assetId] = Db.get('Assets', i.assetId));
-        return { loanItemId: i.loanItemId, assetId: i.assetId, name: a ? a.name : i.assetId, assetTag: a ? a.assetTag : '', qtyIssued: i.qtyIssued, qtyReturned: i.qtyReturned, qtyConsumed: i.qtyConsumed, qtyDamaged: i.qtyDamaged,
+        return { loanItemId: i.loanItemId, assetId: i.assetId, name: a ? a.name : i.assetId, assetTag: a ? a.assetTag : '', trackingMode: a ? a.trackingMode : '', qtyIssued: i.qtyIssued, qtyReturned: i.qtyReturned, qtyConsumed: i.qtyConsumed, qtyDamaged: i.qtyDamaged,
           qtyMissing: i.qtyMissing, outstanding: i.status === Assets.OUT ? i.qtyIssued - i.qtyReturned - i.qtyConsumed - i.qtyDamaged - i.qtyMissing : 0, conditionOut: i.conditionOut, conditionIn: i.conditionIn, status: i.status };
       });
     }

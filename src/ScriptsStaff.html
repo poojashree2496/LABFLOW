@@ -198,26 +198,78 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     function openLoan(id) {
       ui.loadInto(detail, async () => {
         const { loan } = await api('loans.get', { loanId: id });
-        const open = loan.items.filter((i) => i.outstanding > 0); let idem = LF.util.uuid();
+        const open = loan.items.filter((i) => i.outstanding > 0), idem = LF.util.uuid();
+        let pendingSubmission = null, mustRetry = false;
+        const summary = h('div', { class: 'notice', role: 'status', 'aria-live': 'polite', 'aria-label': 'Return summary' });
         const rows = open.map((i) => {
-          const f = (name, label, v) => h('input', { class: 'input', type: 'number', min: 0, max: i.outstanding, value: v || 0, 'aria-label': label + ' ' + i.name, style: { width: '72px' } });
+          const balance = h('div', { class: 'hint', id: 'return-balance-' + i.loanItemId });
+          const f = (name, label, v) => h('input', { class: 'input', type: 'number', min: 0, max: i.outstanding, step: 1, value: v || 0, 'aria-label': label + ' ' + i.name, 'aria-describedby': balance.id, style: { width: '72px' }, oninput: () => updateSummary() });
           const ret = f('r', 'Returned', 0), con = f('c', 'Consumed', 0), dam = f('d', 'Damaged', 0), mis = f('m', 'Missing', 0);
+          con.disabled = i.trackingMode === 'individual';
+          if (con.disabled) con.title = 'Individually tracked items cannot be consumed.';
           const cond = h('select', { class: 'input', 'aria-label': 'Condition of ' + i.name, style: { width: '110px' } }, CONDITIONS.map((c) => h('option', { value: c, selected: c === (i.conditionOut || 'good') }, c)));
           const note = h('input', { class: 'input', 'aria-label': 'Note for ' + i.name, placeholder: 'note', maxlength: 200 });
-          const all = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { ret.value = i.outstanding; con.value = 0; dam.value = 0; mis.value = 0; } }, 'All back');
-          return { i, ret, con, dam, mis, cond, note, tr: h('tr', null, h('td', null, h('strong', null, i.name), i.assetTag ? h('div', { class: 'hint' }, i.assetTag) : null), h('td', { style: { textAlign: 'right' } }, String(i.outstanding)), h('td', null, ret), h('td', null, con), h('td', null, dam), h('td', null, mis), h('td', null, cond), h('td', null, note), h('td', null, all)) };
+          const all = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { ret.value = i.outstanding; con.value = 0; dam.value = 0; mis.value = 0; updateSummary(); } }, 'All back');
+          return { i, ret, con, dam, mis, cond, note, all, balance, tr: h('tr', null, h('td', null, h('strong', null, i.name), i.assetTag ? h('div', { class: 'hint' }, i.assetTag) : null, balance), h('td', { style: { textAlign: 'right' } }, String(i.outstanding)), h('td', null, ret), h('td', null, con), h('td', null, dam), h('td', null, mis), h('td', null, cond), h('td', null, note), h('td', null, all)) };
         });
+        function updateSummary() {
+          let total = 0, remaining = 0, invalid = false;
+          rows.forEach((x) => {
+            const fields = [x.ret, x.con, x.dam, x.mis], values = fields.map((f) => f.validity.badInput ? NaN : f.value === '' ? 0 : f.valueAsNumber);
+            const badNumber = values.some((v) => !Number.isSafeInteger(v) || v < 0);
+            const count = values.reduce((sum, v) => sum + v, 0), tooMany = count > x.i.outstanding;
+            const error = badNumber ? 'Use whole numbers of zero or more.' : tooMany ? 'Only ' + x.i.outstanding + ' outstanding; reduce the quantities.' : '';
+            fields.forEach((f) => f.setAttribute('aria-invalid', error ? 'true' : 'false'));
+            x.balance.className = error ? 'err' : 'hint';
+            x.balance.textContent = error || (x.i.outstanding - count) + ' still out after this return';
+            invalid = invalid || !!error;
+            if (!error) { total += count; remaining += x.i.outstanding - count; }
+          });
+          summary.textContent = invalid ? 'Check the highlighted quantities before recording this return.' :
+            total + ' accounted for · ' + remaining + ' still out' + (remaining === 0 && total > 0 ? ' · This will close the loan.' : '.');
+          return { valid: !invalid, total: total };
+        }
+        const allBack = ui.button('Return all items', { size: 'sm', onClick: () => {
+          rows.forEach((x) => { x.ret.value = x.i.outstanding; x.con.value = 0; x.dam.value = 0; x.mis.value = 0; });
+          updateSummary();
+        } });
+        function freeze(value) {
+          rows.forEach((x) => {
+            [x.ret, x.con, x.dam, x.mis, x.cond, x.note, x.all].forEach((f) => { f.disabled = value; });
+            x.con.disabled = value || x.i.trackingMode === 'individual';
+          });
+          allBack.disabled = value;
+        }
         const msg = h('div', { class: 'err', role: 'alert', hidden: true });
         const done = ui.button('Record return', { kind: 'primary', icon: 'check', onClick: async () => {
           msg.hidden = true;
-          const lines = rows.map((x) => ({ loanItemId: x.i.loanItemId, qtyReturned: +x.ret.value || 0, qtyConsumed: +x.con.value || 0, qtyDamaged: +x.dam.value || 0, qtyMissing: +x.mis.value || 0, conditionIn: x.cond.value, note: x.note.value })).filter((l) => l.qtyReturned + l.qtyConsumed + l.qtyDamaged + l.qtyMissing > 0);
-          if (!lines.length) { msg.textContent = 'Enter how many of each item came back (use "All back" for a full return).'; msg.hidden = false; return; }
-          try { const r = await api('loans.return', { idemKey: idem, loanId: id, lines }, { retry: true }); LF.toast(r.loan.status === 'closed' ? 'Loan closed' : 'Partial return recorded', 'good'); clear(detail); loadList(q.value.trim()); }
-          catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+          if (!pendingSubmission) {
+            const state = updateSummary();
+            if (!state.valid || !state.total) {
+              msg.textContent = state.valid ? 'Enter quantities or choose Return all items.' : 'Correct the highlighted quantities first.';
+              msg.hidden = false;
+              const invalid = rows.flatMap((x) => [x.ret, x.con, x.dam, x.mis]).find((f) => f.getAttribute('aria-invalid') === 'true' && !f.disabled);
+              if (invalid) invalid.focus();
+              return;
+            }
+            const lines = rows.map((x) => ({ loanItemId: x.i.loanItemId, qtyReturned: Number(x.ret.value), qtyConsumed: Number(x.con.value), qtyDamaged: Number(x.dam.value), qtyMissing: Number(x.mis.value), conditionIn: x.cond.value, note: x.note.value })).filter((l) => l.qtyReturned + l.qtyConsumed + l.qtyDamaged + l.qtyMissing > 0);
+            pendingSubmission = { idemKey: idem, loanId: id, lines };
+          }
+          freeze(true);
+          try { const r = await api('loans.return', pendingSubmission, { retry: true }); LF.toast(r.loan.status === 'closed' ? 'Loan closed' : 'Partial return recorded', 'good'); clear(detail); loadList(q.value.trim()); }
+          catch (e) {
+            const uncertain = mustRetry || e.code === 'NETWORK' || e.code === 'INTERNAL';
+            mustRetry = uncertain;
+            msg.textContent = LF.errMsg(e) + (uncertain ? ' Retry the same return to confirm it before entering new quantities.' : ''); msg.hidden = false;
+            done.textContent = uncertain ? 'Retry return' : 'Record return';
+            if (!uncertain) { pendingSubmission = null; freeze(false); }
+          }
         } });
+        updateSummary();
         return h('section', { class: 'card', 'aria-label': 'Return items' }, h('h2', { class: 't-h2' }, loan.borrowerName), h('div', { class: 'hint' }, 'Issued ' + fmt.dt(loan.issuedAt) + ' · due ' + fmt.dt(loan.dueAt) + (loan.overdue ? ' · OVERDUE' : '')),
+          open.length ? h('p', { class: 'hint' }, 'Record what came back and what was consumed, damaged or missing. Unaccounted units stay on loan. Individually tracked items cannot be consumed.') : null,
           open.length ? h('div', { class: 'tbl-wrap', style: { marginTop: '10px' } }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['Item', 'Out', 'Returned', 'Consumed', 'Damaged', 'Missing', 'Condition', 'Note', ''].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, rows.map((x) => x.tr)))) : ui.empty('Everything on this loan has been returned.'),
-          msg, open.length ? h('div', { style: { marginTop: '12px' } }, done) : null);
+          msg, open.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '12px' } }, summary, h('div', { class: 'toolbar' }, allBack, done)) : null);
       }, 3);
     }
     loadList(''); if (preselect) openLoan(preselect);

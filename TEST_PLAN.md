@@ -1,6 +1,6 @@
 # LABFLOW test plan and results
 
-Latest workflow audit: `npm run check` and `npm run sim` passed. `npm run e2e` could not start because `playwright-core` is absent in this checkout. Browser results below are from the previously recorded run. Details: [workflow audit](docs/workflow-audit.md).
+Latest local run (2026-10-18): `npm run check` and `npm run sim` passed. The browser suite passed 83 checks using Brave's Chromium executable through `CHROMIUM_PATH`. The original audit's missing dependency was installed for this run. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
@@ -9,7 +9,7 @@ Latest workflow audit: `npm run check` and `npm run sim` passed. `npm run e2e` c
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
 | Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1), workflow-audit (29) | `npm test` | **167 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
-| Browser E2E (Playwright, real Chromium) | `npm run e2e` | **75 pass, 0 fail** |
+| Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **83 pass, 0 fail** |
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
@@ -36,6 +36,8 @@ Run these after deploying; each is a pass/fail check.
 | 11 | Physical controls dry run | A real session with a rescan, a spot check and a deliberate relay attempt | Measures whether the controls catch what the design claims |
 
 ## C. Known gaps in automated coverage
+
+The staff return flow now also checks individually tracked consumption is disabled; excess, negative, fractional and incomplete numbers are refused locally; live remaining balances; a 390 px phone layout; a server-committed return whose confirmation is interrupted; retry with the identical payload and request key; and return-all after a partial return.
 
 - No frontend unit tests; the UI is covered only by the E2E flow. Admin pages are checked for loading, not for every form.
 - The E2E uses Chromium only. Safari/Firefox are untested.
