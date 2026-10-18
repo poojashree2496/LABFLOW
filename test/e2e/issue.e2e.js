@@ -161,6 +161,65 @@ const { start } = require('../../dev/server');
     check('a complete kit with two individual units can be issued from the phone layout', w.ok(w.students[9].email, 'equipment.mine').requests.find((r) => r.requestId === kitRequest.requestId).status === 'fulfilled');
     await page.setViewportSize({ width: 1280, height: 820 });
 
+    const retryRequest = requestFor('category', catA.categoryId, 1);
+    await openIssue(retryRequest);
+    await page.getByLabel('Search equipment to add').fill('Component A stock'); await page.getByRole('button', { name: /Component A stock/ }).click();
+    const issueAttempts = [], beforeRetryLoans = w.eval("Db.readAll('Loans').length");
+    let committed, releaseReply;
+    const committedReply = new Promise((resolve) => { committed = resolve; });
+    const replyGate = new Promise((resolve) => { releaseReply = resolve; }); releases.push(releaseReply);
+    const issueRoute = async (route) => {
+      const body = route.request().postDataJSON();
+      if (body.action !== 'loans.issue') return route.continue();
+      issueAttempts.push(JSON.stringify(body.payload));
+      if (issueAttempts.length === 1) {
+        const response = await route.fetch(); assert.equal((await response.json()).ok, true);
+        committed(); await replyGate;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'INTERNAL', message: 'Issue confirmation interrupted.' } }) });
+      }
+      if (issueAttempts.length === 2) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'FORBIDDEN', message: 'Temporary test refusal.' } }) });
+      return route.continue();
+    };
+    await page.route('**/rpc', issueRoute);
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click(); await committedReply;
+    check('borrower, lab and quantities are frozen while an issue is processing', await page.getByLabel('Lab *', { exact: true }).isDisabled() && await page.getByLabel('Quantity of Component A stock', { exact: true }).isDisabled() && await page.getByRole('button', { name: 'Change', exact: true }).isDisabled());
+    releaseReply(); await page.getByRole('button', { name: 'Retry issue', exact: true }).waitFor();
+    check('an uncertain issue keeps the original selection frozen for confirmation', await page.getByLabel('Quantity of Component A stock', { exact: true }).isDisabled());
+    await page.getByRole('button', { name: 'Retry issue', exact: true }).click();
+    await page.getByText(/Temporary test refusal/).waitFor();
+    check('a later refusal cannot unlock an earlier uncertain issue', await page.getByLabel('Lab *', { exact: true }).isDisabled());
+    await page.getByRole('button', { name: 'Retry issue', exact: true }).click();
+    await page.getByText('Already issued (same request).', { exact: true }).waitFor();
+    await page.unroute('**/rpc', issueRoute);
+    check('issue confirmation retries preserve the complete payload and create only one loan', issueAttempts.length === 3 && issueAttempts.every((p) => p === issueAttempts[0]) && w.eval("Db.readAll('Loans').length") === beforeRetryLoans + 1);
+    const retriedLoanId = w.eval("Db.get('EquipmentRequests', " + JSON.stringify(retryRequest.requestId) + ").loanId");
+    await page.getByRole('button', { name: 'Open loan for return', exact: true }).click();
+    const retryReturn = page.getByRole('region', { name: 'Return items' });
+    await retryReturn.getByRole('button', { name: 'Return all items', exact: true }).click();
+    await retryReturn.getByRole('button', { name: 'Record return', exact: true }).click();
+    await page.getByText('Loan closed', { exact: true }).waitFor();
+    check('a confirmed retry opens the original loan for return', w.ok(w.staff, 'loans.get', { loanId: retriedLoanId }).loan.status === 'closed');
+
+    const declinedRequest = requestFor('category', catA.categoryId, 1);
+    await openIssue(declinedRequest);
+    await page.getByLabel('Search equipment to add').fill('Component A stock'); await page.getByRole('button', { name: /Component A stock/ }).click();
+    let declined = false;
+    const rejectIssue = async (route) => {
+      if (route.request().postDataJSON().action !== 'loans.issue' || declined) return route.continue();
+      declined = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'UNAVAILABLE', message: 'Stock changed before checkout.' } }) });
+    };
+    await page.route('**/rpc', rejectIssue);
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    await page.getByText('Stock changed before checkout.', { exact: true }).waitFor();
+    check('a confirmed validation refusal allows the selection to be corrected', await page.getByLabel('Quantity of Component A stock', { exact: true }).isEnabled());
+    await page.getByLabel('Quantity of Component A stock', { exact: true }).fill('2');
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click(); await page.getByText('Issued.', { exact: true }).waitFor();
+    await page.unroute('**/rpc', rejectIssue);
+    const declinedFulfilment = w.ok(w.students[9].email, 'equipment.mine').requests.find((r) => r.requestId === declinedRequest.requestId);
+    const correctedLoan = w.ok(w.staff, 'loans.get', { loanId: w.eval("Db.get('EquipmentRequests', " + JSON.stringify(declinedRequest.requestId) + ").loanId") }).loan;
+    check('corrected checkout uses the new quantity after a definite refusal', declinedFulfilment.status === 'fulfilled' && correctedLoan.items[0].qtyIssued === 2);
+
     const reserved = ["Alpha", "Beta"].map((name) => w.ok(w.staff, 'assets.upsert', { labId: w.lab2.labId, categoryId: devices.categoryId, name: 'Reserved ' + name, assetTag: 'CTX-RESERVED-' + name }).asset);
     const now = w.eval('U.now()');
     const future = w.ok(w.students[0].email, 'booking.request', { labId: w.lab2.labId, resourceType: 'asset', resourceId: reserved[0].assetId,
@@ -205,6 +264,13 @@ const { start } = require('../../dev/server');
     check('oversized kits are explained without creating hundreds of unusable controls', /more than 80 picks/.test(await checklist.innerText()) && await page.getByRole('combobox').count() < 10);
     check('issue flows produce no uncaught browser errors', errors.length === 0);
     console.log('\n' + passed + ' issue checks passed.');
+  } catch (e) {
+    if (page && !page.isClosed()) {
+      fs.mkdirSync('.build/shots', { recursive: true });
+      await page.screenshot({ path: '.build/shots/issue-failure.png', fullPage: true });
+      console.error(await page.locator('#main').innerText());
+    }
+    throw e;
   } finally {
     releases.forEach((release) => release());
     if (browser) await browser.close();

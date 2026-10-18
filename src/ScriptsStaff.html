@@ -119,6 +119,14 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const knownAssets = new Map(), knownKits = new Map();
     const checklist = h('section', { class: 'notice', 'aria-label': 'Issue checklist', 'aria-live': 'polite' });
     let kitsLoading = true, componentsLoading = false, componentError = '';
+    let pendingSubmission = null, mustRetry = false, formFrozen = false;
+    const frozenControls = new Map();
+    function freezeIssue(value) {
+      if (value && !formFrozen) root.querySelectorAll('input, select, textarea, button').forEach((control) => { frozenControls.set(control, control.disabled); control.disabled = true; });
+      if (!value) { frozenControls.forEach((disabled, control) => { control.disabled = disabled; }); frozenControls.clear(); }
+      [who, bookingBox, kitBox, itemBox, cart].forEach((box) => { box.inert = value; });
+      formFrozen = value;
+    }
     const requestCard = request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null;
     function clearRequest() { requestId = ''; if (requestCard) requestCard.hidden = true; refreshChecklist(); }
     function rememberAssets(assets) { assets.forEach((a) => knownAssets.set(a.assetId, a)); }
@@ -281,21 +289,33 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     drawWho(); drawKits(); drawItems();
     const submit = ui.button('Issue items', { kind: 'primary', icon: 'check', onClick: async () => {
       msg.hidden = true; clear(result);
-      const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
-      if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
-      renderBookingInfo();
-      const errors = refreshChecklist();
-      if (errors.length) { msg.textContent = errors.join(' '); msg.hidden = false; return; }
-      if (!selectedBooking && (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120)) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
+      if (!pendingSubmission) {
+        const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
+        if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+        renderBookingInfo();
+        const errors = refreshChecklist();
+        if (errors.length) { msg.textContent = errors.join(' '); msg.hidden = false; return; }
+        if (!selectedBooking && (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120)) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
+        pendingSubmission = { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: selectedBooking ? undefined : days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) };
+      }
+      freezeIssue(true);
       try {
-        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: selectedBooking ? undefined : days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
+        const r = await api('loans.issue', pendingSubmission, { retry: true });
+        freezeIssue(false); pendingSubmission = null; mustRetry = false; submit.textContent = 'Issue items';
         idem = LF.util.uuid(); lines = []; kitPicks = []; clearRequest(); drawCart(); drawKits(); loadBookings();
         result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 8px', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued))),
           ui.button('Open loan for return', { size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.loanId = r.loan.loanId; LF.go('desk'); } })));
-      } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
+      } catch (e) {
+        const rolledBack = e.code === 'RETRY';
+        mustRetry = !rolledBack && (mustRetry || ['NETWORK', 'INTERNAL', 'IN_PROGRESS'].includes(e.code));
+        msg.textContent = LF.errMsg(e) + (mustRetry ? ' Retry the same issue to confirm it before changing the selection.' : ''); msg.hidden = false;
+        submit.textContent = mustRetry ? 'Retry issue' : 'Issue items';
+        if (!mustRetry) { pendingSubmission = null; freezeIssue(false); if (rolledBack) idem = LF.util.uuid(); }
+      }
     } });
     root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, requestCard, lab.el, kind.el, who, bookingBox, days.el, notes.el),
       h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, checklist, msg, submit, result));
+    LF.every(15000, () => { if (selectedBooking && !formFrozen) { renderBookingInfo(); refreshChecklist(); } });
     return root;
   }
 

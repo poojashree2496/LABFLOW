@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-18)
 
-- Latest local checks: **167 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The browser suite passes **83 checks**, including the staff return improvements (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **167 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **83 checks** and the focused issue suite passes **33** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -83,6 +83,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-18 | Preserved the complete issue payload while submitting or confirming an uncertain outcome; freezes editing until confirmation, retains the original request key across retries, and allows correction after a definite refusal. Refreshes collection guidance while the idle form remains open. | `npm run check`: lint and 167 backend tests passed. `npm run sim`: 27/27 passed. Isolated Brave: `npm run e2e` 83/83, `npm run e2e:issue` 33/33, including a real server-committed issue with interrupted confirmation and no duplicate loan. `git diff --check`: passed. |
 | 2026-10-18 | Added booking collection details from the server-defined early-collection window, checklist validation for reserved resources and exact named units, booking-end due dates, and a success action opening the new loan for return. | `npm run check`: lint and 167 backend tests passed, including the collection-window assertion. `CHROMIUM_PATH=… npm run e2e:issue`: 26 checks passed with isolated Brave. `git diff --check`: passed. |
 | 2026-10-18 | Added a live issue checklist for equipment requests and kits, strict quantity/combined-stock validation, extra-item warnings, separate picks for multiple individually tracked kit units, and a safe limit for oversized kits. | `npm run check`: lint and 167 backend tests passed. `CHROMIUM_PATH=… npm run e2e:issue`: 19 checks passed with isolated Brave, including phone layout and real kit checkout on fakes; checklist screenshot visually inspected. `git diff --check`: passed. |
 | 2026-10-18 | Fixed stale equipment issue context: changing lab/borrower detaches the prior request; the preselected borrower loads bookings; old student, booking, equipment and kit responses cannot replace newer selections. Added the focused `e2e:issue` command. | `npm run check`: lint and 167 backend tests passed. `CHROMIUM_PATH=… npm run e2e:issue` with isolated Brave: 7 checks passed. `git diff --check`: passed. |
