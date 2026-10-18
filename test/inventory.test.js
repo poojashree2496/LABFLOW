@@ -206,6 +206,7 @@ test('advance booking: capacity is enforced, pending holds stock, approval re-ch
   assert.equal(book(w, a, Object.assign({ quantity: 2 }, slot)).ok, true);
   const r2 = book(w, b, Object.assign({ quantity: 1 }, slot));
   assert.equal(r2.ok, true, 'one left');
+  assert.equal(r2.data.reservation.collectionOpensAt, slot.startAt - 2 * 3600000, 'the booking exposes its server-defined collection window');
   const r3 = book(w, c, Object.assign({ quantity: 1 }, slot));
   assert.equal(r3.error.code, 'NOT_AVAILABLE', 'pending requests hold stock');
   // a different, non-overlapping window is fine

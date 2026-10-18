@@ -428,7 +428,7 @@ var Loans = {
         reservation = Db.mustGet('Reservations', V.id(p.reservationId, 'Reservation', 'reservation'), 'Reservation');
         if (reservation.status !== 'approved') fail('INVALID_STATE', 'The booking is ' + reservation.status + ', not approved.');
         if (reservation.labId !== labId) fail('BAD_INPUT', 'The booking is for a different lab.');
-        if (now < reservation.startAt - 2 * 3600000) fail('TOO_EARLY', 'The booking starts at ' + U.fmt(reservation.startAt) + '. Collection opens 2 hours before.');
+        if (now < reservation.startAt - Booking.COLLECT_EARLY_MS) fail('TOO_EARLY', 'The booking starts at ' + U.fmt(reservation.startAt) + '. Collection opens at ' + U.fmt(reservation.startAt - Booking.COLLECT_EARLY_MS) + '.');
         if (now > reservation.endAt) fail('INVALID_STATE', 'The booking has ended.');
         var okReq = (reservation.requesterType === 'student' && type === 'student' && reservation.requesterId === borrowerId) || (reservation.requesterType === 'group' && type === 'group' && reservation.requesterId === borrowerId);
         if (!okReq) fail('BAD_INPUT', 'This booking belongs to a different borrower.');

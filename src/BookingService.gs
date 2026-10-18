@@ -98,7 +98,7 @@ var Booking = {
   },
   _view: function (r) {
     return { reservationId: r.reservationId, labId: r.labId, resourceType: r.resourceType, resourceId: r.resourceId, resourceName: Booking._resourceName(r), quantity: r.quantity, requesterType: r.requesterType, requesterId: r.requesterId,
-      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, status: r.status, purpose: r.purpose, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote };
+      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, collectionOpensAt: r.startAt - Booking.COLLECT_EARLY_MS, status: r.status, purpose: r.purpose, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote };
   },
   _mayAct: function (ctx, r) {
     if (ctx.has('admin') || ctx.has('staff')) return true;

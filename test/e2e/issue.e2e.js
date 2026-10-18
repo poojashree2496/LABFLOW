@@ -160,6 +160,45 @@ const { start } = require('../../dev/server');
     await page.getByRole('button', { name: 'Issue items', exact: true }).click(); await page.getByText('Issued.', { exact: true }).waitFor();
     check('a complete kit with two individual units can be issued from the phone layout', w.ok(w.students[9].email, 'equipment.mine').requests.find((r) => r.requestId === kitRequest.requestId).status === 'fulfilled');
     await page.setViewportSize({ width: 1280, height: 820 });
+
+    const reserved = ["Alpha", "Beta"].map((name) => w.ok(w.staff, 'assets.upsert', { labId: w.lab2.labId, categoryId: devices.categoryId, name: 'Reserved ' + name, assetTag: 'CTX-RESERVED-' + name }).asset);
+    const now = w.eval('U.now()');
+    const future = w.ok(w.students[0].email, 'booking.request', { labId: w.lab2.labId, resourceType: 'asset', resourceId: reserved[0].assetId,
+      startAt: now + 4 * 3600000, endAt: now + 5 * 3600000, purpose: 'Reserved item collection test' }).reservation;
+    w.ok(w.staff, 'booking.decide', { reservationId: future.reservationId, approve: true });
+    await openIssue(request); await page.getByLabel('Lab *', { exact: true }).selectOption(w.lab2.labId);
+    await bookingChoice.selectOption(future.reservationId);
+    const bookingDetails = page.getByRole('region', { name: 'Booking collection details' });
+    check('booking selection displays the reserved item and server-defined collection window', /Reserved Alpha/.test(await bookingDetails.innerText()) && future.collectionOpensAt === future.startAt - 7200000);
+    check('booking collection uses its end time instead of an editable loan period', await page.getByLabel('Loan period (days)', { exact: true }).isDisabled());
+    await page.getByLabel('Search equipment to add').fill('Reserved Alpha');
+    await page.getByRole('button', { name: /Reserved Alpha/ }).click();
+    const beforeBookingIssue = w.eval("Db.readAll('Loans').length");
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    check('early collection is explained before a loan is created', /cannot be collected until/.test(await checklist.innerText()) && w.eval("Db.readAll('Loans').length") === beforeBookingIssue);
+    await bookingChoice.selectOption('');
+    check('switching back to direct checkout removes booking constraints and re-enables the period', await page.getByLabel('Loan period (days)', { exact: true }).isEnabled() && await bookingDetails.isHidden());
+
+    dev.lab.clock.advance(2 * 3600000 + 60000); dev.lab.sync();
+    await page.evaluate((at) => LF.setServerNow(at), w.eval('U.now()'));
+    await bookingChoice.selectOption(future.reservationId);
+    await page.getByRole('button', { name: 'Remove Reserved Alpha', exact: true }).click();
+    await page.getByLabel('Search equipment to add').fill('Reserved Beta'); await page.getByRole('button', { name: /Reserved Beta/ }).click();
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click();
+    check('a different unit cannot satisfy a named reservation', /Choose reserved item/.test(await checklist.innerText()) && w.eval("Db.readAll('Loans').length") === beforeBookingIssue);
+    await page.getByRole('button', { name: 'Remove Reserved Beta', exact: true }).click();
+    await page.getByLabel('Search equipment to add').fill('Reserved Alpha'); await page.getByRole('button', { name: /Reserved Alpha/ }).click();
+    await page.getByRole('button', { name: 'Issue items', exact: true }).click(); await page.getByText('Issued.', { exact: true }).waitFor();
+    const collected = w.ok(w.staff, 'loans.list', { status: 'active' }).loans.find((l) => l.reservationId === future.reservationId);
+    check('collecting the exact reserved item fulfils its booking and sets the promised due time', !!collected && collected.dueAt === future.endAt && w.ok(w.students[0].email, 'booking.mine').reservations.find((b) => b.reservationId === future.reservationId).status === 'fulfilled');
+    await page.getByRole('button', { name: 'Open loan for return', exact: true }).click();
+    const collectedReturn = page.getByRole('region', { name: 'Return items' });
+    await collectedReturn.getByLabel('Returned Reserved Alpha', { exact: true }).waitFor();
+    check('the success action opens the newly issued loan directly for return', /Reserved Alpha/.test(await collectedReturn.innerText()));
+    await collectedReturn.getByRole('button', { name: 'Return all items', exact: true }).click();
+    await collectedReturn.getByRole('button', { name: 'Record return', exact: true }).click();
+    await page.getByText('Loan closed', { exact: true }).waitFor();
+
     const oversized = w.ok(w.staff, 'kits.upsert', { name: 'Context oversized kit', labId: w.lab2.labId, components: [{ categoryId: devices.categoryId, quantity: 81 }] }).kit;
     await openIssue(); await page.getByLabel('Lab *', { exact: true }).selectOption(w.lab2.labId);
     await kitChoice.selectOption(oversized.kitId);

@@ -113,7 +113,8 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const days = ui.field({ name: 'days', label: 'Loan period (days)', type: 'number', min: 1, max: 120, value: LF.me.settings.loanDefaultDays });
     const notes = ui.field({ name: 'notes', label: 'Notes', maxlength: 300 });
     const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
-    let kitId = '', kitPicks = [], reservationId = '', requestId = request ? request.requestId : '';
+    let kitId = '', kitPicks = [], reservationId = '', selectedBooking = null, requestId = request ? request.requestId : '';
+    const bookingInfo = h('section', { class: 'notice', 'aria-label': 'Booking collection details', hidden: true });
     let whoVersion = 0, bookingVersion = 0, kitVersion = 0, componentVersion = 0;
     const knownAssets = new Map(), knownKits = new Map();
     const checklist = h('section', { class: 'notice', 'aria-label': 'Issue checklist', 'aria-live': 'polite' });
@@ -150,14 +151,27 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
         else kit.components.forEach((c) => requirement('Kit · ' + meta.catName(c.categoryId), c.categoryId, c.quantity,
           kitPicks.filter((p) => p.componentId === c.componentId).reduce((sum, p) => sum + p.qty, 0)));
       }
-      if (requestId) {
-        if (request.resourceType === 'category') requirement('Request · ' + request.resourceName, request.resourceId, request.quantity, byCategory.get(request.resourceId) || 0);
-        else {
-          const kit = knownKits.get(request.resourceId);
-          if (kitsLoading) errors.push('Wait for the requested kit details to load.');
-          else if (!kit || kit.status !== 'active') errors.push('The requested kit is no longer available.');
-          else kit.components.forEach((c) => requirement('Request · ' + meta.catName(c.categoryId), c.categoryId, c.quantity * request.quantity, byCategory.get(c.categoryId) || 0));
+      function targetRequirements(target, label) {
+        if (target.resourceType === 'category') requirement(label + ' · ' + target.resourceName, target.resourceId, target.quantity, byCategory.get(target.resourceId) || 0);
+        else if (target.resourceType === 'asset') {
+          const count = byAsset.get(target.resourceId) || 0, a = knownAssets.get(target.resourceId);
+          if (a) required.set(a.categoryId, Math.max(required.get(a.categoryId) || 0, 1));
+          rows.push(h('li', { class: 'hint' }, label + ' · ' + target.resourceName + ': ' + count + ' / 1 selected ', ui.badge(count === 1 ? 'Ready' : 'Choose reserved item', count === 1 ? 'good' : 'warn')));
+          if (count !== 1) errors.push('Choose the specific reserved item: ' + target.resourceName + '.');
         }
+        else {
+          const kit = knownKits.get(target.resourceId);
+          if (kitsLoading) errors.push('Wait for the kit details to load.');
+          else if (!kit || kit.status !== 'active') errors.push('The selected kit is no longer available.');
+          else kit.components.forEach((c) => requirement(label + ' · ' + meta.catName(c.categoryId), c.categoryId, c.quantity * target.quantity, byCategory.get(c.categoryId) || 0));
+        }
+      }
+      if (requestId) targetRequirements(request, 'Request');
+      if (selectedBooking) {
+        targetRequirements(selectedBooking, 'Booking');
+        if (!Number.isFinite(selectedBooking.collectionOpensAt)) errors.push('Collection timing is unavailable. Reload the booking before issuing.');
+        else if (LF.now() < selectedBooking.collectionOpensAt) errors.push('This booking cannot be collected until ' + fmt.dt(selectedBooking.collectionOpensAt) + '.');
+        if (LF.now() > selectedBooking.endAt) errors.push('This booking has ended. Choose another booking or issue directly.');
       }
       if (required.size) byCategory.forEach((qty, id) => {
         const extra = qty - (required.get(id) || 0);
@@ -183,11 +197,11 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
         if (requestId && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
       }
       else api('groups.list').then((r) => { if (version !== whoVersion) return; const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
-      clear(bookingBox);
+      loadBookings();
     }
     async function loadBookings() {
       const version = ++bookingVersion, selectedLab = lab.get(), selectedKind = kind.get();
-      clear(bookingBox); reservationId = '';
+      clear(bookingBox); reservationId = ''; selectedBooking = null; days.input.disabled = false; bookingInfo.hidden = true; refreshChecklist();
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group; if (!id) return;
       try {
         const r = await api('booking.list', { status: 'approved', labId: selectedLab });
@@ -195,9 +209,18 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
         const mine = r.reservations.filter((b) => b.requesterType === selectedKind && b.requesterId === id && b.endAt > LF.now());
         if (!mine.length) return;
         const sel = ui.field({ name: 'rsv', label: 'Collect an advance booking (optional)', type: 'select', options: [{ value: '', label: 'No, issue directly' }].concat(mine.map((b) => ({ value: b.reservationId, label: b.resourceName + ' × ' + b.quantity + ' · ' + fmt.dt(b.startAt) }))) });
-        sel.input.addEventListener('change', () => { reservationId = sel.get(); });
-        bookingBox.append(sel.el);
+        sel.input.addEventListener('change', () => { reservationId = sel.get(); selectedBooking = mine.find((b) => b.reservationId === reservationId) || null; renderBookingInfo(); refreshChecklist(); });
+        bookingBox.append(sel.el, bookingInfo);
       } catch (e) { /* optional */ }
+    }
+    function renderBookingInfo() {
+      days.input.disabled = !!selectedBooking;
+      bookingInfo.hidden = !selectedBooking;
+      if (!selectedBooking) return;
+      const b = selectedBooking, open = Number.isFinite(b.collectionOpensAt) && LF.now() >= b.collectionOpensAt && LF.now() <= b.endAt;
+      clear(bookingInfo).append(h('strong', null, b.resourceName + ' × ' + b.quantity),
+        h('div', { class: 'hint' }, 'Collection opens ' + fmt.dt(b.collectionOpensAt) + ' · Due ' + fmt.dt(b.endAt)),
+        h('div', { class: 'hint' }, open ? 'Collection is open. The loan will be due at the booking end.' : LF.now() > b.endAt ? 'This booking has ended.' : 'Collection has not opened yet.'));
     }
     async function drawKits() {
       const version = ++kitVersion, selectedLab = lab.get(); componentVersion++;
@@ -255,18 +278,20 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     }
     kind.input.addEventListener('change', () => { clearRequest(); drawWho(); });
     lab.input.addEventListener('change', () => { clearRequest(); lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
-    drawWho(); drawKits(); drawItems(); loadBookings();
+    drawWho(); drawKits(); drawItems();
     const submit = ui.button('Issue items', { kind: 'primary', icon: 'check', onClick: async () => {
       msg.hidden = true; clear(result);
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
       if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+      renderBookingInfo();
       const errors = refreshChecklist();
       if (errors.length) { msg.textContent = errors.join(' '); msg.hidden = false; return; }
-      if (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
+      if (!selectedBooking && (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120)) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
       try {
-        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
+        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: selectedBooking ? undefined : days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
         idem = LF.util.uuid(); lines = []; kitPicks = []; clearRequest(); drawCart(); drawKits(); loadBookings();
-        result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
+        result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 8px', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued))),
+          ui.button('Open loan for return', { size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.loanId = r.loan.loanId; LF.go('desk'); } })));
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
     } });
     root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, requestCard, lab.el, kind.el, who, bookingBox, days.el, notes.el),
