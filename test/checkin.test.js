@@ -195,3 +195,117 @@ test('research visit via a workstation booking: self-work session, booking marke
   // idempotent: the same booking maps to the same session
   assert.equal(w.eval("Sessions.selfWorkFor(Db.get('Reservations'," + JSON.stringify(rsv.reservationId) + "), " + JSON.stringify(s.studentId) + ").sessionId"), r.session.sessionId);
 });
+
+function liveWorld() {
+  const w = world();
+  w.ok(w.admin, 'labs.upsert', { ...w.lab, openLab: true });
+  const cat = w.ok(w.staff, 'categories.upsert', { name: 'Live systems', trackingMode: 'individual', workstation: true }).category;
+  w.systems = [1, 2, 3].map((n) => w.ok(w.staff, 'assets.upsert', { labId: w.lab.labId, categoryId: cat.categoryId, name: 'Live system ' + n, assetTag: 'LIVE-' + n }).asset);
+  w.projectIds = w.students.map((s, i) => w.ok(s.email, 'projects.create', { title: 'Live project ' + i, description: 'Private project description', labId: w.lab.labId,
+    supervisorFacultyId: w.facultyId, startDate: w.today, endDate: '2026-12-01' }).project.projectId);
+  w.liveSessionId = w.ok(w.students[0].email, 'sessions.mine').sessions.find((s) => s.type === 'openlab').sessionId;
+  w.enterLive = (i) => { const r = w.checkin(w.students[i], { sessionId: w.liveSessionId, projectId: w.projectIds[i], assetId: w.systems[i].assetId }); assert.equal(r.ok, true, JSON.stringify(r)); };
+  w.board = (email = w.staff, p = {}) => w.ok(email, 'labs.live', p);
+  w.systemStatus = (email = w.staff) => w.ok(email, 'systems.status', { labId: w.lab.labId }).labs[0].systems;
+  return w;
+}
+
+test('live board: faculty, staff and admin see current people, projects, systems and entry times', () => {
+  const w = liveWorld(); w.enterLive(0); w.enterLive(1);
+  for (const who of [w.faculty, w.staff, w.admin]) {
+    const b = w.board(who, { labId: w.lab.labId }); assert.equal(b.labs.length, 1);
+    const lab = b.labs[0]; assert.equal(lab.inside, 2); assert.equal(lab.visits.length, 2); assert.equal(b.refreshSeconds, 5);
+    for (let i = 0; i < 2; i++) {
+      const visit = lab.visits.find((v) => v.studentId === w.students[i].studentId);
+      assert.equal(visit.rollNo, w.students[i].rollNo); assert.ok(visit.name); assert.equal(visit.since, w.NOW);
+      assert.equal(visit.sessionId, w.liveSessionId); assert.equal(visit.projectId, w.projectIds[i]); assert.equal(visit.projectTitle, 'Live project ' + i);
+      assert.equal(visit.assetId, w.systems[i].assetId); assert.equal(visit.assetName, w.systems[i].name);
+    }
+    assert.deepEqual(lab.systems.map((a) => a.status), ['busy', 'busy', 'free']);
+    assert.ok(!JSON.stringify(b).includes('Private project description'));
+  }
+});
+
+test('live board: students and kiosks cannot fetch identities; public caches and availability stay anonymous', () => {
+  const w = liveWorld(); w.enterLive(0); w.board();
+  for (const who of [w.students[0].email, w.kioskEmail, 'unknown@karunya.edu']) assert.equal(w.err(who, 'labs.live').code, 'FORBIDDEN');
+  const systems = w.ok(w.students[1].email, 'systems.status'), publicCounts = w.ok(w.students[1].email, 'labs.occupancy');
+  for (const payload of [systems, publicCounts, w.ok(w.kioskEmail, 'labs.occupancy')]) {
+    const text = JSON.stringify(payload);
+    assert.ok(!text.includes(w.students[0].studentId)); assert.ok(!text.includes(w.students[0].rollNo));
+    assert.ok(!text.includes(w.projectIds[0])); assert.ok(!text.includes('Live project 0'));
+    assert.ok(!text.includes('visits')); assert.ok(!text.includes('mobile')); assert.ok(!text.includes('email'));
+  }
+  assert.ok(w.systemStatus().every((s) => !('visits' in s) && !('studentId' in s)));
+});
+
+test('live board: a work change preserves entry time and VOID restores the effective assignment', () => {
+  const w = liveWorld(); w.enterLive(0); w.advance(10 * 60000);
+  const state = w.ok(w.students[0].email, 'sessions.mine').sessions.find((s) => s.sessionId === w.liveSessionId).mine.work;
+  const changed = w.ok(w.students[0].email, 'attend.setWork', { sessionId: w.liveSessionId, entryEventId: state.entryEventId, expectedEventId: state.eventId,
+    projectId: w.projectIds[0], assetId: w.systems[2].assetId });
+  let lab = w.board().labs.find((l) => l.labId === w.lab.labId);
+  assert.equal(lab.visits[0].assetId, w.systems[2].assetId); assert.equal(lab.visits[0].since, w.NOW);
+  assert.equal(lab.systems.find((s) => s.assetId === w.systems[0].assetId).status, 'free');
+  w.e.run(`Db.insert('AttendanceEvents',{eventId:U.id('event'),sessionId:'${w.liveSessionId}',studentId:'${w.students[0].studentId}',type:'VOID',ref:'${changed.work.eventId}',at:U.now(),createdAt:U.now(),approvalStatus:'approved'})`);
+  lab = w.board().labs.find((l) => l.labId === w.lab.labId);
+  assert.equal(lab.visits[0].assetId, w.systems[0].assetId); assert.equal(lab.systems.find((s) => s.assetId === w.systems[2].assetId).status, 'free');
+});
+
+test('live board: scanned departure removes a visitor and immediately frees their system', () => {
+  const w = liveWorld(); w.enterLive(0); w.enterLive(1); w.board(); w.advance(3 * 60000);
+  assert.equal(w.checkin(w.students[0], { sessionId: w.liveSessionId, action: 'out' }).ok, true);
+  const lab = w.board().labs.find((l) => l.labId === w.lab.labId);
+  assert.equal(lab.inside, 1); assert.deepEqual(lab.visits.map((v) => v.studentId), [w.students[1].studentId]);
+  assert.equal(lab.systems.find((s) => s.assetId === w.systems[0].assetId).status, 'free');
+});
+
+test('live board: delayed closing is recovered on read and releases automatic sign-outs', () => {
+  const w = liveWorld(); w.enterLive(0); w.e.setTime(w.eval(`U.fromLocal('${w.today}','19:05')`));
+  const lab = w.board().labs.find((l) => l.labId === w.lab.labId);
+  assert.equal(lab.inside, 0); assert.deepEqual(lab.visits, []); assert.ok(lab.systems.every((s) => s.status === 'free'));
+  assert.equal(w.eval(`Db.whereEq('AttendanceEvents',{sessionId:'${w.liveSessionId}',method:'auto'}).length`), 1);
+});
+
+test('systems: booking holds are booked for staff and busy for students, with exact time boundaries', () => {
+  const w = liveWorld(), assetId = w.systems[0].assetId, startAt = w.NOW + 15 * 60000, endAt = startAt + 3600000;
+  const r = w.ok(w.students[0].email, 'booking.request', { labId: w.lab.labId, resourceType: 'asset', resourceId: assetId, startAt, endAt, purpose: 'Private booking purpose' }).reservation;
+  assert.equal(w.systemStatus()[0].status, 'booked');
+  const student = w.systemStatus(w.students[1].email); assert.equal(student[0].status, 'busy'); assert.ok(!JSON.stringify(student).includes(r.reservationId));
+  w.ok(w.staff, 'booking.decide', { reservationId: r.reservationId, approve: false, note: 'Test release' });
+  assert.equal(w.systemStatus()[0].status, 'free');
+  const next = w.ok(w.students[0].email, 'booking.request', { labId: w.lab.labId, resourceType: 'asset', resourceId: assetId, startAt: startAt + 1, endAt: endAt + 1, purpose: 'Later hold' }).reservation;
+  assert.equal(w.systemStatus()[0].status, 'free'); w.advance(1); assert.equal(w.systemStatus()[0].status, 'booked');
+  w.e.setTime(next.endAt); assert.equal(w.systemStatus()[0].status, 'free');
+});
+
+test('systems: only individual workstations are listed; broken systems are never advertised as free', () => {
+  const w = liveWorld();
+  const cat = w.ok(w.staff, 'categories.upsert', { name: 'Not a system', trackingMode: 'individual' }).category;
+  w.ok(w.staff, 'assets.upsert', { labId: w.lab.labId, categoryId: cat.categoryId, name: 'Sensor', assetTag: 'LIVE-SENSOR' });
+  w.ok(w.staff, 'assets.upsert', { ...w.systems[0], condition: 'damaged' });
+  assert.equal(w.systemStatus().length, 3); assert.equal(w.systemStatus()[0].status, 'unavailable');
+  assert.equal(w.systemStatus(w.students[0].email)[0].status, 'busy');
+});
+
+test('live board: HOD fails closed until B3 exists, then both endpoints enforce its supplied lab scope', () => {
+  const w = liveWorld(); w.enterLive(0);
+  for (const route of ['labs.live', 'systems.status']) assert.equal(w.err(w.hod, route).code, 'NOT_IMPLEMENTED');
+  w.e.run(`Auth.labScope=function(){return ['${w.lab2.labId}'];};`);
+  for (const route of ['labs.live', 'systems.status']) {
+    const result = w.ok(w.hod, route); assert.deepEqual(result.labs.map((l) => l.labId), [w.lab2.labId]);
+    assert.ok(!JSON.stringify(result).includes(w.students[0].studentId));
+    assert.equal(w.err(w.hod, route, { labId: w.lab.labId }).code, 'FORBIDDEN');
+  }
+  w.e.run(`Auth.labScope=function(){return [];};`); assert.deepEqual(w.board(w.hod).labs, []);
+  w.e.run('Auth.labScope=function(){return null;};');
+  for (const route of ['labs.live', 'systems.status']) assert.equal(w.err(w.hod, route).code, 'FORBIDDEN');
+});
+
+test('live board: filters validate ids, exclude inactive labs and retain empty active labs', () => {
+  const w = liveWorld();
+  assert.equal(w.err(w.staff, 'labs.live', { labId: 'bad' }).code, 'BAD_INPUT');
+  assert.equal(w.board().labs.length, 2); assert.equal(w.board().labs[0].inside, 0);
+  w.ok(w.admin, 'labs.upsert', { ...w.lab2, status: 'inactive' });
+  assert.equal(w.board().labs.length, 1); assert.equal(w.err(w.staff, 'systems.status', { labId: w.lab2.labId }).code, 'FORBIDDEN');
+});

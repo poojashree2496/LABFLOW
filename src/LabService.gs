@@ -64,9 +64,80 @@ var Labs = {
  * because every dashboard polls it; an accepted scan clears the lab's entry so the count moves immediately.
  */
 var Occupancy = {
-  // v2 stubs (docs/requirements.md section 4); each task replaces its own.
-  live: function () { notBuilt_('B4'); },
-  systems: function () { notBuilt_('B4'); },
+  /** Scope before reading identities. B3 owns HOD department scope and currently fails closed. */
+  _boardLabs: function (ctx, p) {
+    p = p || {}; V.obj(p);
+    var labId = p.labId ? V.id(p.labId, 'Lab', 'lab') : '', scope = null;
+    if (ctx.has('hod') && !ctx.has('admin') && !ctx.has('staff')) {
+      scope = Auth.labScope(ctx);
+      if (!Array.isArray(scope)) fail('FORBIDDEN', 'Lab scope is not available for this account.');
+    }
+    var labs = Db.where('Labs', function (l) { return l.status === 'active' && (!scope || scope.indexOf(l.labId) >= 0); });
+    if (labId) {
+      if (!labs.some(function (l) { return l.labId === labId; })) fail('FORBIDDEN', 'This lab is not available in your scope.');
+      labs = labs.filter(function (l) { return l.labId === labId; });
+    }
+    return labs;
+  },
+  /** One locked snapshot for the named board and availability endpoint. Never stored in the public
+   * occupancy cache. WORK/VOID/correction derivation is shared with attendance and workstation claims. */
+  _boardSnapshot: function (ctx, p, detailed, withVisits) {
+    return Locks.with(function () {
+      var labs = Occupancy._boardLabs(ctx, p);
+      Sessions.closeOpenLabsDue();
+      var now = U.now(), labIds = {}, sessions = {}, bySession = {};
+      labs.forEach(function (l) { labIds[l.labId] = true; });
+      Db.where('Sessions', function (s) { return s.status === 'open' && labIds[s.labId]; }).forEach(function (s) { sessions[s.sessionId] = s; });
+      Db.where('AttendanceEvents', function (e) { return !!sessions[e.sessionId]; }).forEach(function (e) { (bySession[e.sessionId] = bySession[e.sessionId] || []).push(e); });
+      var assets = U.indexBy(Db.readAll('Assets'), 'assetId'), categories = U.indexBy(Db.readAll('Categories'), 'categoryId');
+      var profiles = withVisits ? U.indexBy(Db.readAll('StudentProfiles'), 'studentId') : {}, projects = withVisits ? U.indexBy(Db.readAll('Projects'), 'projectId') : {};
+      var visits = {}, claims = {};
+      Object.keys(sessions).forEach(function (id) {
+        var session = sessions[id], effective = Attend._effective(bySession[id] || []);
+        Object.keys(effective).forEach(function (sid) {
+          var work = Work.current(effective[sid]); if (!work) return;
+          var state = withVisits ? Attend._compute(session, effective[sid], [], now) : null;
+          var asset = assets[work.assetId], project = projects[work.projectId], student = profiles[sid] || {};
+          if (asset && asset.labId === session.labId) claims[asset.assetId] = true;
+          if (!withVisits) return;
+          var row = { studentId: sid, name: student.name || 'Unknown student', rollNo: student.rollNo || '', sessionId: id,
+            sessionTitle: session.title, sessionType: session.type, since: state.lastIn, projectId: '', projectTitle: '', assetId: '', assetName: '', assetTag: '' };
+          if (asset && asset.labId === session.labId) { row.assetId = asset.assetId; row.assetName = asset.name; row.assetTag = asset.assetTag; }
+          if (project && project.labId === session.labId) { row.projectId = project.projectId; row.projectTitle = project.title; }
+          (visits[session.labId] = visits[session.labId] || []).push(row);
+        });
+      });
+      var held = {};
+      // Match entry protection: pending/approved holds include the 15-minute collection window.
+      Db.where('Reservations', function (r) { return labIds[r.labId] && r.resourceType === 'asset' && Booking._holds(r) && r.startAt - Checkin.BOOKING_EARLY_MS <= now && now < r.endAt; })
+        .forEach(function (r) { held[r.resourceId] = true; });
+      return { labs: labs.map(function (lab) {
+        var systems = Object.keys(assets).map(function (id) { return assets[id]; }).filter(function (a) {
+          return a.labId === lab.labId && a.trackingMode === 'individual' && categories[a.categoryId] && categories[a.categoryId].workstation === true;
+        }).map(function (a) {
+          var status = claims[a.assetId] ? 'busy' : a.status !== 'available' || a.condition === 'damaged' ? 'unavailable' : held[a.assetId] ? 'booked' : 'free';
+          return { assetId: a.assetId, name: a.name, assetTag: a.assetTag, status: detailed ? status : status === 'free' ? 'free' : 'busy' };
+        }).sort(function (a, b) { return a.name.localeCompare(b.name) || a.assetId.localeCompare(b.assetId); });
+        var out = { labId: lab.labId, code: lab.code, name: lab.name, systems: systems };
+        if (withVisits) {
+          out.visits = (visits[lab.labId] || []).sort(function (a, b) { return a.since - b.since || a.rollNo.localeCompare(b.rollNo); });
+          out.inside = U.uniq(out.visits.map(function (v) { return v.studentId; })).length;
+          out.capacity = lab.capacity;
+        }
+        return out;
+      }), serverNow: now, refreshSeconds: Settings.get('occupancyRefreshSeconds') };
+    });
+  },
+  live: function (ctx, p) {
+    Auth.requireRole(ctx, ['faculty', 'staff', 'admin', 'hod']);
+    return Occupancy._boardSnapshot(ctx, p, true, true);
+  },
+  systems: function (ctx, p) {
+    var detailed = ctx.has('faculty') || Auth.canView(ctx);
+    var snapshot = Occupancy._boardSnapshot(ctx, p, detailed, false);
+    // Availability only, including for privileged callers. Names belong on labs.live.
+    return snapshot;
+  },
   _key: function (labId) { return 'occ|' + labId; },
   invalidate: function (labId) { try { CacheService.getScriptCache().remove(Occupancy._key(labId)); } catch (e) {} },
   lab: function (labId) {

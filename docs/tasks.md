@@ -120,8 +120,9 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.
   - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
   - Tests: `test/access.test.js` or a new `test/hod.test.js`.
-- [ ] **B4 Live board and systems** (R1, R2, R9)
+- [~] **B4 Live board and systems** (R1, R2, R9)
   - Files: `LabService.gs` (`labs.live`, `systems.status`), `Scripts.html` or `ScriptsStaff.html` (a Live view, auto-refresh every `occupancyRefreshSeconds`), registered for faculty, staff, admin and hod.
+  - Backend implemented and tested; shared board screen remains in progress. See [Live board](live-board.md).
   - `labs.live`: for each lab in scope, each student inside, with name, register number, session, system, project and since-when.
     - Build it from `Attend.studentState` and the latest IN or WORK event carrying `assetId` and `projectId`. `Jobs.overstay` already loops over the students inside.
     - Do not put names into the cached `labs.occupancy` payload; every user can read that one.
