@@ -74,7 +74,7 @@ function overview(root) {
   const job = (name, label) => btn(label, async () => { const r = await api('job', { name }); out.textContent = name + ': ' + JSON.stringify(r.result, null, 1); toast(label + ' finished'); });
   const auto = h('input', { type: 'checkbox', checked: state.autoJobs, onchange: async (e) => { await api('autojobs', { on: e.target.checked }); toast(e.target.checked ? 'Tick runs every minute' : 'Automatic tick off'); } });
   jobs.append(h('div', { class: 'row' }, job('tickSessions', 'Tick (5 min)'), job('sendEmails', 'Send emails'), job('morning', 'Morning'), job('evening', 'Evening digest'), job('nightly', 'Nightly')), h('label', { class: 'row hint' }, auto, 'Run the tick automatically every real minute'), out);
-  const worldP = h('section', { class: 'panel stack' }, h('h2', null, 'World'), h('p', { class: 'hint' }, 'Rebuilds everything from scratch: three labs (IoT in kiosk QR + GPS mode, GPU in device-QR mode, Computing with both), a weekly timetable, students, inventory, a class representative, a workshop with a coordinator and past attendance.'));
+  const worldP = h('section', { class: 'panel stack' }, h('h2', null, 'World'), h('p', { class: 'hint' }, 'Rebuilds everything from scratch: four labs (IoT in kiosk QR + GPS mode, GPU in device-QR mode, Computing with both, and Intel Unnati AI Lab with placeholder inventory and live project/system visits), a weekly timetable, students, inventory, a class representative, a workshop with a coordinator and past attendance.'));
   const preset = h('select', { class: 'input' }, state.presets.map((p) => h('option', { value: p, selected: p === state.preset }, p)));
   const lat = h('input', { type: 'range', min: 0, max: 200, step: 5, value: state.latencyMs }), latV = h('span', { class: 'mono' }, state.latencyMs + ' ms');
   lat.addEventListener('input', () => { latV.textContent = lat.value + ' ms'; });
@@ -122,7 +122,7 @@ function stage(root) {
   // simulated GPS for every phone frame
   const g = state.geo;
   const mode = h('select', { class: 'input' }, [['inside', 'Inside the lab'], ['outside', 'Outside (250 m away)'], ['spoof', 'Faked (0.5 m accuracy)'], ['denied', 'Permission denied'], ['unavailable', 'No fix'], ['real', 'Real device GPS']].map(([v, l]) => h('option', { value: v, selected: v === g.mode }, l)));
-  const labSel = h('select', { class: 'input' }, [['A', 'IoT lab'], ['B', 'GPU lab'], ['C', 'Computing lab']].map(([v, l]) => h('option', { value: v, selected: v === (g.lab || 'A') }, l)));
+  const labSel = h('select', { class: 'input' }, [['A', 'IoT lab'], ['B', 'GPU lab'], ['C', 'Computing lab'], ['UNNATI', 'Unnati lab (demo GPS)']].map(([v, l]) => h('option', { value: v, selected: v === (g.lab || 'A') }, l)));
   const acc = h('input', { class: 'input', type: 'number', min: 1, max: 200, value: g.accuracy || 12, style: { width: '80px' } }), off = h('input', { class: 'input', type: 'number', min: 0, max: 2000, value: g.offsetM || 4, style: { width: '80px' } });
   const saveGeo = async () => { await api('geo', { mode: mode.value, lab: labSel.value, accuracy: Number(acc.value), offsetM: Number(off.value) }); toast('Phones now report: ' + mode.options[mode.selectedIndex].text); };
   [mode, labSel, acc, off].forEach((x) => x.addEventListener('change', saveGeo));

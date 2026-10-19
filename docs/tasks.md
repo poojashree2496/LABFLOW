@@ -21,7 +21,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 projects, C2 daily open lab and C3 project/system selection are implemented; see docs/projects.md, docs/openlab.md, docs/work-selection.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 projects, C2 daily open lab, C3 project/system selection and C4 automatic sign-out are implemented; see docs/projects.md, docs/openlab.md, docs/work-selection.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
 - A4 moves one read inside `Attend.rebuildSummary`. Automatic open-lab closure already calls it under an outer script lock; preserve that recovery path.
@@ -139,11 +139,10 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [ ] **C5 Intel Unnati AI Lab data** (R8)
-  - Files: `dev/world.js` (seed), `dev/scenarios.js` (if a scenario names the lab), `test/dev-world.test.js`.
-  - Placeholders now: code `UNNATI`, name "Intel Unnati AI Lab", about 30 GPU workstations (category marked `workstation`), 2 3D printers, 2 drones, dev boards, open-lab hours, a few projects. Mark placeholder values clearly.
-  - **21 Oct:** replace them with the real building, room, GPS and asset list.
-  - Done when: the Test Lab shows the lab with live students on systems.
+- [ ] **C5 Confirm Intel Unnati AI Lab data** (R8, real inputs expected 21 Oct)
+  - The demo seed is implemented; see [Unnati demo](unnati-demo.md). It has 30 marked demo workstations, sample equipment/projects and current visits in every preset.
+  - Replace the placeholder building, room, synthetic GPS/radius, capacity, hours and inventory with confirmed details in `dev/world.js`; update seed assertions and the demo notes.
+  - Verify the real geofence at the lab door during deployment. No real location or asset list has been supplied yet.
 
 ### Role audit summary (for B1)
 

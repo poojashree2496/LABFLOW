@@ -62,7 +62,7 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     setClock(IST(10, 1)); await tick(); // the 10:00 IoT class opens by itself from the timetable
     const sctx = await browser.newContext(mobile), s1 = await page(sctx, 'student1@karunya.edu', 'student');
     await s1.waitForSelector('text=Today\'s lab sessions'); await s1.waitForTimeout(400); await shot(s1, '01-student-today-mobile');
-    check('student home renders with sessions and the live lab count', await s1.locator('article').count() >= 1 && await s1.locator('.occ-card').count() === 3);
+    check('student home renders with sessions and the live lab count', await s1.locator('article').count() >= 1 && await s1.locator('.occ-card').count() === 4 && await s1.locator('.occ-card').filter({ hasText: 'Intel Unnati AI Lab' }).count() === 1);
     await s1.getByRole('button', { name: 'Device' }).last().click();
     await s1.getByRole('button', { name: 'Register this phone' }).click();
     await s1.waitForSelector('text=Device registered');

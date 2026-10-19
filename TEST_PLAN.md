@@ -1,13 +1,13 @@
 # LABFLOW test plan and results
 
-Latest local run (2026-10-19): `npm run check` passed 241 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 84 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks 23 work-selection checks and 15 automatic sign-out checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
+Latest local run (2026-10-19): `npm run check` passed 243 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 84 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks and 15 automatic sign-out checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: foundation (16), access (16), attendance (31), checkin (12), scanning (9), inventory (21), jobs (33), platform (14), api (7), dev-world (1), workflow-audit (29), contracts (3), projects (14), openlab (16), work-selection (19) | `npm test` | **241 pass, 0 fail** |
+| Backend and Test Lab seed: foundation (16), access (16), attendance (31), checkin (12), scanning (9), inventory (21), jobs (33), platform (14), api (7), dev-world (3), workflow-audit (29), contracts (3), projects (14), openlab (16), work-selection (19) | `npm test` | **243 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **84 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
@@ -29,6 +29,8 @@ Project coverage includes creation, group leadership and membership, scoped read
 Open-lab coverage includes opt-in lab settings, required opening hours, daily idempotent sessions, exact opening/closing entry gates in both QR modes, roster-free walk-ins, class/event coexistence, class prefill, delayed triggers, configuration changes and a separate monthly report bucket. Browser checks exercise settings, QR/GPS entry and exit, 390 px layout, late-entry refusal and disabling walk-ins. Automatic sign-out coverage includes exact/delayed closing, early manual closure, mixed/three automatic missed exits, last-minute entries, workstation release and interruptions before/after event, session, audit, summary, flag and completion writes. The focused browser suite checks credited time, automatic-exit badges/totals/details and phone layout. See [Daily open lab](docs/openlab.md).
 
 Project/system selection coverage includes pending projects, group/owner/lab checks, required projects at open-lab kiosk entry, workstation flags, busy/reserved systems, exact named bookings, mid-visit WORK events, unchanged attendance minutes and exit gaps, stale visit/version rejection, idempotent updates, VOID derivation, and both QR modes. Browser cases exercise category editing, project/system entry, unavailable choices, lost-response recovery, booked-system preselection and 390 px layout. See [Project and system selection](docs/work-selection.md).
+
+Unnati demo seed checks run all three presets: marked placeholder inventory, individually tracked workstation categories, distinct current system/project claims, valid pending/active projects and entry times before the initial clock. The seeded visits are also closed and reopened through the production attendance workflow. Browser inspection verified the student phone layout, admin placeholder labels and simulated Unnati GPS selection. See [Unnati demo](docs/unnati-demo.md).
 
 ## B. NOT tested: needs a real Workspace deployment
 

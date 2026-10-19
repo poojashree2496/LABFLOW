@@ -44,7 +44,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
 | R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
 | R7 | Missing | A booking stores only `purpose` | Projects with timeline and outcome | C1, C3 |
-| R8 | Partial | The demo data has an "IoT Lab" | Intel Unnati AI Lab data | C5 |
+| R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
 | R10 | Partial | Student report found by roll number, minutes per session (`Reports._student`) | Total hours and distinct days | B5 |
 | R11 | Partial | Asset usage report counts loans and units (`Reports._assetUsage`) | Distinct people and purposes per system | B5 |
