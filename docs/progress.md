@@ -77,12 +77,13 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 - A site-theme switcher with a live preview as any role, and data/mail/audit browsers.
 
 **Docs**
-- README, SECURITY, TEST_PLAN, docs/tasks.md, docs/progress.md, the SRS PDF
+- README, SECURITY, TEST_PLAN, CONTRIBUTING, docs/requirements.md (teacher brief v2), docs/tasks.md, docs/progress.md, the SRS PDF
 
 ## Log
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | Captured the course teacher's v2 brief as R1-R18 with status, decisions and frozen contracts (docs/requirements.md); split the work into WS-A/B/C plus shared tasks (docs/tasks.md); added CONTRIBUTING.md. Docs only. | `npm run check`: lint and 167 backend tests passed (no code changed). |
 | 2026-10-18 | Preserved the complete issue payload while submitting or confirming an uncertain outcome; freezes editing until confirmation, retains the original request key across retries, and allows correction after a definite refusal. Refreshes collection guidance while the idle form remains open. | `npm run check`: lint and 167 backend tests passed. `npm run sim`: 27/27 passed. Isolated Brave: `npm run e2e` 83/83, `npm run e2e:issue` 33/33, including a real server-committed issue with interrupted confirmation and no duplicate loan. `git diff --check`: passed. |
 | 2026-10-18 | Added booking collection details from the server-defined early-collection window, checklist validation for reserved resources and exact named units, booking-end due dates, and a success action opening the new loan for return. | `npm run check`: lint and 167 backend tests passed, including the collection-window assertion. `CHROMIUM_PATH=… npm run e2e:issue`: 26 checks passed with isolated Brave. `git diff --check`: passed. |
 | 2026-10-18 | Added a live issue checklist for equipment requests and kits, strict quantity/combined-stock validation, extra-item warnings, separate picks for multiple individually tracked kit units, and a safe limit for oversized kits. | `npm run check`: lint and 167 backend tests passed. `CHROMIUM_PATH=… npm run e2e:issue`: 19 checks passed with isolated Brave, including phone layout and real kit checkout on fakes; checklist screenshot visually inspected. `git diff --check`: passed. |
