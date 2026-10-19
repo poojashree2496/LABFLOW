@@ -59,7 +59,16 @@ var Admin = {
   auditList: function (ctx, p) {
     p = p || {};
     var limit = V.int(p.limit, 'Limit', 1, 300, { optional: true, def: 100 }), action = p.action ? V.str(p.action, 'Action', { max: 60 }) : '', actor = p.actor ? V.str(p.actor, 'Actor', { max: 120 }).toLowerCase() : '';
-    var rows = Db.tail('AuditEvents', 1500).filter(function (e) { return (!action || e.action.indexOf(action) === 0) && (!actor || String(e.actor).toLowerCase().indexOf(actor) >= 0); }).reverse().slice(0, limit);
+    var scoped = Auth.scopedHod(ctx), visible = {};
+    if (scoped) {
+      var allowed = Auth.labFilter(ctx), students = Auth.studentFilter(ctx);
+      var tables = {Labs:'labId',Sessions:'sessionId',Assets:'assetId',Loans:'loanId',Reservations:'reservationId',EquipmentRequests:'requestId',Events:'labEventId',Projects:'projectId',Groups:'groupId',Kiosks:'kioskId'};
+      Object.keys(tables).forEach(function(t){Db.where(t,function(x){return allowed(x.labId);}).forEach(function(x){visible[x[tables[t]]]=true;});});
+      Db.where('StudentProfiles',function(s){return students(s.studentId);}).forEach(function(s){visible[s.studentId]=true;});
+      Users.listUsers(ctx).users.forEach(function(u){visible[u.userId]=true;});
+      Db.where('AttendanceEvents',function(e){return visible[e.sessionId];}).forEach(function(e){visible[e.eventId]=true;});
+    }
+    var rows = Db.tail('AuditEvents', 1500).filter(function (e) { return (!scoped || visible[e.entityId]) && (!action || e.action.indexOf(action) === 0) && (!actor || String(e.actor).toLowerCase().indexOf(actor) >= 0); }).reverse().slice(0, limit);
     return { events: rows.map(function (e) { return { seq: e.seq, at: e.at, actor: e.actor, role: e.role, action: e.action, entityType: e.entityType, entityId: e.entityId, result: e.result, detail: e.detail, hash: e.hash.slice(0, 12) }; }) };
   },
   auditVerify: function (ctx) {
@@ -119,7 +128,31 @@ var Admin = {
 /** Dashboard summaries computed from live data only. */
 var Dash = {
   // v2 stubs (docs/requirements.md section 4); each task replaces its own.
-  hod: function () { notBuilt_('B3'); },
+  hod: function (ctx, p) {
+    return Locks.with(function () {
+      var allowed = Auth.labFilter(ctx), studentAllowed = Auth.studentFilter(ctx), now = U.now(), today = U.local(now).date;
+      var days = V.int(p && p.days, 'Days', 3, 60, {optional:true,def:14}), from = U.addDays(today, -(days-1));
+      var labs = Db.where('Labs', function(l){return l.status === 'active' && allowed(l.labId);});
+      var sessions = Db.where('Sessions', function(s){return allowed(s.labId);}), ids = U.indexBy(sessions,'sessionId');
+      var loans = Db.where('Loans',function(l){return allowed(l.labId) && (l.status === 'open' || l.status === 'partial');});
+      var assets = Db.where('Assets',function(a){return allowed(a.labId);}), stock = {individual:0,onLoan:0,quantityUnits:0,quantityOut:0,damaged:0,missing:0};
+      assets.forEach(function(a){if(a.trackingMode === 'individual'){stock.individual++;if(a.status === 'on_loan')stock.onLoan++;}else{stock.quantityUnits+=a.quantityTotal;stock.quantityOut+=a.quantityTotal-a.quantityAvailable;}if(a.condition === 'damaged' || a.status === 'damaged')stock.damaged++;if(a.status === 'missing')stock.missing++;});
+      var perDay = {}; for(var i=0;i<days;i++)perDay[U.addDays(from,i)]={sessions:0,present:0};
+      sessions.forEach(function(s){if(perDay[s.date] && (s.status === 'open'||s.status === 'closed'))perDay[s.date].sessions++;});
+      Db.where('AttendanceSummaries',function(x){return ids[x.sessionId] && perDay[ids[x.sessionId].date] && x.status !== 'absent';}).forEach(function(x){perDay[ids[x.sessionId].date].present++;});
+      var roles = {}; Cfg.ROLES.forEach(function(r){roles[r]=0;}); Users.listUsers(ctx).users.forEach(function(u){if(u.status === 'active')u.roles.forEach(function(r){roles[r]++;});});
+      var queues = {pendingStudents:Db.where('StudentProfiles',function(s){return studentAllowed(s.studentId)&&s.status==='pending';}).length,
+        pendingCredentials:Db.where('DeviceCredentials',function(c){return studentAllowed(c.studentId)&&c.status==='pending';}).length,
+        pendingBookings:Db.where('Reservations',function(r){return allowed(r.labId)&&r.status==='pending';}).length,
+        pendingEquipment:Db.where('EquipmentRequests',function(r){return allowed(r.labId)&&r.status==='pending';}).length,
+        openFlags:Db.where('Flags',function(f){return allowed(f.labId)&&f.status==='open';}).length,
+        activeLoans:loans.length,overdueLoans:loans.filter(function(l){return l.dueAt<now;}).length,damaged:stock.damaged,missing:stock.missing,
+        pendingCorrections:Db.where('AttendanceEvents',function(e){return ids[e.sessionId]&&e.source==='manual'&&e.approvalStatus==='pending';}).length};
+      return {department:Auth.department(ctx),labIds:labs.map(function(l){return l.labId;}),labCount:labs.length,users:roles,
+        openSessions:sessions.filter(function(s){return s.status==='open';}).length,stock:stock,queues:queues,
+        occupancy:labs.map(function(l){return Occupancy.lab(l.labId);}),attendanceByDay:Object.keys(perDay).sort().map(function(d){return {date:d,sessions:perDay[d].sessions,present:perDay[d].present};}),serverNow:now};
+    });
+  },
   student: function (ctx) {
     if (!ctx.student) return { profile: null };
     var sid = ctx.student.studentId, now = U.now();
@@ -137,7 +170,8 @@ var Dash = {
     var flags = Flags.list(ctx, { status: 'open' }).flags.length;
     return { today: today, sessions: mine.length, open: mine.filter(function (s) { return s.status === 'open'; }).length, pendingResearch: pending, openFlags: flags, serverNow: U.now() };
   },
-  staff: function () {
+  staff: function (ctx) {
+    if (Auth.scopedHod(ctx)) { var d = Dash.hod(ctx); return Object.assign({}, d.queues, {occupancy:d.occupancy,serverNow:d.serverNow}); }
     var now = U.now();
     var loans = Db.where('Loans', function (l) { return l.status === 'open' || l.status === 'partial'; });
     return {
@@ -152,18 +186,20 @@ var Dash = {
     };
   },
   /** Live activity across labs for the staff dashboard: the latest accepted scans and loan movements. */
-  activity: function () {
+  activity: function (ctx) {
+    var allowed = Auth.labFilter(ctx);
     var labs = U.indexBy(Db.readAll('Labs'), 'labId');
-    var scans = Db.tail('AttendanceEvents', 80).filter(function (e) { return e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT'; }).slice(-25).reverse().map(function (e) {
+    var scans = Db.tail('AttendanceEvents', 80).filter(function (e) { return allowed(e.labId) && (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT'); }).slice(-25).reverse().map(function (e) {
       var st = Db.cachedGet('StudentProfiles', 'studentId', e.studentId, 300) || {};
       return { kind: 'scan', at: e.at, type: e.type, name: st.name, rollNo: st.rollNo, labCode: (labs[e.labId] || {}).code, method: e.method || e.source, mode: e.mode, scannerRole: e.scannerRole, assurance: e.assurance };
     });
-    var moves = Db.tail('AssetEvents', 40).slice(-15).reverse().map(function (x) { var a = Db.cachedGet('Assets', 'assetId', x.assetId, 300) || {}; return { kind: 'asset', at: x.at, type: x.type, name: a.name, qty: x.qtyDelta, by: x.by }; });
+    var moves = Db.tail('AssetEvents', 40).filter(function(x){var a=Db.get('Assets',x.assetId);return a&&allowed(a.labId);}).slice(-15).reverse().map(function (x) { var a = Db.cachedGet('Assets', 'assetId', x.assetId, 300) || {}; return { kind: 'asset', at: x.at, type: x.type, name: a.name, qty: x.qtyDelta, by: x.by }; });
     return { items: scans.concat(moves).sort(function (a, b) { return b.at - a.at; }).slice(0, 30), serverNow: U.now() };
   },
   admin: function (ctx, p) {
+    if (Auth.scopedHod(ctx)) { var d=Dash.hod(ctx,p);return Object.assign({},d,{labs:d.labCount}); }
     var now = U.now(), today = U.local(now).date, days = V.int(p && p.days, 'Days', 3, 60, { optional: true, def: 14 });
-    var users = Db.readAll('Users'), roleCount = { student: 0, faculty: 0, staff: 0, admin: 0 };
+    var users = Db.readAll('Users'), roleCount = { student: 0, faculty: 0, staff: 0, admin: 0, hod: 0 };
     users.forEach(function (u) { if (u.status === 'active') String(u.roles).split(',').forEach(function (r) { if (roleCount[r] !== undefined) roleCount[r]++; }); });
     var from = U.addDays(today, -(days - 1)), sessions = Db.where('Sessions', function (s) { return s.date >= from && s.date <= today && (s.status === 'closed' || s.status === 'open'); });
     var byId = {}; sessions.forEach(function (s) { byId[s.sessionId] = s; });

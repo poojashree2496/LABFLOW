@@ -5,11 +5,11 @@
  */
 var Labs = {
   list: function (ctx, p) {
-    var all = !!(p && p.includeInactive && (ctx.has('admin') || ctx.has('staff')));
-    return { labs: Db.readAll('Labs').filter(function (l) { return all || l.status === 'active'; }).map(Labs._pub), defaultMode: Settings.get('defaultCheckinMode') };
+    var all = !!(p && p.includeInactive && Auth.canView(ctx)), allowed = Auth.labFilter(ctx);
+    return { labs: Db.readAll('Labs').filter(function (l) { return allowed(l.labId) && (all || l.status === 'active'); }).map(Labs._pub), defaultMode: Settings.get('defaultCheckinMode') };
   },
   _pub: function (l) {
-    return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, notes: l.notes,
+    return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, department: l.department || '', notes: l.notes,
              latitude: l.latitude, longitude: l.longitude, radiusM: l.radiusM, openTime: l.openTime, closeTime: l.closeTime, checkinMode: l.checkinMode || '',
              mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '', openLab: l.openLab === true };
   },
@@ -42,6 +42,7 @@ var Labs = {
       if (rec.closeTime <= rec.openTime) fail('BAD_INPUT', 'Closing time must be after opening time.');
     }
     var existing = p.labId ? Db.mustGet('Labs', V.id(p.labId, 'Lab', 'lab'), 'Lab') : null;
+    rec.department = V.str(p.department === undefined ? existing && existing.department || '' : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
     rec.openLab = p.openLab === undefined ? !!(existing && existing.openLab) : V.bool(p.openLab);
     if (rec.openLab && !rec.openTime) fail('BAD_INPUT', 'Set opening and closing times before enabling open lab.');
     if (p.inchargeEmails) {
@@ -152,8 +153,9 @@ var Occupancy = {
     try { cache.put(key, JSON.stringify(out), Settings.get('occupancyRefreshSeconds')); } catch (e) {}
     return out;
   },
-  list: function () {
-    return { labs: Db.where('Labs', function (l) { return l.status === 'active'; }).map(function (l) { return Occupancy.lab(l.labId); }), refreshSeconds: Settings.get('occupancyRefreshSeconds'), serverNow: U.now() };
+  list: function (ctx) {
+    var allowed = Auth.labFilter(ctx);
+    return { labs: Db.where('Labs', function (l) { return l.status === 'active' && allowed(l.labId); }).map(function (l) { return Occupancy.lab(l.labId); }), refreshSeconds: Settings.get('occupancyRefreshSeconds'), serverNow: U.now() };
   },
   /** The open session in this lab the student is currently inside, or null. */
   insideSession: function (studentId, labId) {
@@ -165,7 +167,7 @@ var Occupancy = {
 
 var Kiosks = {
   _pub: function (k) { return { kioskId: k.kioskId, labId: k.labId, name: k.name, authorizedEmail: k.authorizedEmail, status: k.status, lastSeenAt: k.lastSeenAt }; },
-  list: function () { return { kiosks: Db.readAll('Kiosks').map(Kiosks._pub) }; },
+  list: function (ctx) { var allowed = Auth.labFilter(ctx); return { kiosks: Db.readAll('Kiosks').filter(function(k){return allowed(k.labId);}).map(Kiosks._pub) }; },
   upsert: function (ctx, p) {
     V.obj(p);
     var email = V.email(p.authorizedEmail, 'Kiosk account email');
@@ -196,7 +198,7 @@ var Kiosks = {
 
 var Courses = {
   _pub: function (c) { return { courseId: c.courseId, code: c.code, name: c.name, department: c.department, semester: c.semester, status: c.status }; },
-  list: function () { return { courses: Db.readAll('Courses').map(Courses._pub) }; },
+  list: function (ctx) { var allowed = Auth.courseFilter(ctx); return { courses: Db.readAll('Courses').filter(function(c){return allowed(c.courseId);}).map(Courses._pub) }; },
   upsert: function (ctx, p) {
     V.obj(p);
     var rec = { code: V.str(p.code, 'Course code', { max: 20, re: /^[A-Za-z0-9_-]+$/ }).toUpperCase(), name: V.str(p.name, 'Name', { max: 100 }),
@@ -293,11 +295,12 @@ var Roster = {
   list: function (ctx, p) {
     V.obj(p);
     var scopeType = p.sessionId ? 'session' : 'course', scopeId = p.sessionId ? V.id(p.sessionId, 'Session', 'session') : V.id(p.courseId, 'Course', 'course');
-    if (scopeType === 'session') { var ses = Db.mustGet('Sessions', scopeId, 'Session'); if (!ctx.has('staff') && !Auth.ownsSession(ctx, ses)) fail('FORBIDDEN', 'This is not your session.'); }
-    else if (!ctx.has('admin') && !ctx.has('staff')) {
+    if (scopeType === 'session') { var ses = Db.mustGet('Sessions', scopeId, 'Session'); if (!Auth.canView(ctx) && !Auth.ownsSession(ctx, ses)) fail('FORBIDDEN', 'This is not your session.'); }
+    else if (!Auth.canView(ctx)) {
       var mine = Db.where('FacultyCourses', function (m) { return ctx.faculty && m.facultyId === ctx.faculty.facultyId && m.courseId === scopeId && m.status === 'active'; });
       if (!mine.length) fail('FORBIDDEN', 'This is not your course.');
     }
+    if (Auth.scopedHod(ctx)) { if (scopeType === 'session') Auth.assertLab(ctx, ses.labId); else if (!Auth.courseFilter(ctx)(scopeId)) fail('FORBIDDEN','This course is outside your department scope.'); }
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
     var rows = Db.where('Rosters', function (r) { return r.scopeType === scopeType && r.scopeId === scopeId && r.status === 'active'; });
     return { roster: rows.map(function (r) { var s = profiles[r.studentId] || {}; return { rosterId: r.rosterId, studentId: r.studentId, rollNo: s.rollNo, name: s.name, section: s.section, status: s.status }; })
@@ -339,7 +342,8 @@ var Roster = {
 var FacultyCourses = {
   list: function (ctx) {
     var faculty = U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId'), courses = U.indexBy(Db.readAll('Courses'), 'courseId');
-    var rows = Db.readAll('FacultyCourses').filter(function (m) { return m.status === 'active' && (ctx.has('admin') || ctx.has('staff') || (ctx.faculty && m.facultyId === ctx.faculty.facultyId)); });
+    var rows = Db.readAll('FacultyCourses').filter(function (m) { return m.status === 'active' && (Auth.canView(ctx) || (ctx.faculty && m.facultyId === ctx.faculty.facultyId)); });
+    var allowed = Auth.courseFilter(ctx); rows = rows.filter(function(r){return allowed(r.courseId);});
     return { mappings: rows.map(function (m) { return { mapId: m.mapId, facultyId: m.facultyId, facultyName: (faculty[m.facultyId] || {}).name, courseId: m.courseId, courseCode: (courses[m.courseId] || {}).code, courseName: (courses[m.courseId] || {}).name, section: m.section, term: m.term }; }) };
   },
   set: function (ctx, p) {
@@ -382,7 +386,7 @@ var Timetable = {
   list: function (ctx, p) {
     p = p || {};
     var rows = Db.where('Timetable', function (s) { return s.status === 'active'; });
-    if (ctx.has('admin') || ctx.has('staff')) { if (p.labId) rows = rows.filter(function (s) { return s.labId === p.labId; }); }
+    if (Auth.canView(ctx)) { var allowed = Auth.labFilter(ctx); rows = rows.filter(function(s){return allowed(s.labId);}); if (p.labId) rows = rows.filter(function (s) { return s.labId === p.labId; }); }
     else if (ctx.has('faculty') && ctx.faculty) rows = rows.filter(function (s) { return s.facultyId === ctx.faculty.facultyId; });
     else if (ctx.has('student') && ctx.student) {
       var mine = {}; Db.where('Rosters', function (r) { return r.scopeType === 'course' && r.studentId === ctx.student.studentId && r.status === 'active'; }).forEach(function (r) { mine[r.scopeId] = true; });

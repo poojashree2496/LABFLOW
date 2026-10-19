@@ -446,7 +446,8 @@ var Attend = {
   roster: function (ctx, p) {
     V.obj(p);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('staff') || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
+    if (!(Auth.canView(ctx) || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
+    Auth.assertLab(ctx, session.labId);
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var eligible = session.openToAll ? {} : Roster.eligibleSet(session), ids = Object.assign({}, eligible);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
@@ -718,7 +719,8 @@ var Attend = {
   studentEvents: function (ctx, p) {
     V.obj(p);
     var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('staff') || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'This is not your session.');
+    if (!(Auth.canView(ctx) || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'This is not your session.');
+    Auth.assertLab(ctx, s.labId);
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });

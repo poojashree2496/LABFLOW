@@ -94,7 +94,35 @@ var Auth = {
   /** Read access to department-wide data (coordinator, HOD, super admin). Use for reads only, never for writes. */
   canView: function (ctx) { return ctx.has('admin') || ctx.has('staff') || ctx.has('hod'); },
   /** Lab ids this account may see (task B3). */
-  labScope: function () { notBuilt_('B3'); },
+  scopedHod: function (ctx) { return !!(ctx && ctx.has('hod') && !ctx.has('admin') && !ctx.has('staff')); },
+  hodOnly: function (ctx) { return !!(ctx && ctx.has('hod') && !['student', 'faculty', 'staff', 'admin', 'kiosk'].some(function (r) { return ctx.has(r); })); },
+  HOD_ACTIONS: ('me profile.update notifications.list notifications.read dash.hod dash.admin dash.staff activity.feed labs.list labs.occupancy labs.live systems.status sessions.day sessions.get attend.roster attend.studentEvents flags.list events.list events.mine events.guests classreps.list students.list courses.list timetable.list facultycourses.list roster.list assets.list assets.history loans.list loans.get booking.list booking.check equipment.list audit.list users.list kiosks.list reports.run reports.csv reports.pdf categories.list catalog.list kits.list groups.list directory.faculty projects.get projects.list').split(' '),
+  department: function (ctx) { var user = ctx && ctx.user && Db.get('Users', ctx.user.userId); return String(user && user.department || '').trim().toUpperCase(); },
+  labScope: function (ctx) {
+    var scoped = Auth.scopedHod(ctx), dept = scoped ? Auth.department(ctx) : '';
+    return Db.where('Labs', function (l) { var d = String(l.department || '').trim().toUpperCase(); return !scoped || !d || (!!dept && d === dept); }).map(function (l) { return l.labId; });
+  },
+  labFilter: function (ctx) { var scope = Auth.scopedHod(ctx) ? Auth.labScope(ctx) : null; return function (id) { return !scope || scope.indexOf(id) >= 0; }; },
+  assertLab: function (ctx, id) { if (!Auth.labFilter(ctx)(id)) fail('FORBIDDEN', 'This lab is outside your department scope.'); },
+  courseFilter: function (ctx) {
+    if (!Auth.scopedHod(ctx)) return function () { return true; };
+    var dept = Auth.department(ctx), labs = Auth.labFilter(ctx), ids = {};
+    Db.readAll('Courses').forEach(function (c) { var d = String(c.department || '').trim().toUpperCase(); if (!d || (dept && d === dept)) ids[c.courseId] = true; });
+    ['Sessions', 'Timetable'].forEach(function (t) { Db.where(t, function (x) { return labs(x.labId); }).forEach(function (x) { if (x.courseId) ids[x.courseId] = true; }); });
+    return function (id) { return !!ids[id]; };
+  },
+  studentFilter: function (ctx) {
+    if (!Auth.scopedHod(ctx)) return function () { return true; };
+    var dept = Auth.department(ctx), courses = Auth.courseFilter(ctx), labs = Auth.labFilter(ctx), ids = {}, sessions = {}, groups = {};
+    Db.readAll('StudentProfiles').forEach(function (s) { if (dept && String(s.department || '').trim().toUpperCase() === dept) ids[s.studentId] = true; });
+    Db.where('Sessions', function (s) { return labs(s.labId); }).forEach(function (s) { sessions[s.sessionId] = true; });
+    Db.where('Rosters', function (r) { return r.status === 'active' && (r.scopeType === 'session' ? sessions[r.scopeId] : courses(r.scopeId)); }).forEach(function (r) { ids[r.studentId] = true; });
+    Db.where('AttendanceEvents', function (e) { return sessions[e.sessionId]; }).forEach(function (e) { ids[e.studentId] = true; });
+    Db.where('Groups', function (g) { return labs(g.labId); }).forEach(function (g) { groups[g.groupId] = true; });
+    Db.where('Projects', function(p){return labs(p.labId);}).forEach(function(p){ids[p.ownerStudentId]=true;});
+    Db.where('GroupMembers', function (m) { return groups[m.groupId]; }).forEach(function (m) { ids[m.studentId] = true; });
+    return function (id) { return !!ids[id]; };
+  },
   requireRole: function (ctx, roles) {
     if (!roles.some(function (r) { return ctx.has(r); })) fail('FORBIDDEN', 'You do not have permission to do that.');
   },
@@ -111,6 +139,7 @@ var Auth = {
    * checks, corrections and photos stay with the faculty owner.
    */
   canOperate: function (ctx, session) {
+    if (Auth.hodOnly(ctx)) return false;
     if (Auth.ownsSession(ctx, session)) return true;
     if (Events.isCoordinator(ctx, session)) return true;
     return !!(ctx.student && session.date === U.local(U.now()).date && ClassReps.isRepFor(ctx.student.studentId, session));

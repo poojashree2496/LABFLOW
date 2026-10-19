@@ -29,6 +29,18 @@ var Reports = {
     var admin = ctx.has('admin'), staff = ctx.has('staff');
     if (type === 'audit') { if (!admin) fail('FORBIDDEN', 'Only administrators can export the audit trail.'); return {}; }
     if (type === 'erp') { if (!admin) fail('FORBIDDEN', 'Only administrators can export the ERP file.'); return {}; }
+    if (Auth.scopedHod(ctx)) {
+      var labs = Auth.labScope(ctx), scope = { reportLabIds: labs, reportFacultyId: '' };
+      if (p.labId && labs.indexOf(V.id(p.labId, 'Lab', 'lab')) < 0) fail('FORBIDDEN', 'This lab is outside your department scope.');
+      if (type === 'session') { var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session'); Auth.assertLab(ctx, session.labId); scope.sessionId = session.sessionId; }
+      if (type === 'student') { scope.studentId = V.id(p.studentId, 'Student', 'student'); if (!Auth.studentFilter(ctx)(scope.studentId)) fail('FORBIDDEN', 'This student is outside your department scope.'); }
+      if (type === 'faculty') {
+        scope.facultyId = V.id(p.facultyId, 'Faculty', 'faculty');
+        var f = Db.mustGet('FacultyProfiles', scope.facultyId, 'Faculty'), d = String(f.department || '').trim().toUpperCase();
+        if (d && d !== Auth.department(ctx) && !Db.where('Sessions', function(s){return s.facultyId === f.facultyId && labs.indexOf(s.labId) >= 0;}).length) fail('FORBIDDEN','This faculty member is outside your department scope.');
+      }
+      return scope;
+    }
     if (type === 'systemUsage' || type === 'projects') {
       if (admin || staff) return { reportLabIds: null, reportFacultyId: '' };
       if (ctx.has('hod')) {
@@ -67,7 +79,7 @@ var Reports = {
     V.obj(p);
     var type = V.enumOf(p.type, 'Report type', Reports.TYPES);
     var build = function () { var scope = Reports._authorize(ctx, type, p); return Reports.build(type, Object.assign({}, p, scope)); };
-    return ['student', 'systemUsage', 'projects'].indexOf(type) >= 0 ? Locks.with(build) : build();
+    return Auth.scopedHod(ctx) || ['student', 'systemUsage', 'projects'].indexOf(type) >= 0 ? Locks.with(build) : build();
   },
 
   build: function (type, p) {
@@ -84,8 +96,8 @@ var Reports = {
     return rep;
   },
 
-  _sessionsIn: function (r, pred) {
-    return Db.where('Sessions', function (s) { return s.date >= r.from && s.date <= r.to && s.status !== 'cancelled' && s.status !== 'pending_approval' && (!pred || pred(s)); });
+  _sessionsIn: function (r, pred, p) {
+    return Db.where('Sessions', function (s) { return s.date >= r.from && s.date <= r.to && s.status !== 'cancelled' && s.status !== 'pending_approval' && Reports._reportLab(p || {}, s.labId) && (!pred || pred(s)); });
   },
   _sumsBySession: function (sessionIds) {
     var set = {}; sessionIds.forEach(function (id) { set[id] = true; });
@@ -110,7 +122,7 @@ var Reports = {
   _digest: function (p) {
     var date = p.date ? V.date(p.date, 'Date') : U.local(U.now()).date, labId = Reports._labFilter(p);
     var from = U.dayStart(date), to = U.dayStart(U.addDays(date, 1)), lab = labId ? Db.mustGet('Labs', labId, 'Lab') : null;
-    var sessions = Db.where('Sessions', function (s) { return s.date === date && (!labId || s.labId === labId) && (s.status === 'open' || s.status === 'closed'); });
+    var sessions = Db.where('Sessions', function (s) { return s.date === date && Reports._reportLab(p, s.labId) && (!labId || s.labId === labId) && (s.status === 'open' || s.status === 'closed'); });
     var sesIds = {}; sessions.forEach(function (s) { sesIds[s.sessionId] = s; });
     var events = Db.where('AttendanceEvents', function (e) { return sesIds[e.sessionId]; });
     var eff = Attend._effective(events), visitors = {}, hourly = {}, deltas = [];
@@ -131,9 +143,9 @@ var Reports = {
     var sums = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), unverified = 0;
     Object.keys(sums).forEach(function (k) { sums[k].forEach(function (x) { if (x.status === 'unverified_exit') unverified++; }); });
     var now = U.now(), unreturned = 0;
-    var openLoans = U.indexBy(Db.where('Loans', function (l) { return (l.status === 'open' || l.status === 'partial') && (!labId || l.labId === labId) && l.dueAt < to; }), 'loanId');
+    var openLoans = U.indexBy(Db.where('Loans', function (l) { return (l.status === 'open' || l.status === 'partial') && Reports._reportLab(p, l.labId) && (!labId || l.labId === labId) && l.dueAt < to; }), 'loanId');
     Db.where('LoanItems', function (i) { return i.status === Assets.OUT && openLoans[i.loanId]; }).forEach(function (i) { unreturned += i.qtyIssued - i.qtyReturned - i.qtyConsumed - i.qtyDamaged - i.qtyMissing; });
-    var flags = Db.where('Flags', function (f) { return f.createdAt >= from && f.createdAt < to && (!labId || f.labId === labId); });
+    var flags = Db.where('Flags', function (f) { return f.createdAt >= from && f.createdAt < to && Reports._reportLab(p, f.labId) && (!labId || f.labId === labId); });
     var rows = Object.keys(hourly).map(Number).filter(function (k) { return hourly[k].ins || hourly[k].outs || hourly[k].peak; })
       .map(function (k) { return [U.p2(k) + ':00', hourly[k].ins, hourly[k].outs, hourly[k].peak]; });
     var flagRows = flags.map(function (f) { var st = Db.cachedGet('StudentProfiles', 'studentId', f.studentId, 300) || {}; return [U.local(f.createdAt).time, (Flags.TYPES[f.type] || {}).label || f.type, f.severity, st.rollNo || '', f.status]; });
@@ -156,7 +168,7 @@ var Reports = {
     var month = p.month ? V.str(p.month, 'Month', { re: /^\d{4}-(0[1-9]|1[0-2])$/ }) : U.local(U.now()).month;
     var from = month + '-01', next = U.local(U.fromLocal(from, '12:00') + 32 * 86400000), to = U.addDays(next.y + '-' + U.p2(next.m) + '-01', -1);
     var r = { from: from, to: to }, fromMs = U.dayStart(from), toMs = U.dayStart(U.addDays(to, 1)), ref = Sessions._ref();
-    var sessions = Reports._sessionsIn(r), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), perCourse = {};
+    var sessions = Reports._sessionsIn(r, null, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), perCourse = {};
     sessions.forEach(function (s) {
       var key = s.courseId ? 'c:' + s.courseId : (s.type === 'openlab' ? 'Open lab' : s.type === 'event' ? 'Events and workshops' : 'Research and self-work');
       var a = perCourse[key] || (perCourse[key] = { sessions: 0, students: {}, minutes: 0, present: 0, seats: 0 });
@@ -168,25 +180,25 @@ var Reports = {
       return [c ? c.code : k, c ? c.name : '', a.sessions, Object.keys(a.students).length, a.seats ? Math.round(a.present * 100 / a.seats) : 0, Reports._r1(a.minutes / 60)];
     }).sort(function (x, y) { return y[5] - x[5]; });
     var assets = U.indexBy(Db.readAll('Assets'), 'assetId'), ws = {};
-    Db.where('Reservations', function (x) { return x.resourceType === 'asset' && x.startAt < toMs && x.endAt > fromMs && (x.status === 'approved' || x.status === 'completed' || x.status === 'expired' || x.status === 'fulfilled'); }).forEach(function (x) {
+    Db.where('Reservations', function (x) { return Reports._reportLab(p, x.labId) && x.resourceType === 'asset' && x.startAt < toMs && x.endAt > fromMs && (x.status === 'approved' || x.status === 'completed' || x.status === 'expired' || x.status === 'fulfilled'); }).forEach(function (x) {
       if (x.status === 'expired' && !/No-show/.test(x.decisionNote || '')) return;
       var a = ws[x.resourceId] || (ws[x.resourceId] = { booked: 0, used: 0, noShows: 0 }), hrs = (Math.min(x.endAt, toMs) - Math.max(x.startAt, fromMs)) / 3600000;
       a.booked += hrs; if (x.usedAt) a.used += hrs; else if (x.status === 'expired') a.noShows++;
     });
     var wsRows = Object.keys(ws).map(function (id) { var a = ws[id], s = assets[id] || {}; return [s.assetTag || '', s.name || id, Reports._r1(a.booked), Reports._r1(a.used), a.booked ? Math.round(a.used * 100 / a.booked) : 0, a.noShows]; });
-    var cats = U.indexBy(Db.readAll('Categories'), 'categoryId'), loans = U.indexBy(Db.where('Loans', function (l) { return l.issuedAt >= fromMs && l.issuedAt < toMs && l.status !== 'failed'; }), 'loanId'), turn = {};
+    var cats = U.indexBy(Db.readAll('Categories'), 'categoryId'), loans = U.indexBy(Db.where('Loans', function (l) { return Reports._reportLab(p, l.labId) && l.issuedAt >= fromMs && l.issuedAt < toMs && l.status !== 'failed'; }), 'loanId'), turn = {};
     Db.where('LoanItems', function (i) { return loans[i.loanId] && i.status !== 'voided'; }).forEach(function (i) {
       var t = turn[i.categoryId] || (turn[i.categoryId] = { loans: {}, units: 0, consumed: 0, damaged: 0, missing: 0 });
       t.loans[i.loanId] = true; t.units += i.qtyIssued; t.consumed += i.qtyConsumed; t.damaged += i.qtyDamaged; t.missing += i.qtyMissing;
     });
     var turnRows = Object.keys(turn).map(function (k) { var t = turn[k]; return [(cats[k] || {}).name || k, Object.keys(t.loans).length, t.units, t.consumed, t.damaged, t.missing]; }).sort(function (x, y) { return y[2] - x[2]; });
     var spot = { confirmed: 0, mismatch: 0, absent: 0, pending: 0 };
-    Db.where('SpotChecks', function (c) { return c.requestedAt >= fromMs && c.requestedAt < toMs; }).forEach(function (c) { spot[c.outcome] = (spot[c.outcome] || 0) + 1; });
+    Db.where('SpotChecks', function (c) { return c.requestedAt >= fromMs && c.requestedAt < toMs && Db.get('Sessions', c.sessionId) && Reports._reportLab(p, Db.get('Sessions', c.sessionId).labId); }).forEach(function (c) { spot[c.outcome] = (spot[c.outcome] || 0) + 1; });
     var spotTotal = spot.confirmed + spot.mismatch + spot.absent;
     return {
       title: 'Monthly audit - ' + month,
       summary: [['Sessions', sessions.length], ['Verified student-hours', Reports._r1(courseRows.reduce(function (a, x) { return a + x[5]; }, 0))], ['Spot checks resolved', spotTotal],
-                ['Spot-check mismatches or absences', spot.mismatch + spot.absent], ['Open flags at month end', Db.where('Flags', function (f) { return f.status === 'open' && f.createdAt < toMs; }).length]],
+                ['Spot-check mismatches or absences', spot.mismatch + spot.absent], ['Open flags at month end', Db.where('Flags', function (f) { return f.status === 'open' && f.createdAt < toMs && Reports._reportLab(p, f.labId); }).length]],
       sections: [
         { title: 'Student-hours per course', columns: ['Course', 'Name', 'Sessions', 'Students', 'Attendance %', 'Verified student-hours'], rows: courseRows },
         { title: 'Workstation utilisation (booked vs used)', columns: ['Tag', 'Workstation', 'Booked hours', 'Used hours', 'Used %', 'No-shows'], rows: wsRows },
@@ -200,7 +212,7 @@ var Reports = {
   /** FR-36 custom range (workshops, hackathons, assessment weeks): sessions, and verified hours per student. */
   _custom: function (p) {
     var r = Reports._range(p, 7), labId = Reports._labFilter(p), ref = Sessions._ref();
-    var sessions = Reports._sessionsIn(r, function (s) { return !labId || s.labId === labId; }).sort(function (a, b) { return a.scheduledStart - b.scheduledStart; });
+    var sessions = Reports._sessionsIn(r, function (s) { return !labId || s.labId === labId; }, p).sort(function (a, b) { return a.scheduledStart - b.scheduledStart; });
     var by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; }));
     var sesRows = sessions.map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []);
@@ -236,7 +248,7 @@ var Reports = {
 
   /** FR-39 ERP export: raw attendance rows in a fixed column order (one row per student per session). */
   _erp: function (p) {
-    var r = Reports._range(p, 30), ref = Sessions._ref(), sessions = U.indexBy(Reports._sessionsIn(r, function (s) { return s.status === 'closed'; }), 'sessionId');
+    var r = Reports._range(p, 30), ref = Sessions._ref(), sessions = U.indexBy(Reports._sessionsIn(r, function (s) { return s.status === 'closed'; }, p), 'sessionId');
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), methods = {};
     Db.where('AttendanceEvents', function (e) { return sessions[e.sessionId] && (e.type === 'IN' || e.type === 'CORR_IN'); }).forEach(function (e) { methods[e.sessionId + '|' + e.studentId] = e.method || e.source; });
     var rows = Db.where('AttendanceSummaries', function (x) { return sessions[x.sessionId]; }).map(function (x) {
@@ -249,7 +261,7 @@ var Reports = {
   _daily: function (p) {
     var date = p.date ? V.date(p.date, 'Date') : U.local(U.now()).date;
     var r = { from: date, to: date };
-    var sessions = Reports._sessionsIn(r), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), ref = Sessions._ref();
+    var sessions = Reports._sessionsIn(r, null, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), ref = Sessions._ref();
     var rows = sessions.sort(function (a, b) { return a.scheduledStart - b.scheduledStart; }).map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []), lab = ref.labs[s.labId] || {}, fac = ref.fac[s.facultyId] || {};
       return [lab.code || '', s.title, fac.name || '', s.type, s.status, Reports._hhmm(s.scheduledStart) + '-' + Reports._hhmm(s.scheduledEnd), c.enrolled, c.present, c.absent, c.unverified, c.flagged, Reports._r1(c.minutes / 60)];
@@ -261,7 +273,7 @@ var Reports = {
   _monthly: function (p) {
     var month = p.month ? V.str(p.month, 'Month', { re: /^\d{4}-(0[1-9]|1[0-2])$/ }) : U.local(U.now()).month;
     var from = month + '-01', next = U.local(U.fromLocal(from, '12:00') + 32 * 86400000), to = U.addDays(next.y + '-' + U.p2(next.m) + '-01', -1);
-    var r = { from: from, to: to }, sessions = Reports._sessionsIn(r), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), ref = Sessions._ref();
+    var r = { from: from, to: to }, sessions = Reports._sessionsIn(r, null, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), ref = Sessions._ref();
     var agg = {};
     sessions.forEach(function (s) {
       var lab = ref.labs[s.labId] || {}, a = agg[s.labId] || (agg[s.labId] = { lab: lab.code || s.labId, sessions: 0, closed: 0, enrolled: 0, present: 0, minutes: 0, schedHours: 0 });
@@ -274,7 +286,7 @@ var Reports = {
 
   _faculty: function (p) {
     var r = Reports._range(p, 30), f = Db.mustGet('FacultyProfiles', p.facultyId, 'Faculty'), ref = Sessions._ref();
-    var sessions = Reports._sessionsIn(r, function (s) { return s.facultyId === f.facultyId; }), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; }));
+    var sessions = Reports._sessionsIn(r, function (s) { return s.facultyId === f.facultyId; }, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; }));
     var rows = sessions.sort(function (a, b) { return a.scheduledStart - b.scheduledStart; }).map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []);
       return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, s.status, Reports._hhmm(s.openedAt), Reports._hhmm(s.closedAt), c.enrolled, c.present, c.absent, c.unverified, c.flagged];
@@ -284,7 +296,7 @@ var Reports = {
 
   /** Fresh event derivation for live/current records, with stored summaries as the historical fallback. */
   _studentData: function (p, r) {
-    var labId = Reports._labFilter(p), sessions = Reports._sessionsIn(r, function (s) { return !labId || s.labId === labId; });
+    var labId = Reports._labFilter(p), sessions = Reports._sessionsIn(r, function (s) { return !labId || s.labId === labId; }, p);
     var stored = {}, events = U.groupBy(Db.where('AttendanceEvents', function (e) { return e.studentId === p.studentId; }), function (e) { return e.sessionId; });
     Db.whereEq('AttendanceSummaries', { studentId: p.studentId }).forEach(function (x) { stored[x.sessionId] = x; });
     var wins = U.groupBy(Db.readAll('RescanWindows'), function (w) { return w.sessionId; });
@@ -320,7 +332,7 @@ var Reports = {
   },
 
   _utilisation: function (p) {
-    var r = Reports._range(p, 30), ref = Sessions._ref(), sessions = Reports._sessionsIn(r), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), agg = {};
+    var r = Reports._range(p, 30), ref = Sessions._ref(), sessions = Reports._sessionsIn(r, null, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), agg = {};
     var days = Math.max(1, Math.round((r.toMs - r.fromMs) / 86400000));
     sessions.forEach(function (s) {
       var a = agg[s.labId] || (agg[s.labId] = { sched: 0, opened: 0, studentH: 0, sessions: 0, cap: (ref.labs[s.labId] || {}).capacity || 0, seats: 0 });
@@ -328,7 +340,7 @@ var Reports = {
       if (s.openedAt) a.opened += ((s.closedAt || Math.min(U.now(), s.scheduledEnd)) - s.openedAt) / 3600000;
       var c = Reports._counts(by[s.sessionId] || []); a.studentH += c.minutes / 60; a.seats += c.present;
     });
-    var rows = Object.keys(ref.labs).map(function (id) {
+    var rows = Object.keys(ref.labs).filter(function(id){return Reports._reportLab(p,id);}).map(function (id) {
       var l = ref.labs[id], a = agg[id] || { sched: 0, opened: 0, studentH: 0, sessions: 0, seats: 0 };
       var avail = days * 10; // 10 working hours per day as the nominal denominator; stated in meta
       return [l.code, l.name, a.sessions, Reports._r1(a.sched), Reports._r1(a.opened), Reports._r1(a.studentH), Math.round(Math.min(100, a.sched * 100 / avail))];
@@ -339,7 +351,7 @@ var Reports = {
   _assetUsage: function (p) {
     var r = Reports._range(p, 90), assets = U.indexBy(Db.readAll('Assets'), 'assetId'), loans = U.indexBy(Db.readAll('Loans'), 'loanId'), agg = {};
     Db.readAll('LoanItems').forEach(function (i) {
-      var l = loans[i.loanId]; if (!l || l.status === 'failed' || i.status === 'voided' || l.issuedAt < r.fromMs || l.issuedAt >= r.toMs) return;
+      var l = loans[i.loanId]; if (!l || !Reports._reportLab(p, l.labId) || l.status === 'failed' || i.status === 'voided' || l.issuedAt < r.fromMs || l.issuedAt >= r.toMs) return;
       var a = agg[i.assetId] || (agg[i.assetId] = { loans: 0, units: 0, dayUnits: 0, damaged: 0, missing: 0, consumed: 0 });
       var end = l.returnedAt || U.now();
       a.loans++; a.units += i.qtyIssued; a.dayUnits += i.qtyIssued * Math.max(0, end - l.issuedAt) / 86400000; a.damaged += i.qtyDamaged; a.missing += i.qtyMissing; a.consumed += i.qtyConsumed;
@@ -413,17 +425,17 @@ var Reports = {
       summary: [['Projects', projects.length], ['Verified hours', Reports._r1(total / 60)]], meta: { from: r.from, to: r.to, note: 'Projects whose planned timelines overlap or have recorded work in this range; hours use verified attendance in the selected range, split at project/system changes.' } };
   },
 
-  _inventory: function () {
+  _inventory: function (p) {
     var cats = U.indexBy(Db.readAll('Categories'), 'categoryId'), labs = U.indexBy(Db.readAll('Labs'), 'labId');
-    var rows = Db.readAll('Assets').map(function (a) {
+    var rows = Db.readAll('Assets').filter(function(a){return Reports._reportLab(p, a.labId);}).map(function (a) {
       return [(labs[a.labId] || {}).code || '', (cats[a.categoryId] || {}).name || '', a.assetTag, a.name, a.trackingMode, a.status, a.condition, a.quantityTotal, a.quantityAvailable, a.quantityTotal - a.quantityAvailable, a.location];
     });
     return { title: 'Inventory snapshot ' + U.fmt(U.now()), columns: ['Lab', 'Category', 'Tag', 'Item', 'Tracking', 'Status', 'Condition', 'Total', 'Available', 'Out', 'Location'], rows: rows, meta: { items: rows.length } };
   },
 
-  _overdue: function () {
+  _overdue: function (p) {
     var now = U.now();
-    var rows = Db.where('Loans', function (l) { return Loans._isOverdue(l, now); }).sort(function (a, b) { return a.dueAt - b.dueAt; }).map(function (l) {
+    var rows = Db.where('Loans', function (l) { return Reports._reportLab(p,l.labId) && Loans._isOverdue(l, now); }).sort(function (a, b) { return a.dueAt - b.dueAt; }).map(function (l) {
       var items = Db.whereEq('LoanItems', { loanId: l.loanId }).filter(function (i) { return i.status === Assets.OUT; }).length;
       return [l.loanId, Loans._borrowerName(l), l.borrowerType, U.fmt(l.issuedAt), U.fmt(l.dueAt), Math.floor((now - l.dueAt) / 86400000), items];
     });

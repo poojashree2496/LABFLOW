@@ -102,8 +102,9 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-B Roles, dashboards, live board and reports (@?)
 
-- [ ] **B1 Roles** (R16)
+- [~] **B1 Roles** (R16)
   - Files: `AuthService.gs` (`Auth.canView`), every read handler with `has('admin') || has('staff')`, `UserService.gs` (`Users.upsertUser` role cap 4 -> 5; `Dash.admin` role counts), `Scripts.html` (`ROLE_LABEL`: Coordinator, Super admin, HOD), `ScriptsThemes.html` (its copy of the labels), `ScriptsFaculty.html` / `ScriptsStudent.html` (text "coordinator" -> "Event lead"), `ScriptsAdmin.html` (role checkboxes, filters, badges).
+  - Backend access/scoping is implemented; role labels and admin controls remain in progress. See [HOD access](hod-access.md).
   - Add `hod` to the roles of the read-only routes. The full list is in the role audit summary below this section.
   - In handlers, switch **reads only** to `Auth.canView(ctx)`.
   - `system.status`, `system.quota` and `settings.get` stay admin-only.
@@ -114,7 +115,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - "Remove a student" means disable the profile (`status: 'disabled'`), never delete it. Disabled students cannot check in.
   - Done when: a coordinator imports a CSV, adds a student to a course, and disables one; each action is audited with role `staff`.
   - Tests: `test/api.test.js`.
-- [ ] **B3 Department scope and HOD views** (R16)
+- [~] **B3 Department scope and HOD views** (R16)
   - Files: `LabService.gs` (`Labs.upsert` takes `department`), `UserService.gs` (`department` on users), `AuthService.gs` (`Auth.labScope`), `AdminService.gs` (`Dash.hod`, built from `Dash.admin` + `Dash.staff`, filtered by scope), new HOD views in `ScriptsAdmin.html` or a new `ScriptsHod.html` (if new: add it to `FRONTEND_FILES` and `Index.html`).
   - HOD views: overview, labs and facilities (read-only asset list), reports. The live board is implemented and already calls `Auth.labScope`; once B3 supplies it, verify the HOD board is department-scoped.
   - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.

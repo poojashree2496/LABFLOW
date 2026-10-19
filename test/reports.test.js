@@ -67,7 +67,7 @@ test('reports: new report roles are enforced and client-supplied scope cannot ex
   assert.equal(w.err(w.faculty, 'reports.run', { type: 'systemUsage', assetId: w.assets[0].assetId }).code, 'FORBIDDEN');
   for (const type of ['projects', 'systemUsage']) assert.equal(w.err(w.students[0].email, 'reports.run', { type, assetId: w.assets[0].assetId }).code, 'FORBIDDEN');
   const own = w.report('student', { studentId: w.students[1].studentId }, w.students[0].email); assert.equal(own.meta.rollNo, w.students[0].rollNo);
-  assert.equal(w.err(w.hod, 'reports.run', { type: 'projects' }).code, 'FORBIDDEN');
+  assert.equal(w.ok(w.hod, 'reports.run', { type: 'projects' }).rows.length, 2);
 });
 test('reports: asset, lab and date validation refuses mismatched or invalid filters', () => {
   const w = ready();
@@ -107,9 +107,9 @@ test('reports: new sectioned reports can use the existing PDF exporter', () => {
   const w = ready(); w.enter(); w.advance(3600000); w.exit();
   for (const type of ['student','systemUsage','projects']) assert.ok(w.ok(w.staff,'reports.pdf',{type,studentId:w.students[0].studentId,assetId:w.assets[0].assetId,from:w.today,to:w.today}).base64.length > 0);
 });
-test('reports: future HOD route integration fails closed and applies a supplied department scope', () => {
+test('reports: HOD report routes apply department scope', () => {
   const w = ready();
-  assert.throws(() => w.eval(`Reports.run(Auth._contextForEmail('${w.hod}'),{type:'projects'})`), /B3/);
+  assert.equal(w.ok(w.hod,'reports.run',{type:'projects'}).rows.length,2);
   w.e.run(`Auth.labScope=function(){return ['${w.lab2.labId}'];};`);
   assert.deepEqual(w.eval(`Reports.run(Auth._contextForEmail('${w.hod}'),{type:'projects'}).rows`), []);
   assert.throws(() => w.eval(`Reports.run(Auth._contextForEmail('${w.hod}'),{type:'systemUsage',assetId:'${w.assets[0].assetId}'})`), /scope/);

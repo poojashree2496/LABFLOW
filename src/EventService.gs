@@ -77,7 +77,8 @@ var Events = {
     p = p || {};
     var from = p.from ? U.dayStart(V.date(p.from)) : U.now() - 7 * 86400000, to = p.to ? U.dayStart(U.addDays(V.date(p.to), 1)) : U.now() + 60 * 86400000;
     var rows = Db.where('Events', function (e) { return e.startAt < to && e.endAt >= from; });
-    if (!ctx.has('admin') && !ctx.has('staff')) {
+    var allowed = Auth.labFilter(ctx); rows = rows.filter(function(e){return allowed(e.labId);});
+    if (!Auth.canView(ctx)) {
       var mine = {}; Db.where('Sessions', function (s) { return s.type === 'event' && ctx.faculty && s.facultyId === ctx.faculty.facultyId; }).forEach(function (s) { mine[s.labEventId] = true; });
       rows = rows.filter(function (e) { return mine[e.labEventId]; });
     }
@@ -120,7 +121,8 @@ var Events = {
   guests: function (ctx, p) {
     V.obj(p);
     var e = Db.mustGet('Events', V.id(p.labEventId, 'Event', 'labEvent'), 'Event');
-    if (!Events._mayManage(ctx, e) && !ctx.has('staff')) fail('FORBIDDEN', 'You cannot view this event.');
+    if (!Events._mayManage(ctx, e) && !Auth.canView(ctx)) fail('FORBIDDEN', 'You cannot view this event.');
+    Auth.assertLab(ctx, e.labId);
     return { guests: Db.whereEq('EventGuests', { labEventId: e.labEventId }) };
   },
   guestCount: function (labEventId) { return Db.whereEq('EventGuests', { labEventId: labEventId }).length; },
@@ -186,7 +188,8 @@ var ClassReps = {
   list: function (ctx, p) {
     p = p || {};
     var rows = Db.where('ClassReps', function (r) { return r.status === 'active' && (!p.courseId || r.courseId === p.courseId); });
-    if (!ctx.has('admin') && !ctx.has('staff')) rows = rows.filter(function (r) { return ClassReps._mayAssign(ctx, r.courseId, r.section); });
+    var courseAllowed = Auth.courseFilter(ctx); rows = rows.filter(function(r){return courseAllowed(r.courseId);});
+    if (!Auth.canView(ctx)) rows = rows.filter(function (r) { return ClassReps._mayAssign(ctx, r.courseId, r.section); });
     return { reps: rows.map(ClassReps._view) };
   },
 
