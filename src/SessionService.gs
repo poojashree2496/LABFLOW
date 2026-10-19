@@ -5,7 +5,8 @@
  *  - A session's attendance events are never rewritten when it is closed. Closing only changes the session row and
  *    (re)derives AttendanceSummaries, which are rebuildable from events at any time.
  *  - Closing or opening one session never touches another session.
- *  - At most one non-research session is OPEN per lab at a time (admin override is audited).
+ *  - At most one class/event session is OPEN per lab at a time (admin override is audited).
+ *    Research and daily open-lab sessions can coexist with it.
  *  - Research visits need authorisation: created by faculty/admin, or requested by a student and approved by the
  *    named supervisor (or admin).
  */
@@ -45,11 +46,53 @@ var Sessions = {
     return fresh.length;
   },
 
+  /** Daily walk-in session for each enabled lab with valid opening hours. Never revive closed/cancelled rows. */
+  materializeOpenLab: function (date) {
+    V.date(date);
+    return Locks.with(function () {
+      var have = {}; Db.where('Sessions', function (s) { return s.date === date && s.slotKey; }).forEach(function (s) { have[s.slotKey] = s; });
+      var now = U.now(), labs = Db.where('Labs', Sessions._openLabConfigured);
+      labs.forEach(function (lab) {
+        var s = have['open|' + lab.labId + '|' + date], start = U.fromLocal(date, lab.openTime), end = U.fromLocal(date, lab.closeTime);
+        if (s && s.status === 'scheduled' && (s.scheduledStart !== start || s.scheduledEnd !== end)) Db.update('Sessions', s.sessionId, { scheduledStart: start, scheduledEnd: end });
+      });
+      var fresh = labs.filter(function (lab) { return !have['open|' + lab.labId + '|' + date]; }).map(function (lab) {
+        return { sessionId: U.id('session'), type: 'openlab', labId: lab.labId, title: 'Open lab', slotKey: 'open|' + lab.labId + '|' + date,
+          date: date, scheduledStart: U.fromLocal(date, lab.openTime), scheduledEnd: U.fromLocal(date, lab.closeTime), status: 'scheduled',
+          openToAll: true, rescanMode: 'off', rescansDone: 0, createdBy: 'system', createdAt: now };
+      });
+      if (!fresh.length) return 0;
+      Db.insertMany('Sessions', fresh);
+      Audit.log({ actor: 'system', role: 'system', action: 'sessions.materializeOpenLab', entityType: 'Session', detail: { date: date, created: fresh.length } });
+      return fresh.length;
+    });
+  },
+  _openLabConfigured: function (lab) {
+    return !!(lab && lab.status === 'active' && lab.openLab === true && U.isTime(lab.openTime) && U.isTime(lab.closeTime) && lab.openTime < lab.closeTime);
+  },
+  /** Live configuration is checked again at scan commit, so disabling a lab stops new entries immediately. */
+  openLabAvailable: function (session, now) {
+    var lab = Db.get('Labs', session.labId);
+    return Sessions._openLabConfigured(lab) && now >= session.scheduledStart && now < session.scheduledEnd &&
+      now >= U.fromLocal(session.date, lab.openTime) && now < U.fromLocal(session.date, lab.closeTime);
+  },
+  _exclusive: function (session) { return session.type !== 'research' && session.type !== 'openlab'; },
+  /** Used by the trigger and arrival screens; opening time is exact, with no class-style early window. */
+  _openLabsDue: function (date) {
+    Sessions.materializeOpenLab(date);
+    var now = U.now(), opened = 0;
+    Db.where('Sessions', function (s) { return s.date === date && s.type === 'openlab' && s.status === 'scheduled' && s.scheduledStart <= now && now < s.scheduledEnd; }).forEach(function (s) {
+      if (Sessions._systemOpen(s, 'open-lab-hours').status === 'open') opened++;
+    });
+    return opened;
+  },
+
   /** Faculty: own sessions for a date. Admin/staff: all (optionally one lab). */
   listForDay: function (ctx, p) {
     p = p || {};
     var date = p.date ? V.date(p.date) : U.local(U.now()).date;
     Sessions.materialize(date);
+    Sessions._openLabsDue(date);
     var rows = Db.where('Sessions', function (s) { return s.date === date && s.status !== 'cancelled'; });
     if (!ctx.has('admin') && !ctx.has('staff')) {
       if (!ctx.faculty) return { date: date, sessions: [] };
@@ -70,9 +113,11 @@ var Sessions = {
     if (!ctx.student) return { sessions: [] };
     var date = p && p.date ? V.date(p.date) : U.local(U.now()).date;
     Sessions.materialize(date);
+    Sessions._openLabsDue(date);
     var ref = Sessions._ref(), sid = ctx.student.studentId;
     var rows = Db.where('Sessions', function (s) { return s.date === date && (s.status === 'scheduled' || s.status === 'open' || s.status === 'closed'); })
-      .filter(function (s) { return Roster.isEligible(s, sid); }).sort(function (a, b) { return a.scheduledStart - b.scheduledStart; });
+      .filter(function (s) { return Roster.isEligible(s, sid) && (s.type !== 'openlab' || (s.status === 'open' && Sessions.openLabAvailable(s, U.now()))); })
+      .sort(function (a, b) { return (a.type === 'openlab') - (b.type === 'openlab') || a.scheduledStart - b.scheduledStart; });
     return { date: date, sessions: rows.map(function (s) { var o = Sessions.pub(s, ref); o.mine = Attend.studentState(s, sid); return o; }) };
   },
 
@@ -83,7 +128,7 @@ var Sessions = {
   },
 
   _labConflicts: function (labId, start, end, excludeId) {
-    return Db.where('Sessions', function (s) { return s.labId === labId && s.sessionId !== excludeId && s.type !== 'research' && (s.status === 'scheduled' || s.status === 'open') && U.overlaps(start, end, s.scheduledStart, s.scheduledEnd); });
+    return Db.where('Sessions', function (s) { return s.labId === labId && s.sessionId !== excludeId && Sessions._exclusive(s) && (s.status === 'scheduled' || s.status === 'open') && U.overlaps(start, end, s.scheduledStart, s.scheduledEnd); });
   },
 
   /** Events/workshops and faculty-authorised research visits. */
@@ -159,15 +204,17 @@ var Sessions = {
       if (!Auth.canOperate(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
       if (s.status !== 'scheduled') fail('INVALID_STATE', 'Only a scheduled session can be opened (this one is ' + s.status + ').');
       var now = U.now(), grace = Settings.get('autoCloseGraceMinutes') * 60000, overrides = [];
+      if (s.type === 'openlab' && !Sessions.openLabAvailable(s, now)) fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
       if (now < s.scheduledStart - Sessions._OPEN_EARLY_MS || now > s.scheduledEnd + grace) {
         if (!override) fail('OUT_OF_WINDOW', 'A session can be opened from 30 minutes before it starts until it ends. Ask an admin to override.');
         overrides.push('time-window');
       }
-      if (s.type !== 'research') {
-        var other = Db.where('Sessions', function (x) { return x.labId === s.labId && x.sessionId !== s.sessionId && x.type !== 'research' && x.status === 'open'; });
+      if (Sessions._exclusive(s)) {
+        var other = Db.where('Sessions', function (x) { return x.labId === s.labId && x.sessionId !== s.sessionId && Sessions._exclusive(x) && x.status === 'open'; });
         if (other.length) { if (!override) fail('CONFLICT', 'Another session is already open in this lab: ' + other[0].title + '. Close it first.', { overridable: ctx.has('admin') }); overrides.push('lab-busy:' + other[0].sessionId); }
       }
       var mode = p.rescanMode ? V.enumOf(p.rescanMode, 'Rescan mode', ['off', 'random']) : s.rescanMode;
+      if (s.type === 'openlab') mode = 'off';
       var next = Db.update('Sessions', s.sessionId, { status: 'open', openedAt: now, openedBy: ctx.email, rescanMode: mode, rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, s.scheduledEnd) : null });
       Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: overrides.length ? 'session.open.override' : 'session.open', entityType: 'Session', entityId: s.sessionId, detail: { overrides: overrides, rescanMode: mode } });
       Occupancy.invalidate(s.labId);
@@ -228,8 +275,9 @@ var Sessions = {
       var cur = Db.get('Sessions', s.sessionId);
       if (cur.status !== 'scheduled') return cur;
       var now = U.now(), mode = cur.rescanMode;
-      if (cur.type !== 'research') {
-        var other = Db.where('Sessions', function (x) { return x.labId === cur.labId && x.sessionId !== cur.sessionId && x.type !== 'research' && x.status === 'open'; });
+      if (cur.type === 'openlab') { if (!Sessions.openLabAvailable(cur, now)) return cur; mode = 'off'; }
+      if (Sessions._exclusive(cur)) {
+        var other = Db.where('Sessions', function (x) { return x.labId === cur.labId && x.sessionId !== cur.sessionId && Sessions._exclusive(x) && x.status === 'open'; });
         if (other.length) return cur; // the lab is still busy; faculty can open it by hand
       }
       var next = Db.update('Sessions', cur.sessionId, { status: 'open', openedAt: now, openedBy: 'system', rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, cur.scheduledEnd) : null });
@@ -241,14 +289,14 @@ var Sessions = {
 
   /** Trigger: open timetabled class sessions at their start time (teachers do nothing at the start of class). */
   autoOpenDue: function () {
-    if (!Settings.get('autoOpenSessions')) return { opened: 0, disabled: true };
-    var now = U.now(), opened = 0;
+    var now = U.now(), openLabs = Sessions._openLabsDue(U.local(now).date), opened = openLabs;
+    if (!Settings.get('autoOpenSessions')) return { opened: opened, openLabsOpened: openLabs, disabled: true };
     Sessions.materialize(U.local(now).date);
     Db.where('Sessions', function (s) { return s.type === 'class' && s.status === 'scheduled' && s.scheduledStart - 5 * 60000 <= now && now < s.scheduledEnd; }).forEach(function (s) {
       try { if (Sessions._systemOpen(s, 'timetable').status === 'open') opened++; }
       catch (e) { Syslog.error('sessions', 'AUTO_OPEN_FAILED', String(e && e.message), { sessionId: s.sessionId }); }
     });
-    return { opened: opened };
+    return { opened: opened, openLabsOpened: openLabs };
   },
 
   /** An approved research visit opens when its student arrives inside the visit window. */

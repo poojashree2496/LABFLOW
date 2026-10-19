@@ -97,6 +97,7 @@ var Jobs = {
     return Jobs.run('nightly', function (deadline) {
       var r = {}, today = U.local(U.now()).date;
       Jobs.step(r, 'materialize', function () { return [0, 1, 2].map(function (d) { return Sessions.materialize(U.addDays(today, d)); }); });
+      Jobs.step(r, 'materializeOpenLab', function () { return [0, 1, 2].map(function (d) { return Sessions.materializeOpenLab(U.addDays(today, d)); }); });
       Jobs.step(r, 'attendanceReconcile', function () {
         var out = [], cutoff = U.addDays(today, -2);
         Db.where('Sessions', function (s) { return s.status === 'closed' && s.date >= cutoff; }).forEach(function (s) { if (U.now() < deadline) { var x = Attend.reconcile(s.sessionId); if (x.problems.length) out.push({ sessionId: s.sessionId, problems: x.problems.length }); } });

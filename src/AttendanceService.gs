@@ -133,6 +133,7 @@ var Attend = {
       if (st !== 'open') fail('SESSION_NOT_OPEN', 'This session is not open.');
       if (!Attend.activeWindow(session.sessionId, now)) fail('NO_RESCAN_WINDOW', 'There is no rescan window open right now.');
     } else fail('BAD_INPUT', 'Unknown action.');
+    if (purpose === 'in' && session.type === 'openlab' && !Sessions.openLabAvailable(session, now)) fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
   },
   _enrolmentGate: function (session, studentId) {
     if (!Roster.isEligible(session, studentId)) fail('NOT_ELIGIBLE', 'This student is not on the roster for this session.');
@@ -178,8 +179,8 @@ var Attend = {
     c.result = { ok: true, type: ev.type, at: now, eventId: ev.eventId, mode: c.mode, method: c.method, assurance: ev.assurance, geofence: ev.geofence,
                  student: { studentId: c.studentId, name: stu.name, rollNo: stu.rollNo, hasPhoto: !!stu.photoFileId }, session: { sessionId: s.sessionId, title: s.title } };
   },
-  /** The entry reason a session implies (FR-13): class, event or research. */
-  reasonOf: function (session) { return session.type === 'event' ? 'event' : session.type === 'research' ? 'research' : 'class'; },
+  /** The entry reason a session implies (FR-13, plus v2 open lab). */
+  reasonOf: function (session) { return session.type === 'openlab' ? 'openlab' : session.type === 'event' ? 'event' : session.type === 'research' ? 'research' : 'class'; },
 
   /** Follow-up work after an accepted scan. Never changes the outcome; failures are only logged. */
   _afterAccept: function (c) {

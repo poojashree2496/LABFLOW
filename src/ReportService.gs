@@ -149,7 +149,7 @@ var Reports = {
     var r = { from: from, to: to }, fromMs = U.dayStart(from), toMs = U.dayStart(U.addDays(to, 1)), ref = Sessions._ref();
     var sessions = Reports._sessionsIn(r), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), perCourse = {};
     sessions.forEach(function (s) {
-      var key = s.courseId ? 'c:' + s.courseId : (s.type === 'event' ? 'Events and workshops' : 'Research and self-work');
+      var key = s.courseId ? 'c:' + s.courseId : (s.type === 'openlab' ? 'Open lab' : s.type === 'event' ? 'Events and workshops' : 'Research and self-work');
       var a = perCourse[key] || (perCourse[key] = { sessions: 0, students: {}, minutes: 0, present: 0, seats: 0 });
       a.sessions++;
       (by[s.sessionId] || []).forEach(function (x) { a.seats++; if (x.status !== 'absent') { a.students[x.studentId] = true; a.present++; } a.minutes += x.verifiedMinutes || 0; });

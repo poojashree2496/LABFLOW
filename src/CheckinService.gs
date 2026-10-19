@@ -119,6 +119,7 @@ var Checkin = {
    * (FR-14: the course is pre-filled from the timetable).
    */
   options: function (student, lab, now) {
+    Sessions._openLabsDue(U.local(now).date);
     var sid = student.studentId;
     var here = Db.where('Sessions', function (s) {
       return s.labId === lab.labId && (s.status === 'open' || (s.status === 'closed' && s.closedAt && now <= s.closedAt + Settings.get('exitGraceMinutes') * 60000) ||
@@ -139,6 +140,7 @@ var Checkin = {
     var cands = [];
     here.forEach(function (s) {
       if (s.status === 'closed') return;
+      if (s.type === 'openlab' && !Sessions.openLabAvailable(s, now)) return;
       var eligible = Roster.isEligible(s, sid);
       if (s.type === 'research' && !eligible) return; // someone else's research visit
       cands.push({ sessionId: s.sessionId, title: s.title, reason: Attend.reasonOf(s), eligible: eligible, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status });
@@ -148,7 +150,7 @@ var Checkin = {
       if (Db.getBy('Sessions', 'slotKey', 'rsv|' + r.reservationId)) return; // its self-work session is already listed
       cands.push({ sessionId: null, reservationId: r.reservationId, title: 'Self-work: ' + Booking._resourceName(r), reason: 'research', eligible: true, scheduledStart: r.startAt, scheduledEnd: r.endAt, status: 'booking' });
     });
-    var order = { 'class': 0, event: 1, research: 2 };
+    var order = { 'class': 0, event: 1, research: 2, openlab: 3 };
     cands.sort(function (a, b) { return (b.eligible - a.eligible) || (order[a.reason] - order[b.reason]) || (a.scheduledStart - b.scheduledStart); });
     var pre = cands.filter(function (x) { return x.eligible; })[0];
     var acts = graceExit ? (pre ? ['in', 'out'] : ['out']) : ['in'];

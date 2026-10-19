@@ -11,7 +11,7 @@ var Labs = {
   _pub: function (l) {
     return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, notes: l.notes,
              latitude: l.latitude, longitude: l.longitude, radiusM: l.radiusM, openTime: l.openTime, closeTime: l.closeTime, checkinMode: l.checkinMode || '',
-             mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '' };
+             mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '', openLab: l.openLab === true };
   },
   /** The lab's check-in mode: its own setting, else the global default. 'A', 'B' or 'AB'. */
   modeOf: function (lab) { return (lab && lab.checkinMode) || Settings.get('defaultCheckinMode'); },
@@ -41,6 +41,9 @@ var Labs = {
       rec.openTime = V.time(p.openTime, 'Opening time'); rec.closeTime = V.time(p.closeTime, 'Closing time');
       if (rec.closeTime <= rec.openTime) fail('BAD_INPUT', 'Closing time must be after opening time.');
     }
+    var existing = p.labId ? Db.mustGet('Labs', V.id(p.labId, 'Lab', 'lab'), 'Lab') : null;
+    rec.openLab = p.openLab === undefined ? !!(existing && existing.openLab) : V.bool(p.openLab);
+    if (rec.openLab && !rec.openTime) fail('BAD_INPUT', 'Set opening and closing times before enabling open lab.');
     if (p.inchargeEmails) {
       var list = String(p.inchargeEmails).split(',').map(function (s) { return s.trim(); }).filter(Boolean).map(function (e) { return V.email(e, 'Lab incharge email'); });
       list.forEach(function (e) { if (Auth.allowedDomains().indexOf(e.split('@')[1]) < 0) fail('BAD_INPUT', e + ' is not on an allowed domain.'); });

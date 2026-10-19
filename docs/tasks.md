@@ -138,7 +138,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [ ] **C2 Open lab session** (R3, R8)
+- [~] **C2 Open lab session** (R3, R8; backend complete, configuration/labels pending)
   - Files: `SessionService.gs` (new `Sessions.materializeOpenLab(date)`, `Sessions._labConflicts`, `Sessions.open`, `Sessions._systemOpen`, `Sessions.autoOpenDue`, `Sessions.listForStudent`), `AttendanceService.gs` (`Attend.reasonOf`), `CheckinService.gs` (the sort map in `Checkin.options`), `TriggerService.gs` (`Jobs.nightly` materialize, `Jobs.tickSessions`), `ReportService.gs` (bucket openlab separately).
   - One session per lab per day where `Labs.openLab` is set and the lab has opening hours. Use `slotKey 'open|labId|date'`, `openToAll: true` and `rescanMode: 'off'`. `Sessions.selfWorkFor` is the closest model.
   - The one-open-session rule must exempt `openlab` in all three places (today they test `type !== 'research'`), or timetabled classes will silently fail to auto-open.
