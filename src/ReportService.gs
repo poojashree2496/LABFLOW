@@ -2,12 +2,12 @@
  * ReportService.gs - reports as plain tables { title, columns, rows, meta, summary?, sections? }, exportable as CSV or PDF.
  *
  * Types: digest (FR-34), monthlyAudit (FR-35), custom (FR-36), session (FR-37), erp (FR-39), daily, monthly, faculty,
- * student, utilisation, assetUsage, inventory, overdue, audit. A report with `sections` has several tables; its
+ * student, utilisation, assetUsage, systemUsage, projects, inventory, overdue, audit. A report with `sections` has several tables; its
  * columns/rows are the first section so simple consumers still work. PDFs come from a Google Docs template when one
  * is configured (FR-38), else from a generated document.
  * Authorisation (enforced here, in addition to the RPC permission table):
  *   admin/staff: everything except audit and erp (admin only); faculty: own 'faculty' report, 'session' logs of their
- *   own sessions and 'student' reports for students in their courses/sessions; student: own 'student' report only.
+ *   own sessions, supervised 'projects', and 'student' reports for students in their courses/sessions; student: own 'student' report only.
  * Limits: reports read bounded date ranges (<= 366 days) and are capped at 5000 rows (CSV) / 1000 rows (PDF) so a request
  * stays well inside the 6-minute execution limit; the result says when it was truncated.
  * Exports are returned to the browser (CSV text / base64 PDF). Scheduled reports are saved to a private Drive folder.
@@ -29,6 +29,16 @@ var Reports = {
     var admin = ctx.has('admin'), staff = ctx.has('staff');
     if (type === 'audit') { if (!admin) fail('FORBIDDEN', 'Only administrators can export the audit trail.'); return {}; }
     if (type === 'erp') { if (!admin) fail('FORBIDDEN', 'Only administrators can export the ERP file.'); return {}; }
+    if (type === 'systemUsage' || type === 'projects') {
+      if (admin || staff) return { reportLabIds: null, reportFacultyId: '' };
+      if (ctx.has('hod')) {
+        var labs = Auth.labScope(ctx);
+        if (!Array.isArray(labs)) fail('FORBIDDEN', 'Department scope is unavailable.');
+        return { reportLabIds: labs, reportFacultyId: '' };
+      }
+      if (type === 'projects' && ctx.faculty) return { reportLabIds: null, reportFacultyId: ctx.faculty.facultyId };
+      fail('FORBIDDEN', 'You do not have permission to view this report.');
+    }
     if (type === 'session') {
       var ses = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
       if (!(admin || staff || Auth.ownsSession(ctx, ses))) fail('FORBIDDEN', 'This is not your session.');
@@ -56,9 +66,8 @@ var Reports = {
   run: function (ctx, p) {
     V.obj(p);
     var type = V.enumOf(p.type, 'Report type', Reports.TYPES);
-    var scope = Reports._authorize(ctx, type, p);
-    var rep = Reports.build(type, Object.assign({}, p, scope));
-    return rep;
+    var build = function () { var scope = Reports._authorize(ctx, type, p); return Reports.build(type, Object.assign({}, p, scope)); };
+    return ['student', 'systemUsage', 'projects'].indexOf(type) >= 0 ? Locks.with(build) : build();
   },
 
   build: function (type, p) {
@@ -273,13 +282,41 @@ var Reports = {
     return { title: 'Faculty report - ' + f.name + ' (' + r.from + ' to ' + r.to + ')', columns: ['Date', 'Lab', 'Session', 'Status', 'Opened', 'Closed', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Flagged'], rows: rows, meta: { faculty: f.name, from: r.from, to: r.to } };
   },
 
+  /** Fresh event derivation for live/current records, with stored summaries as the historical fallback. */
+  _studentData: function (p, r) {
+    var labId = Reports._labFilter(p), sessions = Reports._sessionsIn(r, function (s) { return !labId || s.labId === labId; });
+    var stored = {}, events = U.groupBy(Db.where('AttendanceEvents', function (e) { return e.studentId === p.studentId; }), function (e) { return e.sessionId; });
+    Db.whereEq('AttendanceSummaries', { studentId: p.studentId }).forEach(function (x) { stored[x.sessionId] = x; });
+    var wins = U.groupBy(Db.readAll('RescanWindows'), function (w) { return w.sessionId; });
+    return sessions.map(function (s) {
+      var eff = Attend._effective(events[s.sessionId] || [])[p.studentId] || [], x = stored[s.sessionId];
+      if ((events[s.sessionId] || []).length) x = Attend._compute(s, eff, wins[s.sessionId] || [], U.now());
+      if (!x) return null;
+      var count = 0, inside = false;
+      eff.forEach(function (e) { if ((e.type === 'IN' || e.type === 'CORR_IN') && !inside) { inside = true; count++; } else if (e.type === 'OUT' || e.type === 'CORR_OUT') inside = false; });
+      return { session: s, attendance: x, visits: count, visitCountUnavailable: !(events[s.sessionId] || []).length && x.firstIn !== null && x.firstIn !== undefined };
+    }).filter(Boolean).sort(function (a, b) { return a.session.scheduledStart - b.session.scheduledStart; });
+  },
   _student: function (p) {
-    var r = Reports._range(p, 90), st = Db.mustGet('StudentProfiles', p.studentId, 'Student'), ref = Sessions._ref();
-    var sessions = U.indexBy(Reports._sessionsIn(r), 'sessionId');
-    var rows = Db.where('AttendanceSummaries', function (x) { return x.studentId === st.studentId && sessions[x.sessionId]; })
-      .sort(function (a, b) { return sessions[a.sessionId].scheduledStart - sessions[b.sessionId].scheduledStart; })
-      .map(function (x) { var s = sessions[x.sessionId]; return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, x.status, Reports._hhmm(x.firstIn), Reports._hhmm(x.lastOut), x.verifiedMinutes || 0, (x.flags || []).join(' ')]; });
-    return { title: 'Attendance - ' + st.name + ' (' + st.rollNo + ') ' + r.from + ' to ' + r.to, columns: ['Date', 'Lab', 'Session', 'Status', 'First in', 'Last out', 'Verified minutes', 'Flags'], rows: rows, meta: { student: st.name, rollNo: st.rollNo } };
+    Sessions.closeOpenLabsDue();
+    var r = Reports._range(p, 90), st = Db.mustGet('StudentProfiles', p.studentId, 'Student'), ref = Sessions._ref(), data = Reports._studentData(p, r);
+    var totals = { verifiedMinutes: 0, hours: 0, distinctDays: 0, visits: 0, autoSignOuts: 0, unknownVisitSessions: 0 }, days = {}, labs = {};
+    var rows = data.map(function (item) {
+      var s = item.session, x = item.attendance, code = (ref.labs[s.labId] || {}).code || '', a = labs[s.labId] || (labs[s.labId] = { labId: s.labId, labName: (ref.labs[s.labId] || {}).name || code, code: code, days: {}, verifiedMinutes: 0, visits: 0, autoSignOuts: 0, unknownVisitSessions: 0 });
+      var auto = (x.flags || []).indexOf('auto_out') >= 0 ? 1 : 0;
+      if (x.firstIn !== null && x.firstIn !== undefined) { days[s.date] = true; a.days[s.date] = true; }
+      if (item.visitCountUnavailable) { totals.unknownVisitSessions++; a.unknownVisitSessions++; }
+      totals.verifiedMinutes += x.verifiedMinutes || 0; totals.visits += item.visits; totals.autoSignOuts += auto;
+      a.verifiedMinutes += x.verifiedMinutes || 0; a.visits += item.visits; a.autoSignOuts += auto;
+      return [s.date, code, s.title, x.status, Reports._hhmm(x.firstIn), Reports._hhmm(x.lastOut), x.verifiedMinutes || 0, (x.flags || []).join(' ')];
+    });
+    totals.verifiedMinutes = Reports._r1(totals.verifiedMinutes); totals.hours = Reports._r1(totals.verifiedMinutes / 60); totals.distinctDays = Object.keys(days).length;
+    var labTotals = Object.keys(labs).map(function (id) { var a = labs[id]; a.distinctDays = Object.keys(a.days).length; delete a.days; a.verifiedMinutes = Reports._r1(a.verifiedMinutes); a.hours = Reports._r1(a.verifiedMinutes / 60); return a; });
+    var columns = ['Date', 'Lab', 'Session', 'Status', 'First in', 'Last out', 'Verified minutes', 'Flags'];
+    return { title: 'Attendance - ' + st.name + ' (' + st.rollNo + ') ' + r.from + ' to ' + r.to, columns: columns, rows: rows,
+      summary: [['Verified hours', totals.hours], ['Distinct days', totals.distinctDays], [totals.unknownVisitSessions ? 'Visits (available events)' : 'Visits', totals.visits], ['Auto sign-outs', totals.autoSignOuts]],
+      sections: [{ title: 'Attendance by session', columns: columns, rows: rows }, { title: 'Per-lab totals', columns: ['Lab', 'Name', 'Distinct days', 'Visits', 'Verified hours', 'Auto sign-outs'], rows: labTotals.map(function (a) { return [a.code, a.labName, a.distinctDays, a.visits, a.hours, a.autoSignOuts]; }) }],
+      meta: { note: 'Historical summaries without events retain hours/days; visit counts include only available events. Unknown visit sessions: ' + totals.unknownVisitSessions, student: st.name, rollNo: st.rollNo, from: r.from, to: r.to, totals: totals, labTotals: labTotals } };
   },
 
   _utilisation: function (p) {
@@ -312,8 +349,69 @@ var Reports = {
     return { title: 'Asset usage ' + r.from + ' to ' + r.to, columns: ['Tag', 'Asset', 'Loans', 'Units issued', 'Unit-days out', 'Consumed', 'Damaged', 'Missing'], rows: rows, meta: { from: r.from, to: r.to } };
   },
 
-  _systemUsage: function () { notBuilt_('B5'); },
-  _projects: function () { notBuilt_('B5'); },
+  _reportLab: function (p, labId) {
+    return (!p.labId || p.labId === labId) && (p.reportLabIds === undefined || p.reportLabIds === null || p.reportLabIds.indexOf(labId) >= 0);
+  },
+  /** Split work at effective IN/WORK/OUT boundaries, intersecting the exact credit caps from attendance.
+   * Bookings/loans never manufacture presence. Break overlap is subtracted per credited segment. */
+  _workUsage: function (p, r) {
+    Sessions.closeOpenLabsDue();
+    var sessions = Db.where('Sessions', function (s) { return s.date <= r.to && (s.closedAt || U.now()) >= r.fromMs && s.status !== 'cancelled' && s.status !== 'pending_approval' && Reports._reportLab(p, s.labId); });
+    var ids = U.indexBy(sessions, 'sessionId'), raw = U.groupBy(Db.where('AttendanceEvents', function (e) { return !!ids[e.sessionId]; }), function (e) { return e.sessionId; });
+    var wins = U.groupBy(Db.readAll('RescanWindows'), function (w) { return w.sessionId; }), rows = [];
+    sessions.forEach(function (s) {
+      var effective = Attend._effective(raw[s.sessionId] || []);
+      Object.keys(effective).forEach(function (sid) {
+        var events = effective[sid], state = Attend._compute(s, events, wins[s.sessionId] || [], U.now(), true), current = null, start = null;
+        function finish(at) {
+          if (!current) return;
+          var from = Math.max(start, r.fromMs), to = Math.min(at, r.toMs, U.now()), ms = 0;
+          if (to < from || from >= r.toMs || at <= r.fromMs) return;
+          state.creditedIntervals.forEach(function (v) { var a = Math.max(from, v.from), b = Math.min(to, v.to); if (b > a) ms += Math.max(0, b - a - Attend._breakOverlap(s, a, b)); });
+          rows.push({ session: s, studentId: sid, entryEventId: current.entryEventId, projectId: current.projectId, assetId: current.assetId, from: from, to: to, minutes: ms / 60000 });
+        }
+        events.forEach(function (e) {
+          if ((e.type === 'IN' || e.type === 'CORR_IN') && !current) { current = Work.fromEvent(e, e.eventId); start = e.at; }
+          else if (e.type === 'WORK' && current && e.ref === current.entryEventId) { finish(e.at); current = Work.fromEvent(e, current.entryEventId); start = e.at; }
+          else if ((e.type === 'OUT' || e.type === 'CORR_OUT') && current) { finish(e.at); current = null; }
+        });
+        if (current) finish(s.closedAt || U.now());
+      });
+    });
+    return rows;
+  },
+  _systemUsage: function (p) {
+    var r = Reports._range(p, 90), labId = Reports._labFilter(p), asset = Db.mustGet('Assets', V.id(p.assetId, 'System', 'asset'), 'System');
+    if (!Work.isSystem(asset)) fail('BAD_INPUT', 'Choose an individual workstation.');
+    if (!Reports._reportLab(p, asset.labId)) fail('FORBIDDEN', 'This system is outside your report scope.');
+    var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), projects = U.indexBy(Db.readAll('Projects'), 'projectId'), people = {}, visits = {}, minutes = 0;
+    var bookingById = U.indexBy(Db.readAll('Reservations'), 'reservationId');
+    var used = Reports._workUsage(Object.assign({}, p, { labId: asset.labId }), r).filter(function (x) { return x.assetId === asset.assetId; });
+    var rows = used.map(function (x) { var st = profiles[x.studentId] || {}, pr = projects[x.projectId], booking = String(x.session.slotKey || '').indexOf('rsv|') === 0 ? bookingById[x.session.slotKey.slice(4)] : null; people[x.studentId] = true; visits[x.entryEventId] = true; minutes += x.minutes;
+      return [U.local(x.from).date, st.rollNo || '', st.name || '', x.session.title, U.fmt(x.from), U.fmt(x.to), pr && pr.labId === asset.labId ? pr.title : booking && booking.resourceId === asset.assetId ? booking.purpose : '', Reports._r1(x.minutes)]; });
+    var groups = U.indexBy(Db.readAll('Groups'), 'groupId'), reservations = Db.where('Reservations', function (b) { return b.resourceType === 'asset' && b.resourceId === asset.assetId && b.labId === asset.labId && b.startAt < r.toMs && b.endAt > r.fromMs; });
+    function borrower(type, id) { var b = type === 'student' ? profiles[id] : type === 'group' ? groups[id] : null; return b ? b.name + (b.rollNo ? ' (' + b.rollNo + ')' : '') : id; }
+    var loans = U.indexBy(Db.where('Loans', function (l) { return l.status !== 'failed' && l.issuedAt < r.toMs && (!l.returnedAt || l.returnedAt >= r.fromMs); }), 'loanId');
+    var items = Db.where('LoanItems', function (i) { return i.assetId === asset.assetId && loans[i.loanId] && i.status !== 'voided'; });
+    var columns = ['Date', 'Register number', 'Student', 'Session', 'From', 'To', 'Project or booking purpose', 'Verified minutes'];
+    return { title: 'System usage - ' + asset.name + ' (' + asset.assetTag + ')', columns: columns, rows: rows,
+      summary: [['Checked-in people', Object.keys(people).length], ['Attendance visits', Object.keys(visits).length], ['Verified hours', Reports._r1(minutes / 60)], ['Reservations', reservations.length], ['Loan records', items.length]],
+      sections: [{ title: 'Reported system use', columns: columns, rows: rows },
+        { title: 'Reservations (not attendance)', columns: ['Requester', 'Start', 'End', 'Status', 'Purpose'], rows: reservations.map(function (b) { return [borrower(b.requesterType, b.requesterId), U.fmt(b.startAt), U.fmt(b.endAt), b.status, b.purpose]; }) },
+        { title: 'Equipment loans (not attendance)', columns: ['Borrower', 'Issued', 'Due', 'Loan closed', 'Loan status', 'Issued units', 'Returned units', 'Notes'], rows: items.map(function (i) { var l = loans[i.loanId]; return [borrower(l.borrowerType, l.borrowerId), U.fmt(l.issuedAt), U.fmt(l.dueAt), l.returnedAt ? U.fmt(l.returnedAt) : '', l.status, i.qtyIssued, i.qtyReturned, l.notes || '']; }) }],
+      meta: { from: r.from, to: r.to, assetId: asset.assetId, verifiedMinutes: Reports._r1(minutes), note: 'Verified hours come only from attendance, split at work changes and excluding breaks/unverified time. Reservation and loan records are separate context; a loan closing time is not a per-item return time.' } };
+  },
+  _projects: function (p) {
+    var r = Reports._range(p, 90), labId = Reports._labFilter(p), profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), faculty = U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId');
+    var projects = Db.where('Projects', function (pr) { return Reports._reportLab(p, pr.labId) && (!p.reportFacultyId || pr.supervisorFacultyId === p.reportFacultyId); });
+    var agg = {}; projects.forEach(function (pr) { agg[pr.projectId] = { minutes: 0, visits: {} }; });
+    Reports._workUsage(p, r).forEach(function (x) { var a = agg[x.projectId]; if (a) { a.minutes += x.minutes; a.visits[x.entryEventId] = true; } });
+    projects = projects.filter(function (pr) { return (pr.startDate <= r.to && pr.endDate >= r.from) || Object.keys(agg[pr.projectId].visits).length; });
+    var total = 0, rows = projects.map(function (pr) { var a = agg[pr.projectId]; total += a.minutes; var st = profiles[pr.ownerStudentId] || {}, f = faculty[pr.supervisorFacultyId] || {};
+      return [pr.title, st.name || '', st.rollNo || '', f.name || '', pr.startDate, pr.endDate, pr.status, pr.outcome || '', pr.outcomeLink || '', Object.keys(a.visits).length, Reports._r1(a.minutes / 60)]; });
+    return { title: 'Projects ' + r.from + ' to ' + r.to, columns: ['Project', 'Owner', 'Register number', 'Supervisor', 'Start', 'End', 'Status', 'Outcome', 'Outcome link', 'Visits', 'Verified hours'], rows: rows,
+      summary: [['Projects', projects.length], ['Verified hours', Reports._r1(total / 60)]], meta: { from: r.from, to: r.to, note: 'Projects whose planned timelines overlap or have recorded work in this range; hours use verified attendance in the selected range, split at project/system changes.' } };
+  },
 
   _inventory: function () {
     var cats = U.indexBy(Db.readAll('Categories'), 'categoryId'), labs = U.indexBy(Db.readAll('Labs'), 'labId');

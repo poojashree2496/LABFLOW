@@ -120,8 +120,9 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.
   - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
   - Tests: `test/access.test.js` or a new `test/hod.test.js`.
-- [ ] **B5 Reports** (R10, R11, R7)
+- [~] **B5 Reports** (R10, R11, R7)
   - Files: `ReportService.gs` (`Reports._student`, new `Reports._systemUsage`, new `Reports._projects`, `Reports.TYPES`), `Scripts.html` (`LF.ui.reports` asset picker), the views' report lists, `ScriptsStudent.html` (days and hours per lab on the student home).
+  - Backend implemented; report controls and student home display remain in progress. See [Reports](reports.md).
   - Student report: add a totals block with total hours, distinct days, visits and auto sign-outs. The lookup by register number already works.
   - `systemUsage` for one asset: distinct people, visits, hours, and a table of who used it, when and for what (project title or booking purpose). Sources: `AttendanceEvents.assetId`, Reservations, LoanItems.
   - `projects`: each project with owner, supervisor, timeline, status, outcome and hours logged.

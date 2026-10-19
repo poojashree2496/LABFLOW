@@ -126,7 +126,8 @@ var Dash = {
     var loans = Loans.mine(ctx).loans, active = loans.filter(function (l) { return l.status === 'open' || l.status === 'partial'; });
     var books = Booking.mine(ctx).reservations.filter(function (r) { return (r.status === 'pending' || r.status === 'approved') && r.endAt > now; });
     var unread = Notify.list(ctx).unread, hist = Attend.myHistory(ctx, { limit: 1 });
-    return { credential: Creds.summaryFor(sid), attendance: hist.totals, activeLoans: active.length, overdueLoans: active.filter(function (l) { return l.overdue; }).length, upcomingBookings: books.length, unread: unread, serverNow: now };
+    var today = U.local(now).date, perLab = Reports._student({ studentId: sid, from: U.addDays(today, -89), to: today }).meta.labTotals;
+    return { credential: Creds.summaryFor(sid), attendance: hist.totals, labAttendance: perLab, labAttendanceDays: 90, activeLoans: active.length, overdueLoans: active.filter(function (l) { return l.overdue; }).length, upcomingBookings: books.length, unread: unread, serverNow: now };
   },
   faculty: function (ctx) {
     var today = U.local(U.now()).date;
