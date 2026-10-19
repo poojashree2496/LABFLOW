@@ -14,7 +14,7 @@
  * rl = [maxCalls, windowSeconds] per caller; default is DEFAULT_RL. Denials are audited (throttled).
  */
 var DEFAULT_RL = [150, 60];
-var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk', 'ScriptsThemes'];
+var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk', 'ScriptsThemes', 'ScriptsProjects'];
 
 var ROUTES = {
   // identity / onboarding

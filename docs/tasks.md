@@ -21,7 +21,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Each route calls a stub method in its service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Your job is to replace your own stubs. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 project management is implemented; see docs/projects.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
 - Contact point between streams: A4 moves one read inside `Attend.rebuildSummary`, which C4 also relies on. Tell each other before touching it.
@@ -138,12 +138,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [~] **C1 Projects** (R7; backend complete, screens pending)
-  - Files: `ProjectService.gs` (all `projects.*` handlers, `Projects.usableBy`), `NotificationService.gs` (the supervisor is notified on create; the student on decide), `ScriptsStudent.html` (My projects: create, list, submit outcome), `ScriptsFaculty.html` (Project approvals, accept outcome).
-  - A group project uses the existing `Groups` (`groupId`). Only the group leader creates it.
-  - Audit log entries for create, decide and outcome.
-  - Done when: a student creates a project, uses it while pending, the supervisor approves it, and the student submits an outcome that the supervisor accepts.
-  - Tests: new `test/projects.test.js`.
 - [ ] **C2 Open lab session** (R3, R8)
   - Files: `SessionService.gs` (new `Sessions.materializeOpenLab(date)`, `Sessions._labConflicts`, `Sessions.open`, `Sessions._systemOpen`, `Sessions.autoOpenDue`, `Sessions.listForStudent`), `AttendanceService.gs` (`Attend.reasonOf`), `CheckinService.gs` (the sort map in `Checkin.options`), `TriggerService.gs` (`Jobs.nightly` materialize, `Jobs.tickSessions`), `ReportService.gs` (bucket openlab separately).
   - One session per lab per day where `Labs.openLab` is set and the lab has opening hours. Use `slotKey 'open|labId|date'`, `openToAll: true` and `rescanMode: 'off'`. `Sessions.selfWorkFor` is the closest model.

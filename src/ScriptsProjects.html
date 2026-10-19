@@ -1,0 +1,116 @@
+<script>
+/* Project screens share one lifecycle across students, supervisors and the lab desk. */
+(function () {
+'use strict';
+const LF = window.LF, h = LF.h, ui = LF.ui, api = LF.api;
+const drafts = new Map();
+const labels = { pending: 'Awaiting approval', active: 'Active', completed: 'Completed', rejected: 'Rejected', archived: 'Archived' };
+
+function editor(opts) {
+  const key = LF.me.email + ':' + opts.key;
+  const draft = drafts.get(key) || { base: opts.base, values: {}, payload: null, uncertain: false, inFlight: false };
+  drafts.set(key, draft);
+  if (draft.inFlight) { LF.toast('Your project request is still being saved. Please wait.'); return; }
+  const fields = opts.fields.map((f) => ({ f, ...ui.field(Object.assign({}, f, { value: draft.payload ? draft.payload[f.name] : draft.values[f.name] === undefined ? f.value : draft.values[f.name] })) }));
+  const message = h('div', { role: 'alert', class: 'err', hidden: !draft.uncertain }, 'Confirmation was interrupted. Retry the same request to confirm it was saved.');
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, draft.uncertain ? 'Retry same request' : opts.submitLabel);
+  const freeze = (yes) => fields.forEach((x) => { x.input.disabled = yes; });
+  freeze(draft.uncertain);
+  let modal;
+  const form = h('form', { onsubmit: async (e) => {
+    e.preventDefault(); if (draft.inFlight) return;
+    if (!draft.payload) {
+      if (!form.reportValidity()) return;
+      draft.payload = Object.assign({}, draft.base);
+      fields.forEach((x) => { draft.payload[x.f.name] = x.get(); });
+    }
+    draft.inFlight = true; submit.disabled = true; freeze(true); message.hidden = true;
+    try {
+      await api(opts.action, draft.payload);
+      drafts.delete(key); modal.close(); LF.toast(opts.success, 'good'); await opts.reload();
+    } catch (err) {
+      draft.uncertain = draft.uncertain || ['NETWORK', 'INTERNAL', 'IN_PROGRESS'].includes(err.code);
+      message.textContent = LF.errMsg(err) + (draft.uncertain ? ' Retry the same request to confirm it was saved. Your original details are preserved.' : '');
+      message.hidden = false;
+      if (!draft.uncertain) { draft.payload = null; freeze(false); }
+      submit.textContent = draft.uncertain ? 'Retry same request' : opts.submitLabel;
+    } finally { draft.inFlight = false; submit.disabled = false; }
+  } }, h('p', { class: 'hint' }, opts.intro), message,
+  h('div', { style: { display: 'grid', gap: '12px' } }, fields.map((x) => x.el)),
+  h('div', { class: 'toolbar', style: { marginTop: '16px' } }, submit));
+  modal = LF.modal(opts.title, form, { sticky: true, onClose: () => { fields.forEach((x) => { draft.values[x.f.name] = x.get(); }); } });
+}
+
+function createProject(labs, faculty, groups, reload) {
+  if (!labs.length || !faculty.length) { LF.toast('An active lab and faculty supervisor must be set up first.', 'bad'); return; }
+  editor({ key: 'create', title: 'Create project', action: 'projects.create', submitLabel: 'Create project', success: 'Project sent for approval.', reload,
+    base: { projectId: 'PRJ-' + LF.util.uuid().replace(/-/g, '').slice(0, 12).toUpperCase() },
+    intro: 'Choose a supervisor and timeline. Pending projects will be eligible for open-lab check-in when that flow is available. Submit your outcome after approval.',
+    fields: [
+      { name: 'title', label: 'Project title', required: true, maxlength: 120 },
+      { name: 'description', label: 'Description', type: 'textarea', rows: 3, required: true },
+      { name: 'groupId', label: 'Project team', type: 'select', options: [{ value: '', label: 'Individual project' }].concat(groups.map((g) => ({ value: g.groupId, label: g.name }))) },
+      { name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.map((l) => ({ value: l.labId, label: l.name })) },
+      { name: 'supervisorFacultyId', label: 'Supervisor', type: 'select', required: true, options: faculty.map((f) => ({ value: f.facultyId, label: f.name })) },
+      { name: 'startDate', label: 'Start date', type: 'date', required: true, value: LF.fmt.todayIst() },
+      { name: 'endDate', label: 'Target end date', type: 'date', required: true }
+    ] });
+}
+
+function outcome(project, reload) {
+  editor({ key: 'outcome:' + project.projectId, title: 'Outcome: ' + project.title, action: 'projects.outcome', base: { projectId: project.projectId },
+    submitLabel: 'Submit outcome', success: 'Outcome sent to your supervisor.', reload,
+    intro: 'Describe what you achieved. Your supervisor reviews this outcome before marking the project completed.',
+    fields: [{ name: 'outcome', label: 'Outcome', type: 'textarea', rows: 5, required: true, value: project.outcome },
+      { name: 'outcomeLink', label: 'Result link (optional)', type: 'url', maxlength: 1000, value: project.outcomeLink, placeholder: 'https://…' }] });
+}
+
+function card(project, role, leaderIds, reload) {
+  const studentId = LF.me.student && LF.me.student.studentId;
+  const supervisor = !!(LF.me.faculty && LF.me.faculty.facultyId === project.supervisorFacultyId);
+  const reviewer = role === 'staff' || role === 'admin' || (role === 'faculty' && supervisor);
+  const canSubmit = role === 'student' && (project.ownerStudentId === studentId || leaderIds.includes(project.groupId));
+  const actions = h('div', { class: 'toolbar' });
+  if (project.status === 'pending' && reviewer) {
+    actions.append(ui.button('Approve project', { kind: 'primary', onClick: async () => { await api('projects.decide', { projectId: project.projectId, approve: true }); LF.toast('Project approved.', 'good'); await reload(); } }),
+      ui.button('Reject project', { kind: 'danger', onClick: () => ui.formModal({ title: 'Reject: ' + project.title,
+        fields: [{ name: 'note', label: 'Reason shown to the student', type: 'textarea', required: true, rows: 2 }], submitLabel: 'Reject project',
+        onSubmit: async (v) => { await api('projects.decide', { projectId: project.projectId, approve: false, note: v.note }); LF.toast('Project rejected.'); await reload(); } }) }));
+  }
+  if (project.status === 'active' && canSubmit) actions.append(ui.button(project.outcome ? 'Update outcome' : 'Record outcome', { onClick: () => outcome(project, reload) }));
+  if (project.status === 'active' && project.outcome && supervisor && role === 'faculty') actions.append(ui.button('Accept outcome', { kind: 'primary', onClick: async () => {
+    try { await api('projects.outcome', { projectId: project.projectId, accept: true, outcomeAt: project.outcomeAt }); LF.toast('Outcome accepted. Project completed.', 'good'); await reload(); }
+    catch (err) { if (err.code === 'CONFLICT') await reload(); throw err; }
+  } }));
+  return h('article', { class: 'card', 'aria-label': project.title, style: { display: 'grid', gap: '12px', overflowWrap: 'anywhere', minWidth: 0 } },
+    h('div', { class: 'toolbar' }, h('h2', { class: 't-h2', style: { margin: 0 } }, project.title), ui.badge(project.status === 'active' && project.outcome ? 'Outcome awaiting review' : labels[project.status], project.status === 'completed' ? 'good' : project.status === 'rejected' ? 'bad' : '')),
+    h('p', { style: { whiteSpace: 'pre-wrap', margin: 0 } }, project.description),
+    h('div', { class: 'hint' }, project.ownerName + ' (' + project.ownerRollNo + ')' + (project.groupName ? ' · Team: ' + project.groupName : ''),
+      h('br'), project.labName + ' · Supervisor: ' + project.supervisorName, h('br'), 'Timeline: ' + project.startDate + ' → ' + project.endDate),
+    project.outcome ? h('section', { 'aria-label': 'Project outcome' }, h('h3', { class: 't-h3' }, 'Outcome'), h('p', { style: { whiteSpace: 'pre-wrap' } }, project.outcome),
+      project.outcomeLink && /^https?:\/\//i.test(project.outcomeLink) ? h('a', { href: project.outcomeLink, target: '_blank', rel: 'noopener noreferrer' }, 'Open result link') : null) : null,
+    actions);
+}
+
+function view(root, role) {
+  const student = role === 'student', out = h('div', { style: { display: 'grid', gap: '16px' } });
+  const toolbar = h('div', { class: 'toolbar' });
+  root.append(h('h1', { class: 't-h1' }, student ? 'My projects' : 'Projects'),
+    h('p', { class: 't-muted' }, student ? 'Track your individual and group projects, supervisor approval, timeline and outcome.' : 'Review projects and track their timelines and outcomes.'), toolbar, out);
+  const reload = ui.loadInto(out, async () => {
+    const [result, teams] = await Promise.all([api(student ? 'projects.mine' : 'projects.list'), student ? api('groups.list') : Promise.resolve({ groups: [] })]);
+    const leaders = teams.groups.filter((g) => g.members.some((m) => m.studentId === LF.me.student.studentId && m.isLeader));
+    LF.clear(toolbar).append(ui.button('Refresh projects', { onClick: reload }));
+    if (student) toolbar.prepend(ui.button('New project', { kind: 'primary', onClick: async () => {
+      const [labs, faculty] = await Promise.all([api('labs.list'), api('directory.faculty')]);
+      createProject(labs.labs, faculty.faculty, leaders, reload);
+    } }));
+    return h('div', { style: { display: 'grid', gap: '16px' } },
+      result.truncated ? h('p', { class: 'hint' }, 'Showing the latest 200 projects. Older projects remain saved.') : null,
+      result.projects.length ? result.projects.map((p) => card(p, role, leaders.map((g) => g.groupId), reload)) : ui.empty('No projects yet', student ? 'Create a project and choose your faculty supervisor.' : 'Projects awaiting your review will appear here.'));
+  });
+}
+
+['student', 'faculty', 'staff', 'admin'].forEach((role) => LF.register({ role, id: 'projects', label: role === 'student' ? 'My projects' : 'Projects', icon: 'lab', render(root) { view(root, role); } }));
+})();
+</script>
