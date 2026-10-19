@@ -631,6 +631,8 @@ var Attend = {
 
   // ---- history -----------------------------------------------------------------------------------------------
   /** A student's own attendance history. Never reads another student's rows. */
+  /** Record a project or system change during a visit as a WORK event (task C3). */
+  setWork: function () { notBuilt_('C3'); },
   myHistory: function (ctx, p) {
     if (!ctx.student) return { history: [], totals: {} };
     p = p || {};

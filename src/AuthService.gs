@@ -91,6 +91,10 @@ var Auth = {
   },
 
   /** Throw FORBIDDEN unless the caller holds one of the roles. Central check used by the RPC router. */
+  /** Read access to department-wide data (coordinator, HOD, super admin). Use for reads only, never for writes. */
+  canView: function (ctx) { return ctx.has('admin') || ctx.has('staff') || ctx.has('hod'); },
+  /** Lab ids this account may see (task B3). */
+  labScope: function () { notBuilt_('B3'); },
   requireRole: function (ctx, roles) {
     if (!roles.some(function (r) { return ctx.has(r); })) fail('FORBIDDEN', 'You do not have permission to do that.');
   },

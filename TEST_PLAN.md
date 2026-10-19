@@ -7,7 +7,7 @@ Latest local run (2026-10-18): `npm run check` and `npm run sim` passed. The gen
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1), workflow-audit (29) | `npm test` | **167 pass, 0 fail** |
+| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1), workflow-audit (29), contracts (3) | `npm test` | **170 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **83 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |

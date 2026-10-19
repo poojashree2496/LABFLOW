@@ -302,5 +302,10 @@ LF.register({ role: 'admin', id: 'flags', label: 'Flags', icon: 'flag', render(r
 /* ------------------------------------------------------------------ reuse staff views */
 function reuse(id, label, iconName) { const v = (LF.routes.staff || []).find((x) => x.id === id); if (v) LF.register(Object.assign({}, v, { role: 'admin', label: label || v.label, icon: iconName || v.icon })); }
 reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan');
+
+/* ------------------------------------------------------------------ HOD (read-only; the full views are task B3) */
+LF.register({ role: 'hod', id: 'overview', label: 'Overview', icon: 'home', render(root) {
+  root.append(h('h1', { class: 't-h1' }, 'Department overview'), h('h2', { class: 't-h2' }, 'Live occupancy'), ui.occupancy());
+} });
 })();
 </script>

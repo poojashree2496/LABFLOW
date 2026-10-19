@@ -21,7 +21,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **S0 goes first and blocks everyone.** It puts every contract from requirements.md section 4 into the code as stubs. After S0, each person edits only their own handlers, views and tests. The shared files (`Code.gs` ROUTES, `Config.gs` schema, `test/harness.js`) then only change inside your own stub.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Each route calls a stub method in its service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Your job is to replace your own stubs. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
 - Contact point between streams: A4 moves one read inside `Attend.rebuildSummary`, which C4 also relies on. Tell each other before touching it.
@@ -30,21 +30,13 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 | Day | Work |
 |---|---|
-| Sun 19 / Mon 20 | S0, then A1, B1, C1 |
+| Sun 19 / Mon 20 | A1, B1, C1 (S0 is done) |
 | Tue 21 | Real lab data arrives (C5). A2, A3, B2, B3, C2, C3 |
 | Wed 22 | A4, A5, B4, B5, C4. S1 docs, S2 demo and screenshots |
 | Thu 23 | Demo by 5:00 PM |
 
 ### Shared (owner)
 
-- [ ] **S0 Contracts in code** (@? day 1, blocks everything else)
-  - Append every schema column and the `Projects` table exactly as in requirements.md section 4. Add the `proj` id prefix in `Cfg.ID_PREFIX`.
-  - Add the enum values: `Cfg.SESSION_TYPES`, `Cfg.ENTRY_REASONS`, `Cfg.ROLES` + `hod`.
-  - Add every new route to `ROUTES` with its final roles. Each handler is `fail('NOT_IMPLEMENTED', '...')`.
-  - Create empty `src/BackupService.gs` (`var Backup = {}`) and `src/ProjectService.gs` (`var Projects = {}`). Add both to `test/harness.js` `LOAD_ORDER` and `.clasp.json.example` `filePushOrder`.
-  - Add `hod` to `ROLE_LABEL` and `ROLE_ORDER` (`src/Scripts.html`) so the account can sign in. Add a HOD user to `test/fixtures.js` `world()` and `dev/world.js`.
-  - `test/access.test.js`: add `hod` to the valid role set and the role-matrix account.
-  - Done when: `npm run check` passes, and `Setup.initialise` extends an existing sheet without `SCHEMA_MISMATCH` (see `test/foundation.test.js`).
 - [ ] **S1 Docs** (@?)
   - README: features, the four roles, a quick start, screenshots.
   - SECURITY.md: encryption, backups, archive, read-only HOD.
@@ -125,6 +117,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 - [ ] **B3 Department scope and HOD views** (R16)
   - Files: `LabService.gs` (`Labs.upsert` takes `department`), `UserService.gs` (`department` on users), `AuthService.gs` (`Auth.labScope`), `AdminService.gs` (`Dash.hod`, built from `Dash.admin` + `Dash.staff`, filtered by scope), new HOD views in `ScriptsAdmin.html` or a new `ScriptsHod.html` (if new: add it to `FRONTEND_FILES` and `Index.html`).
   - HOD views: overview, labs and facilities (read-only asset list), live board (B4), reports.
+  - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.
   - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
   - Tests: `test/access.test.js` or a new `test/hod.test.js`.
 - [ ] **B4 Live board and systems** (R1, R2, R9)

@@ -18,7 +18,7 @@ const nodeCrypto = require('crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 // Load order mirrors .clasp.json filePushOrder.
-const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs', 'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'CheckinService.gs', 'FlagService.gs', 'EventService.gs', 'AssetService.gs', 'BookingService.gs', 'ReportService.gs', 'AdminService.gs', 'TriggerService.gs', 'Code.gs'];
+const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs', 'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'CheckinService.gs', 'FlagService.gs', 'EventService.gs', 'AssetService.gs', 'BookingService.gs', 'ProjectService.gs', 'ReportService.gs', 'AdminService.gs', 'BackupService.gs', 'TriggerService.gs', 'Code.gs'];
 
 function signed(buf) { return Array.from(buf, (b) => (b > 127 ? b - 256 : b)); }
 function toBuf(x) { return Buffer.isBuffer(x) ? x : Buffer.from(x.map ? x.map((b) => b & 255) : x); }

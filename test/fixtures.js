@@ -52,11 +52,12 @@ function world(opts = {}) {
   w.eval = (code) => JSON.parse(e.run('JSON.stringify(' + code + ')'));
 
   // ---- base data ----
-  w.admin = 'admin@karunya.edu'; w.staff = 'staff@karunya.edu'; w.faculty = 'faculty@karunya.edu'; w.faculty2 = 'faculty2@karunya.edu';
+  w.admin = 'admin@karunya.edu'; w.staff = 'staff@karunya.edu'; w.faculty = 'faculty@karunya.edu'; w.faculty2 = 'faculty2@karunya.edu'; w.hod = 'hod@karunya.edu';
   w.ok(w.admin, 'me'); // creates the bootstrap admin
   w.ok(w.admin, 'users.upsert', { email: w.staff, displayName: 'Lab Staff', roles: ['staff'] });
   w.ok(w.admin, 'users.upsert', { email: w.faculty, displayName: 'Dr Faculty', roles: ['faculty'], employeeCode: 'F001' });
   w.ok(w.admin, 'users.upsert', { email: w.faculty2, displayName: 'Dr Other', roles: ['faculty'], employeeCode: 'F002' });
+  w.ok(w.admin, 'users.upsert', { email: w.hod, displayName: 'Dr HOD', roles: ['hod'] });
   w.lab = w.ok(w.admin, 'labs.upsert', { code: 'IOT01', name: 'IoT Lab', type: 'iot', capacity: 70, latitude: LAB_A.lat, longitude: LAB_A.lng, radiusM: 20, checkinMode: opts.mode || 'AB', openTime: '08:00', closeTime: '19:00' }).lab;
   w.lab2 = w.ok(w.admin, 'labs.upsert', { code: 'GPU01', name: 'GPU Lab', type: 'gpu', capacity: 30, latitude: LAB_B.lat, longitude: LAB_B.lng, radiusM: 20, checkinMode: opts.mode || 'AB' }).lab;
   w.ok(w.admin, 'kiosks.upsert', { labId: w.lab.labId, name: 'IoT door', authorizedEmail: w.kioskEmail });

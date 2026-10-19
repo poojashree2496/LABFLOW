@@ -83,7 +83,7 @@ function overview(root) {
     h('label', { class: 'f' }, 'Simulated latency per sheet read/write', h('div', { class: 'row' }, lat, latV)), h('div', { class: 'hint' }, 'Sheet operations so far: ' + state.ops.read + ' reads, ' + state.ops.write + ' writes. Apps Script typically spends tens of milliseconds on each.'),
     h('div', { class: 'hint' }, 'Built in ' + state.buildMs + ' ms.'));
   const ids = h('section', { class: 'panel stack' }, h('h2', null, 'Open the app as...'), h('p', { class: 'hint' }, 'Each link opens a tab signed in as that account (identity switching exists only on this local server).'));
-  const groups = { admin: [], staff: [], faculty: [], student: [] };
+  const groups = { admin: [], hod: [], staff: [], faculty: [], student: [] };
   state.users.forEach((u) => { const r = String(u.roles).split(',')[0]; (groups[r] || groups.student).push(u); });
   Object.keys(groups).forEach((g) => { if (!groups[g].length) return; ids.append(h('h3', null, g), h('div', { class: 'row' }, groups[g].slice(0, g === 'student' ? 12 : 10).map((u) => h('a', { class: 'btn sm', href: appUrl(u.email), target: '_blank', rel: 'noopener', title: u.email }, (u.name || u.email) + (u.classRep ? ' · CR' : '') + (u.coordinator ? ' · coordinator' : ''))))); });
   ids.append(h('h3', null, 'kiosks'), h('div', { class: 'row' }, state.kiosks.map((k) => h('a', { class: 'btn sm', href: appUrl(k.email), target: '_blank', rel: 'noopener' }, k.name + ' (' + k.lab + ', mode ' + k.mode + ')'))));

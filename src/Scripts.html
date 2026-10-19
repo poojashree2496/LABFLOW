@@ -390,8 +390,8 @@ function runCleanups() { LF.timers.forEach(clearInterval); LF.timers = []; LF.cl
     `when` hides a view unless it applies to this account (for example the class representative page). */
 LF.register = (v) => { (LF.routes[v.role] = LF.routes[v.role] || []).push(v); };
 const visible = (role) => (LF.routes[role] || []).filter((v) => !v.when || v.when(LF.me));
-const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', kiosk: 'Kiosk' };
-const ROLE_ORDER = ['admin', 'staff', 'faculty', 'student'];
+const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', hod: 'HOD', kiosk: 'Kiosk' };
+const ROLE_ORDER = ['admin', 'hod', 'staff', 'faculty', 'student'];
 
 function appRoot() { return $('#app'); }
 function setHash(role, id) { try { const want = '#/' + role + '/' + id; if (location.hash !== want) history.replaceState(null, '', want); } catch (e) { try { location.hash = '#/' + role + '/' + id; } catch (x) { /* ignore */ } } }

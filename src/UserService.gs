@@ -147,6 +147,8 @@ var Users = {
   },
 
   /** Staff/admin/faculty student directory. Faculty only see students in their own courses. */
+  revealMobile: function () { notBuilt_('A2'); },
+  setStudentStatus: function () { notBuilt_('B2'); },
   listStudents: function (ctx, p) {
     p = p || {};
     var q = V.str(p.q, 'Search', { optional: true, max: 60 }).toLowerCase();

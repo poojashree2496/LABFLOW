@@ -61,6 +61,9 @@ var Labs = {
  * because every dashboard polls it; an accepted scan clears the lab's entry so the count moves immediately.
  */
 var Occupancy = {
+  // v2 stubs (docs/requirements.md section 4); each task replaces its own.
+  live: function () { notBuilt_('B4'); },
+  systems: function () { notBuilt_('B4'); },
   _key: function (labId) { return 'occ|' + labId; },
   invalidate: function (labId) { try { CacheService.getScriptCache().remove(Occupancy._key(labId)); } catch (e) {} },
   lab: function (labId) {

@@ -83,6 +83,7 @@ function seed(lab, preset) {
   w.ok(A, 'users.upsert', { email: 'faculty2@karunya.edu', displayName: 'Dr Sunita Mathew', roles: ['faculty'], employeeCode: 'F002' });
   w.ok(A, 'users.upsert', { email: S, displayName: 'Ravi (Lab staff)', roles: ['staff'] });
   w.ok(A, 'users.upsert', { email: A, displayName: 'Lab Admin', roles: ['admin'] });
+  w.ok(A, 'users.upsert', { email: 'hod@karunya.edu', displayName: 'Dr Meena Krishnan (HOD, CSE)', roles: ['hod'] });
   const fac3 = w.ok('faculty3@karunya.edu', 'me').faculty.facultyId;
   const c2 = w.ok(A, 'courses.upsert', { code: 'CSE302', name: 'Deep Learning Lab' }).course, c3 = w.ok(A, 'courses.upsert', { code: 'CSE303', name: 'Web Technology Lab' }).course;
   w.ok(A, 'facultycourses.set', { facultyId: w.faculty2Id, courseId: c2.courseId, section: 'A' });
@@ -93,7 +94,7 @@ function seed(lab, preset) {
   w.ok(A, 'students.import', { rows });
   rows.forEach((r, i) => { const s = w.ok(r.email, 'onboard', { rollNo: r.rollNo, name: r.name, consent: true, mobile: '98' + String(40000000 + i * 3917).slice(0, 8) }).student; w.students.push({ email: r.email, studentId: s.studentId, rollNo: r.rollNo, name: r.name }); });
   w.demoPendingStudent = w.ok('pending.student@karunya.edu', 'onboard', { rollNo: 'URK24CS1999', name: 'Pending Verification', consent: true, mobile: '9876509999' }).student;
-  [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
+  [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu', 'hod@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
   const rolls = rows.map((r) => r.rollNo);
   w.ok(A, 'roster.import', { courseId: w.course.courseId, rows: rolls });
   w.ok(A, 'roster.import', { courseId: c2.courseId, rows: rolls.slice(0, Math.ceil(rolls.length / 2)) });

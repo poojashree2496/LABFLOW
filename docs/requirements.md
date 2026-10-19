@@ -125,7 +125,7 @@ These names are frozen so the three workstreams can work in parallel. **Change t
 | AttendanceEvents | `projectId assetId` |
 | Reservations | `projectId waitlistedAt:n` |
 
-New table, id prefix `proj`:
+New table (`U.id('project')` gives ids starting `PRJ`):
 
 ```
 Projects: projectId title description ownerStudentId groupId supervisorFacultyId labId startDate endDate status outcome outcomeLink outcomeAt:n approvedBy approvedAt:n createdAt:n updatedAt:n

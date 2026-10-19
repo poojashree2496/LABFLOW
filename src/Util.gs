@@ -13,8 +13,13 @@ class AppError extends Error {
   }
 }
 function fail(code, message, extra) { throw new AppError(code, message, extra); }
+/** Placeholder for a v2 contract that is not built yet; `task` is its id in docs/tasks.md. */
+function notBuilt_(task) { fail('NOT_IMPLEMENTED', 'This feature is not built yet (task ' + task + ').'); }
 
 var U = {
+  // v2 stubs (docs/requirements.md section 4); each task replaces its own.
+  /** URK24CS1021 -> { joinYear: 2024, gradYear: 2028, dept: 'CS', serial: '1021' }; null for other formats. */
+  parseRoll: function () { notBuilt_('A1'); },
   /** Current time in epoch ms. Tests may set the global __testNow to control the clock. */
   now: function () { return (typeof __testNow === 'number') ? __testNow : Date.now(); },
 
@@ -138,6 +143,13 @@ var U = {
  * observer (__pipelineObserver, defined only by the dev server) receives the trace. Production code never reads any
  * per-step switch: every step in the list always runs.
  */
+/** Encryption at rest for personal data such as phone numbers (task A2). */
+var Crypt = {
+  seal: function () { notBuilt_('A2'); },
+  open: function () { notBuilt_('A2'); },
+  mask: function () { notBuilt_('A2'); }
+};
+
 var Pipeline = {
   run: function (name, steps, c) {
     var trace = [];
