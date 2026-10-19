@@ -85,8 +85,8 @@ const { start } = require('../../dev/server');
     check('automatic closing releases all workstation claims', w.eval(`Work.occupants('${demo.lab.labId}').length`) === 0);
     for (const who of [w.faculty, w.admin]) { await open(who); await region().waitFor(); check(who + ' can open the shared board', true); }
     await open(w.hod);
-    await page.getByText('Department access is being configured', { exact: true }).waitFor();
-    check('HOD access stays closed until department scope is implemented', await page.getByRole('region', { name: / live board$/ }).count() === 0);
+    await region().waitFor();
+    check('HOD can open the board for accessible shared labs', await region().count() === 1);
     await page.goto(dev.base + '?as=' + firstStudent.email);
     await page.waitForFunction(() => window.LF && LF.me && LF.role);
     check('students have no named live-board route', await page.evaluate(() => !(LF.routes.student || []).some((r) => r.id === 'lab-board')));

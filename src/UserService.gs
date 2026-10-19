@@ -81,7 +81,7 @@ var Users = {
     var mobile = Settings.get('requireMobile') || p.mobile ? V.mobile(p.mobile) : '';
     var name = V.str(p.name, 'Name', { max: 80, min: 2 });
     var previous = Db.getBy('Users', 'email', ctx.email);
-    var department = V.str(p.department === undefined ? previous && previous.department || 'CSE' : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
+    var department = V.str(p.department === undefined ? (previous ? previous.department || '' : 'CSE') : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
     var section = V.str(p.section, 'Section', { optional: true, max: 10 });
     var year = V.int(p.year, 'Year', 1, 6, { optional: true, def: null });
     var photo = p.photo ? Users._decodePhoto(p.photo) : null;
@@ -284,7 +284,7 @@ var Users = {
     if (!roles.length) fail('BAD_INPUT', 'Choose at least one role.');
     var displayName = V.str(p.displayName, 'Name', { max: 80, min: 2 });
     var previous = Db.getBy('Users', 'email', email);
-    var department = V.str(p.department === undefined ? previous && previous.department || 'CSE' : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
+    var department = V.str(p.department === undefined ? (previous ? previous.department || '' : 'CSE') : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
     var employeeCode = V.str(p.employeeCode, 'Employee code', { optional: true, max: 30 });
     var status = V.enumOf(p.status, 'Status', ['active', 'disabled'], { optional: true, def: 'active' });
     return Locks.with(function () {

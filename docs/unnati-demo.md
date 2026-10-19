@@ -22,7 +22,7 @@ The original IoT, GPU and Computing labs and their existing demos remain availab
 4. Open the staff inventory and filter to Unnati to inspect the equipment. Open admin Labs > Edit Intel Unnati AI Lab to inspect its placeholder settings.
 5. Advance the clock beyond 19:00 and run the session tick. The three visits close automatically, crediting through 19:00, with auto sign-out details in student history. The systems are released. A new daily open-lab session is available the next morning.
 
-Faculty, staff and admin can open **Live board** and select Unnati to see the current visitors, projects and systems together. Student Today still shows their own assignment. HOD board access awaits the B3 department-scope helper; see [Live board](live-board.md).
+Faculty, staff and admin can open **Live board** and select Unnati to see the current visitors, projects and systems together. Student Today still shows their own assignment. HOD board access includes Unnati when its department matches or the lab is shared; see [Live board](live-board.md).
 
 ## Replacing placeholders
 

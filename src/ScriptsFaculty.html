@@ -11,7 +11,7 @@ const TYPE_LABEL = { class: 'Class', event: 'Event', research: 'Research', openl
 function howCell(x) {
   if (!x.method) return '-';
   return h('span', { class: 'pill-row' }, ui.badge(x.method === 'kiosk' ? 'kiosk' : x.method === 'scanner' ? 'phone scan' : x.method, ''),
-    x.scannerRole === 'cr' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by CR', 'warn')) : x.scannerRole === 'coordinator' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by coordinator', 'info')) : null,
+    x.scannerRole === 'cr' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by CR', 'warn')) : x.scannerRole === 'coordinator' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by event lead', 'info')) : null,
     x.geofence === 'pass' ? ui.badge('GPS ok', 'good') : x.geofence === 'na' ? ui.badge('no GPS', 'warn') : null, x.assurance === 'lower' ? ui.badge('lower assurance', 'warn') : null);
 }
 
@@ -117,7 +117,7 @@ function liveRoster(root) {
     if (!open) banner.append(h('div', { class: 'card flat' }, 'This session is ' + s.status + '. ', s.status === 'closed' ? 'Records are kept as scanned; use Actions for audited corrections.' : ''));
     if (c.onBreak) banner.append(h('div', { class: 'card sky' }, h('strong', null, 'Break. '), 'Attendance is paused until ' + fmt.time(s.breakEnd) + '; nobody needs to scan out for it.'));
     if (r.openFlags) banner.append(h('div', { class: 'card warn toolbar' }, h('strong', null, r.openFlags + ' open flag(s) for this session.'), h('button', { class: 'btn btn-sm', onclick: () => LF.go('flags') }, 'Review flags')));
-    if (r.guests) banner.append(h('div', { class: 'hint' }, r.guests + ' guest(s) added by the coordinator.'));
+    if (r.guests) banner.append(h('div', { class: 'hint' }, r.guests + ' guest(s) added by the event lead.'));
     clear(actionsEl);
     if (open && String(s.labMode || '').indexOf('B') >= 0) actionsEl.append(ui.button('Scan students', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }));
     if (open) actionsEl.append(ui.button('Request rescan now', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); refresh(); } }),
@@ -189,7 +189,7 @@ function newSessionForm() {
     const labs = await api('labs.list'); const isAdmin = LF.me.roles.includes('admin');
     const fac = isAdmin ? await api('directory.faculty') : null;
     if (!labs.labs.length) return ui.empty('No labs configured', 'An administrator must add labs first.');
-    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'research', label: 'Research visit (authorised)' }, { value: 'event', label: 'Extra lab session (no break or coordinator)' }] });
+    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'research', label: 'Research visit (authorised)' }, { value: 'event', label: 'Extra lab session (no break or event lead)' }] });
     const title = ui.field({ name: 'title', label: 'Title', required: true, maxlength: 100 });
     const lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.labs.map((l) => ({ value: l.labId, label: l.name })) });
     const date = ui.field({ name: 'date', label: 'Date', type: 'date', required: true, value: fmt.todayIst() });
@@ -291,7 +291,7 @@ LF.eventsView = function () {
     return h('div', { style: { display: 'grid', gap: '10px' } }, r.events.map((e) => {
       const c = e.counts;
       return h('article', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name),
-        h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + '-' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : '') + (e.coordinatorEmail ? ' · coordinator ' + e.coordinatorEmail : ''))),
+        h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + '-' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : '') + (e.coordinatorEmail ? ' · event lead ' + e.coordinatorEmail : ''))),
         ui.status(e.status === 'cancelled' ? 'cancelled' : e.session ? e.session.status : 'scheduled')),
         h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Registered ' + e.registered, 'info'), ui.badge('Guests ' + e.guests, ''), ui.badge('Capacity ' + e.capacity, ''), c ? ui.badge('Inside ' + c.inside, c.overCapacity ? 'bad' : 'good') : null),
         e.status === 'active' && e.session && e.session.status === 'scheduled' ? h('div', { class: 'toolbar', style: { marginTop: '10px' } }, ui.button('Cancel event', { size: 'sm', onClick: () => ui.formModal({ title: 'Cancel ' + e.name, fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Cancel event', onSubmit: async (v) => { await api('events.cancel', { labEventId: e.labEventId, reason: v.reason }); load(); } }) })) : null);
@@ -305,7 +305,7 @@ LF.eventsView = function () {
     const date = f({ name: 'date', label: 'Date', type: 'date', required: true, value: fmt.todayIst() }), st = f({ name: 'startTime', label: 'From', type: 'time', value: '09:00' }), en = f({ name: 'endTime', label: 'Until', type: 'time', value: '16:00' });
     const bs = f({ name: 'breakStart', label: 'Lunch break from', type: 'time', value: '' }), be = f({ name: 'breakEnd', label: 'Lunch break until', type: 'time', value: '' });
     const cap = f({ name: 'capacity', label: 'Capacity (blank = lab seats)', type: 'number', min: 1 });
-    const coord = f({ name: 'coordinatorEmail', label: 'Coordinator email (optional)', type: 'email', hint: 'A student or staff member who runs the event. Their rights end with the event.' });
+    const coord = f({ name: 'coordinatorEmail', label: 'Event lead email (optional)', type: 'email', hint: 'A student or staff member who runs the event. Their rights end with the event.' });
     const all = f({ name: 'openToAll', label: 'Open to anyone with a student account', type: 'checkbox' }), rolls = f({ name: 'rolls', label: 'Registered participants (roll numbers)', type: 'textarea', rows: 4, hint: 'One per line or comma separated. Leave empty if the event is open to all.' });
     const desc = f({ name: 'description', label: 'Description', maxlength: 300 }), fsel = fac ? f({ name: 'facultyId', label: 'Responsible faculty', type: 'select', options: fac.faculty.map((x) => ({ value: x.facultyId, label: x.name })) }) : null;
     const ov = isAdmin ? f({ name: 'override', label: 'Override a lab conflict', type: 'checkbox' }) : null, msg = h('div', { role: 'alert' });

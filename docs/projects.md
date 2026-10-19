@@ -29,7 +29,7 @@ All handlers return `{ project }`, except the list handlers, which return `{ pro
 
 The server takes the owner from the authenticated caller. Payload owner, status and approval fields are never trusted. Lists return the newest 200 matching visible projects and report truncation; older records remain available by id.
 
-Students read their own/group projects. Faculty read projects they supervise. Coordinators and super admins read all projects. HOD reads use `Auth.labScope(ctx)`; **B3 has not implemented this helper yet**, so HOD project reads currently return `NOT_IMPLEMENTED` rather than exposing unscoped data.
+Students read their own/group projects. Faculty read projects they supervise. Coordinators and super admins read all projects. HOD reads use `Auth.labScope(ctx)` for their department and shared labs. HOD-only accounts cannot decide projects or submit/accept outcomes.
 
 ## Retry and concurrency behaviour
 

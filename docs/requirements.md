@@ -37,22 +37,22 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 
 | # | Status | What exists | What is missing | Tasks |
 |---|---|---|---|---|
-| R1 | Done on local fakes | Live counts plus current student, system and project assignments on the Live board (`Occupancy.live`) | HOD department scope and deployment checks | B3, Deployment |
-| R2 | Done for faculty/staff/admin on local fakes | Live board lists current visitors; public counts and student system status remain anonymous | HOD department scope and deployment checks | B3, Deployment |
+| R1 | Done on local fakes | Live counts plus current student, system and project assignments on the Live board (`Occupancy.live`) | Deployment checks | Deployment |
+| R2 | Done on local fakes | Live board lists current visitors; public counts and student system status remain anonymous | Deployment checks | Deployment |
 | R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
 | R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
-| R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | HOD report access and deployment checks | B1, B3, Deployment |
+| R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | Deployment checks | Deployment |
 | R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
 | R10 | Done on local fakes | Student report totals and per-lab hours/days/visits/automatic sign-outs; student home has a 90-day per-lab view | Deployment checks | Deployment |
-| R11 | Done for staff/admin on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | HOD report access and deployment checks | B1, B3, Deployment |
+| R11 | Done on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | Deployment checks | Deployment |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
 | R14 | Missing | Nothing | Nightly backup copies and a yearly archive spreadsheet | A3, A4 |
 | R15 | Partial | Role-checked RPC gateway, rate limits, hash-chained audit log | `Users.mobile` is plain text | A2 |
-| R16 | Partial | student, faculty, staff, admin, kiosk; students already see their own verified minutes (`Attend.myHistory` totals) | HOD role; coordinator managing students; new labels | B1, B2, B3 |
+| R16 | Partial | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time | Coordinator student-management (B2), deployment checks | B2, Deployment |
 | R17 | Done | Device-bound signed QR, two check-in modes, tamper-evident audit chain, Test Lab with attack scenarios | Keep it in the pitch | S2 |
 | R18 | Partial | `V.rollNo` accepts any 3-20 characters | Parsing the join year and department | A1 |
 

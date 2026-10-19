@@ -38,6 +38,9 @@ test('HOD scope includes own department and shared labs; missing department give
   const w=ready(); assert.deepEqual(new Set(w.ok(w.hod,'labs.list').labs.map(l=>l.labId)),new Set([w.lab.labId,w.shared.labId]));
   w.ok(w.admin,'users.upsert',{email:w.hod,displayName:'No department',roles:['hod'],department:''});
   assert.deepEqual(w.ok(w.hod,'labs.list').labs.map(l=>l.labId),[w.shared.labId]);
+  w.ok(w.admin,'users.upsert',{email:w.hod,displayName:'Still unassigned',roles:['hod']});
+  assert.equal(w.ok(w.hod,'me').department,'');
+  assert.deepEqual(w.ok(w.hod,'labs.list').labs.map(l=>l.labId),[w.shared.labId]);
   assert.equal(w.ok(w.admin,'labs.list').labs.length,3);
 });
 test('HOD reads across legacy lists and aggregate dashboards never include other-department records', () => {

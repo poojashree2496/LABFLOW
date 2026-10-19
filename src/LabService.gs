@@ -65,7 +65,7 @@ var Labs = {
  * because every dashboard polls it; an accepted scan clears the lab's entry so the count moves immediately.
  */
 var Occupancy = {
-  /** Scope before reading identities. B3 owns HOD department scope and currently fails closed. */
+  /** Scope before reading identities, using the HOD account department and shared labs. */
   _boardLabs: function (ctx, p) {
     p = p || {}; V.obj(p);
     var labId = p.labId ? V.id(p.labId, 'Lab', 'lab') : '', scope = null;

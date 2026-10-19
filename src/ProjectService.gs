@@ -23,7 +23,7 @@ var Projects = {
   },
   _readScope: function (ctx) {
     if (ctx.has('admin') || ctx.has('staff')) return function () { return true; };
-    // B3 supplies department scope. Until then the HOD path fails closed via the shared helper's explicit stub.
+    // Department/shared-lab scope is read from the HOD's current account.
     var labs = ctx.has('hod') ? Auth.labScope(ctx) : [];
     return function (project) {
       return !!((ctx.student && Projects._member(ctx.student.studentId, project)) ||

@@ -38,7 +38,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 ### Shared (owner)
 
 - [ ] **S1 Docs** (@?)
-  - README: features, the four roles, a quick start, screenshots.
+  - README: features, the five role dashboards, a quick start, screenshots.
   - SECURITY.md: encryption, backups, archive, read-only HOD.
   - TEST_PLAN: the new flows.
   - `docs/` pages: architecture; attendance (both modes and the pipeline); data model; deployment; testing and Test Lab; site themes (pick one, what each changes, how to add one: `styles/themes/`, `src/ScriptsThemes.html`, the `uiTheme` setting).
@@ -102,25 +102,11 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-B Roles, dashboards, live board and reports (@?)
 
-- [~] **B1 Roles** (R16)
-  - Files: `AuthService.gs` (`Auth.canView`), every read handler with `has('admin') || has('staff')`, `UserService.gs` (`Users.upsertUser` role cap 4 -> 5; `Dash.admin` role counts), `Scripts.html` (`ROLE_LABEL`: Coordinator, Super admin, HOD), `ScriptsThemes.html` (its copy of the labels), `ScriptsFaculty.html` / `ScriptsStudent.html` (text "coordinator" -> "Event lead"), `ScriptsAdmin.html` (role checkboxes, filters, badges).
-  - Backend access/scoping is implemented; role labels and admin controls remain in progress. See [HOD access](hod-access.md).
-  - Add `hod` to the roles of the read-only routes. The full list is in the role audit summary below this section.
-  - In handlers, switch **reads only** to `Auth.canView(ctx)`.
-  - `system.status`, `system.quota` and `settings.get` stay admin-only.
-  - Done when: a HOD account can open every read view, and is refused every write. Test the refusal as a sweep over all routes, not a hand-picked list.
-  - Tests: `test/access.test.js`.
 - [ ] **B2 Coordinator manages students** (R16)
   - Files: `Code.gs` (`students.import`, `roster.import`, `roster.remove` -> staff + admin), `UserService.gs` (`Users.importStudents` audit role `ctx.roles[0]`; new `Users.setStudentStatus` for `students.status`), `LabService.gs` (`Roster.import` audit role), `ScriptsStaff.html` (reuse the admin import and roster views, the way `ScriptsAdmin.html` `reuse()` shares staff views).
   - "Remove a student" means disable the profile (`status: 'disabled'`), never delete it. Disabled students cannot check in.
   - Done when: a coordinator imports a CSV, adds a student to a course, and disables one; each action is audited with role `staff`.
   - Tests: `test/api.test.js`.
-- [~] **B3 Department scope and HOD views** (R16)
-  - Files: `LabService.gs` (`Labs.upsert` takes `department`), `UserService.gs` (`department` on users), `AuthService.gs` (`Auth.labScope`), `AdminService.gs` (`Dash.hod`, built from `Dash.admin` + `Dash.staff`, filtered by scope), new HOD views in `ScriptsAdmin.html` or a new `ScriptsHod.html` (if new: add it to `FRONTEND_FILES` and `Index.html`).
-  - HOD views: overview, labs and facilities (read-only asset list), reports. The live board is implemented and already calls `Auth.labScope`; once B3 supplies it, verify the HOD board is department-scoped.
-  - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.
-  - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
-  - Tests: `test/access.test.js` or a new `test/hod.test.js`.
 ### WS-C Extra-hours check-in and projects (@?)
 
 - [ ] **C5 Confirm Intel Unnati AI Lab data** (R8, real inputs expected 21 Oct)
@@ -128,23 +114,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Replace the placeholder building, room, synthetic GPS/radius, capacity, hours and inventory with confirmed details in `dev/world.js`; update seed assertions and the demo notes.
   - Verify the real geofence at the lab door during deployment. No real location or asset list has been supplied yet.
 
-### Role audit summary (for B1)
-
-The routes a HOD needs read access to, with their current roles in `src/Code.gs`. Also extend the handler checks shown.
-
-| Route(s) | Roles today | Handler check to extend |
-|---|---|---|
-| `dash.admin`, `dash.staff`, `activity.feed` | admin / staff+admin | none |
-| `sessions.day`, `sessions.get` | faculty, staff, admin | `Sessions.listForDay`, `Sessions.get` |
-| `attend.roster` | user | staff or `canOperate` |
-| `attend.studentEvents`, `flags.list`, `events.list`, `classreps.list` | faculty, staff, admin | each handler |
-| `students.list`, `courses.list`, `timetable.list`, `facultycourses.list`, `roster.list` | faculty, staff, admin | each handler |
-| `assets.list` | faculty, staff, admin | `valueInr` only for admin/staff |
-| `assets.history`, `loans.list`, `booking.list`, `equipment.list` | staff, admin | none |
-| `reports.run`, `reports.csv`, `reports.pdf` | student, faculty, staff, admin | `Reports.run` access rules (`audit`, `erp` stay admin-only) |
-| `audit.list`, `users.list`, `kiosks.list` | admin | none |
-
-The HOD passes every `'user'` route. Make sure write handlers behind `'user'` (for example `sessions.open`, `scan.submit`, `attend.openRescan`) refuse a HOD-only account.
+HOD read/write policy and department scoping are implemented; see [HOD access](hod-access.md).
 
 ### Where to start reading
 

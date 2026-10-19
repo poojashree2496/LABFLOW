@@ -390,7 +390,8 @@ function runCleanups() { LF.timers.forEach(clearInterval); LF.timers = []; LF.cl
     `when` hides a view unless it applies to this account (for example the class representative page). */
 LF.register = (v) => { (LF.routes[v.role] = LF.routes[v.role] || []).push(v); };
 const visible = (role) => (LF.routes[role] || []).filter((v) => !v.when || v.when(LF.me));
-const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', hod: 'HOD', kiosk: 'Kiosk' };
+const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Coordinator', admin: 'Super admin', hod: 'HOD', kiosk: 'Kiosk' };
+LF.roleLabel = (role) => ROLE_LABEL[role] || role;
 const ROLE_ORDER = ['admin', 'hod', 'staff', 'faculty', 'student'];
 
 function appRoot() { return $('#app'); }
@@ -797,7 +798,7 @@ LF.ui.reports = (allowed) => {
   const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses'), fAsset = wrap('System', asset, 'asset');
   const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp', 'systemUsage', 'projects'];
   let last = null;
-  const priv = () => LF.me.roles.includes('admin') || LF.me.roles.includes('staff');
+  const priv = () => LF.me.roles.includes('admin') || LF.me.roles.includes('staff') || LF.me.roles.includes('hod');
   function loadSessions() {
     const d = date.value; if (sesLoaded === d) return; sesLoaded = d; clear(ses);
     api('sessions.day', { date: d }).then((r) => { const xs = r.sessions.filter((s) => s.status === 'open' || s.status === 'closed'); if (!xs.length) ses.append(h('option', { value: '' }, 'No sessions held that day')); xs.forEach((s) => ses.append(h('option', { value: s.sessionId }, LF.fmt.time(s.scheduledStart) + ' ' + s.title + ' · ' + (s.labCode || '')))); }).catch(fail);

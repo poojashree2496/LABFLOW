@@ -532,11 +532,11 @@ LF.register({ role: 'student', id: 'classrep', label: 'Class rep', icon: 'users'
 /* ------------------------------------------------------------------ Event coordinator (any role) */
 function coordinatorView(root) {
   const out = h('div', { style: { display: 'grid', gap: '12px' } });
-  root.append(h('h1', { class: 't-h1' }, 'Events I coordinate'),
+  root.append(h('h1', { class: 't-h1' }, 'Events I lead'),
     h('p', { class: 't-muted', style: { marginTop: 0 } }, 'Your rights cover this event only and end shortly after it. You can open the session, scan participants, add guests without a university account, and watch the count against the lab capacity.'), out);
   const reload = () => ui.loadInto(out, async () => {
     const r = await api('events.mine');
-    if (!r.events.length) return ui.empty('No events', 'When a faculty member names you as coordinator, the event appears here.');
+    if (!r.events.length) return ui.empty('No events', 'When a faculty member names you as event lead, the event appears here.');
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.events.map((e) => {
       const c = e.counts, over = c && c.overCapacity;
       return h('article', { class: 'card' + (over ? ' bad' : '') }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name), h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + ' - ' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : ''))), e.session ? ui.status(e.session.status) : null),
@@ -548,7 +548,7 @@ function coordinatorView(root) {
           ui.button('Add a guest', { icon: 'plus', onClick: () => ui.formModal({ title: 'Add a guest', intro: 'For speakers or visitors without a Karunya account. Each addition is logged.', fields: [{ name: 'name', label: 'Name', required: true, maxlength: 80 }, { name: 'organisation', label: 'Organisation', maxlength: 80 }], submitLabel: 'Add guest', onSubmit: async (v) => { await api('events.addGuest', Object.assign({ labEventId: e.labEventId }, v)); LF.toast('Guest added', 'good'); reload(); } }) }),
           ui.button('Register participants', { onClick: () => ui.formModal({ title: 'Register participants', fields: [{ name: 'rolls', label: 'Roll numbers (one per line or comma separated)', type: 'textarea', rows: 6, required: true }], submitLabel: 'Register', onSubmit: async (v) => { const x = await api('events.register', { labEventId: e.labEventId, rollNos: v.rolls.split(/[\s,;]+/).filter(Boolean) }); LF.toast(x.added + ' registered' + (x.errors.length ? ', ' + x.errors.length + ' not found' : ''), x.errors.length ? '' : 'good'); reload(); } }) }),
           e.session && e.session.status === 'open' ? ui.button('Close', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close the event session?', message: 'Participants can still scan out for a short grace period.', confirmLabel: 'Close' })) return; await api('sessions.close', { sessionId: e.sessionId, reason: 'closed by coordinator' }); reload(); } }) : null)
-          : h('div', { class: 'hint', style: { marginTop: '10px' } }, 'Your coordinator rights start ' + fmt.dt(e.startAt) + ' (minus a short lead time).'));
+          : h('div', { class: 'hint', style: { marginTop: '10px' } }, 'Your event lead rights start ' + fmt.dt(e.startAt) + ' (minus a short lead time).'));
     }));
   });
   reload(); LF.every(10000, () => { if (!document.querySelector('.modal-back')) reload(); });

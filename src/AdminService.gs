@@ -127,7 +127,7 @@ var Admin = {
 
 /** Dashboard summaries computed from live data only. */
 var Dash = {
-  // v2 stubs (docs/requirements.md section 4); each task replaces its own.
+  // Department-scoped HOD overview.
   hod: function (ctx, p) {
     return Locks.with(function () {
       var allowed = Auth.labFilter(ctx), studentAllowed = Auth.studentFilter(ctx), now = U.now(), today = U.local(now).date;
