@@ -37,8 +37,8 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 
 | # | Status | What exists | What is missing | Tasks |
 |---|---|---|---|---|
-| R1 | Partial | Live head count per lab and session (`Occupancy.lab`, LabService.gs ~63) | Each student's system and project | C3, B4 |
-| R2 | Partial | `labs.occupancy` is open to every signed-in user (Code.gs ~61) | A board listing the students inside | B4 |
+| R1 | Done on local fakes | Live counts plus current student, system and project assignments on the Live board (`Occupancy.live`) | HOD department scope and deployment checks | B3, Deployment |
+| R2 | Done for faculty/staff/admin on local fakes | Live board lists current visitors; public counts and student system status remain anonymous | HOD department scope and deployment checks | B3, Deployment |
 | R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |

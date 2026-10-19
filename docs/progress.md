@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-19)
 
-- Latest local checks: **252 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **84 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, and automatic sign-out **15** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **252 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **85 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, automatic sign-out **15**, and live-board **26** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -43,6 +43,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 - Flags for review: impossible GPS accuracy, identical readings, impossible travel between labs, replayed or stale codes, two students on one phone, desktop device registration, frequent manual check-ins, repeated missing exits.
 - Intel Unnati AI Lab demo in every preset: 30 marked placeholder systems, sample equipment/projects and three live system assignments; confirmed lab data still pending.
 - Daily opt-in open labs, pending-project/system selection, mid-visit work changes and automatic sign-out at closing with resumable recovery and repeated missed-exit flags.
+- Lab-wide live board with current student/project/system assignments, workstation availability, filters and automatic refresh; HOD scope remains B3.
 - Live roster and live occupancy on every dashboard; student history including open sessions.
 
 **People and events**
@@ -85,6 +86,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | B4 screen complete: shared Live board for faculty/staff/admin/HOD, lab and register/name/project/system search, current visits and workstation statuses, automatic refresh, preserved phone table scrolling, safe text rendering and clearing old identities when refresh is refused. Existing dashboard landing pages and session roster remain separate. HOD access awaits B3 scope and shows a clear pending-configuration message. | `npm run check`: lint and 252 backend tests passed. `npm run sim`: 27/27 in the backend slice. Isolated Brave: general 85/85 and new `npm run e2e:live` 26/26. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | B4 backend: scoped current-visitor snapshots with effective project/system assignments, anonymous workstation availability, reservation holds and unavailable equipment, and read-time recovery of overdue open-lab closure. No names enter the public occupancy cache. HOD reads fail closed until B3 provides department scope. Board screen remains in progress. | `npm run check`: lint and 252 backend tests passed (nine new live-board cases). `npm run sim`: 27/27. `git diff --check`: passed. |
 | 2026-10-19 | C5 demo seed: added Intel Unnati AI Lab as a fourth lab in every preset, 30 individually tracked workstations, two printers, two drones, six development boards, three pending/active projects and three checked-in students on separate systems. Synthetic GPS is selectable in the Test Lab; all unconfirmed values are marked as placeholders. Real location, hours and asset confirmation remains in C5. | `npm run check`: lint and 243 backend tests passed, including all presets and next-day visit recovery. `npm run sim`: 27/27. Isolated Brave general suite: 84/84. Additional browser inspection verified student phone layout, placeholder settings and Unnati simulated GPS; screenshots visually inspected. `git diff --check`: passed. |
 | 2026-10-19 | C4 complete: automatic open-lab exits at scheduled closing (or actual early manual close), credited time and auto sign-out history badges/totals/details, combined repeated missed-exit flags and workstation release. Pending close journals recover partial writes even after the session is closed; classes retain existing exit policy. Archive coordination documented without changing `Attend.rebuildSummary`. | `npm run check`: lint and 241 backend tests passed (22 new closing cases). `npm run sim`: 27/27. Isolated Brave: general 84/84, open-lab 15/15, work-selection 23/23 and new `npm run e2e:autoclose` 15/15. Phone screenshot visually inspected; `git diff --check`: passed. |

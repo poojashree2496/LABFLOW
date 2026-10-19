@@ -309,5 +309,7 @@ reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory
 LF.register({ role: 'hod', id: 'overview', label: 'Overview', icon: 'home', render(root) {
   root.append(h('h1', { class: 't-h1' }, 'Department overview'), h('h2', { class: 't-h2' }, 'Live occupancy'), ui.occupancy());
 } });
+// Register after the existing dashboards so the board does not replace a role's home view.
+['faculty', 'staff', 'admin', 'hod'].forEach((role) => LF.register({ role, id: 'lab-board', label: 'Live board', icon: 'lab', render: LF.liveLabBoard }));
 })();
 </script>
