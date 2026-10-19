@@ -97,7 +97,8 @@ var Events = {
   /** Events the caller coordinates that are running or still ahead. */
   mine: function (ctx) {
     var grace = Settings.get('eventCoordinatorGraceMinutes') * 60000, now = U.now();
-    return { events: Db.where('Events', function (e) { return e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + grace >= now; }).map(function (e) {
+    var allowed = Auth.labFilter(ctx);
+    return { events: Db.where('Events', function (e) { return allowed(e.labId) && e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + grace >= now; }).map(function (e) {
       var o = Events._withCounts(e); o.active = now >= e.startAt - grace; return o;
     }) };
   },

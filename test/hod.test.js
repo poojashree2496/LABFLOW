@@ -87,3 +87,17 @@ test('combined HOD and coordinator/admin roles retain their explicitly granted o
  assert.equal(w.ok(w.hod,'labs.list').labs.length,3);
  assert.ok(w.ok(w.hod,'assets.upsert',{labId:w.lab.labId,categoryId:w.asset.categoryId,name:'Coordinator write',assetTag:'COMBINED'}).asset);
 });
+test('HOD event-lead assignment does not bypass department reads or write restrictions',()=>{
+ const w=ready();w.e.run(`Db.update('Events',Db.get('Sessions','${w.secretSession}').labEventId,{coordinatorEmail:'${w.hod}'})`);
+ assert.deepEqual(w.ok(w.hod,'events.mine').events,[]);assert.equal(w.ok(w.hod,'me').coordinating,0);
+ assert.equal(w.err(w.hod,'events.guests',{labEventId:w.eval(`Db.get('Sessions','${w.secretSession}').labEventId`)}).code,'FORBIDDEN');
+ assert.equal(w.err(w.hod,'sessions.close',{sessionId:w.secretSession}).code,'FORBIDDEN');
+});
+test('HOD pending-correction counts exclude reviewed and other-department requests',()=>{
+ const w=ready();w.e.run(`
+ var pending=U.id('event'),reviewed=U.id('event');
+ [pending,reviewed].forEach(function(id){Db.insert('AttendanceEvents',{eventId:id,sessionId:'${w.sid}',studentId:'${w.students[0].studentId}',type:'CORR_IN',source:'manual',approvalStatus:'pending',at:U.now(),createdAt:U.now()});});
+ Db.insert('AttendanceEvents',{eventId:U.id('event'),sessionId:'${w.sid}',studentId:'${w.students[0].studentId}',type:'DECISION',ref:reviewed,approvalStatus:'approved',at:U.now(),createdAt:U.now()});
+ Db.insert('AttendanceEvents',{eventId:U.id('event'),sessionId:'${w.secretSession}',studentId:'${w.outside.studentId}',type:'CORR_IN',source:'manual',approvalStatus:'pending',at:U.now(),createdAt:U.now()});
+ `);assert.equal(w.ok(w.hod,'dash.hod').queues.pendingCorrections,1);
+});

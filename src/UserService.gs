@@ -18,7 +18,8 @@ var Users = {
   me: function (ctx) {
     var s = Settings.all(), sid = ctx.student ? ctx.student.studentId : null;
     var reps = sid ? Db.where('ClassReps', function (r) { return r.status === 'active' && r.studentId === sid; }).length : 0;
-    var coordinating = Db.where('Events', function (e) { return e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + s.eventCoordinatorGraceMinutes * 60000 >= U.now(); }).length;
+    var eventLabs = Auth.labFilter(ctx);
+    var coordinating = Db.where('Events', function (e) { return eventLabs(e.labId) && e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + s.eventCoordinatorGraceMinutes * 60000 >= U.now(); }).length;
     return {
       email: ctx.email,
       userId: ctx.user ? ctx.user.userId : null,

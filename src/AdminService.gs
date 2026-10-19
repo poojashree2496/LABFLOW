@@ -147,7 +147,7 @@ var Dash = {
         pendingEquipment:Db.where('EquipmentRequests',function(r){return allowed(r.labId)&&r.status==='pending';}).length,
         openFlags:Db.where('Flags',function(f){return allowed(f.labId)&&f.status==='open';}).length,
         activeLoans:loans.length,overdueLoans:loans.filter(function(l){return l.dueAt<now;}).length,damaged:stock.damaged,missing:stock.missing,
-        pendingCorrections:Db.where('AttendanceEvents',function(e){return ids[e.sessionId]&&e.source==='manual'&&e.approvalStatus==='pending';}).length};
+        pendingCorrections:Attend.pendingCorrections().corrections.filter(function(e){return !!ids[e.sessionId];}).length};
       return {department:Auth.department(ctx),labIds:labs.map(function(l){return l.labId;}),labCount:labs.length,users:roles,
         openSessions:sessions.filter(function(s){return s.status==='open';}).length,stock:stock,queues:queues,
         occupancy:labs.map(function(l){return Occupancy.lab(l.labId);}),attendanceByDay:Object.keys(perDay).sort().map(function(d){return {date:d,sessions:perDay[d].sessions,present:perDay[d].present};}),serverNow:now};

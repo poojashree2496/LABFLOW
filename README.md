@@ -10,7 +10,7 @@ Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mod
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 276 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 278 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
 | 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks and 17 report checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
@@ -78,7 +78,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 276 backend tests
+npm run check      # syntax lint of every .gs/.html script + 278 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)
