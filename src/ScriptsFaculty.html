@@ -350,6 +350,6 @@ LF.register({ role: 'faculty', id: 'equipment', label: 'Equipment', icon: 'box',
 
 /* ------------------------------------------------------------------ Reports */
 LF.register({ role: 'faculty', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
-LF.register({ role: 'faculty', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['session', 'custom', 'faculty', 'student'])); } });
+LF.register({ role: 'faculty', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['session', 'custom', 'faculty', 'student', 'projects'])); } });
 })();
 </script>

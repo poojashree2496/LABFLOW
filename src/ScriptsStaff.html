@@ -542,7 +542,7 @@ LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', ren
 } });
 
 LF.register({ role: 'staff', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
-LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue'])); } });
+LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'systemUsage', 'projects', 'inventory', 'overdue'])); } });
 /* ------------------------------------------------------------------ Lab-wide board, separate from the session roster */
 function liveBoard(root) {
   let snapshot = null, loading = false, alive = true, blocked = false, timer = null, intervalMs = Math.max(3, LF.me.settings.occupancyRefreshSeconds || 5) * 1000;

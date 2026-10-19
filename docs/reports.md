@@ -1,6 +1,6 @@
 # Attendance, system and project reports
 
-B5 implements student attendance totals, system usage and project reports. Report controls and the student home display are in progress.
+B5 implements student attendance totals, system usage and project reports. Use Reports as staff/faculty, Audit & system > Reports as admin, or My reports as a student. Today shows the student's per-lab days and verified hours for the past 90 days.
 
 The student report preserves its attendance columns and adds summary totals (verified hours, distinct attendance dates, visits and automatic sign-outs) and a per-lab section. Re-entry counts as another visit; absent sessions do not create attendance dates. Open visits use the same conservative verification policy as attendance. Historical summaries without events retain hours/days, but visits are counted only from available events and unknown visit-session counts are recorded in metadata. No re-entry count is invented from one summary row.
 
@@ -15,3 +15,9 @@ HOD report access requires B1's report-route roles and B3's department helper. T
 The existing CSV and PDF exporters handle the new summaries and sections, enforce their existing row limits and neutralize spreadsheet formulas. Report generation uses a script-locked snapshot. The student dashboard also exposes per-lab statistics for the past 90 days; its existing overall totals keep their original all-history scope.
 
 `test/reports.test.js` covers re-entry/day totals, work changes/voids, breaks, missed rescans/exits, automatic closing, date clipping, reservations/loans, permissions, historical fallback and CSV/PDF export on fakes. Real Google service performance and PDF rendering still require deployment checks.
+
+## Controls and browser checks
+
+Student attendance, system usage and project reports have date-range and lab filters. System usage requires selecting a workstation; the picker uses category flags rather than asset names, ignores stale lab responses, and warns if its 500-asset list is truncated. Student lookup requires an exact register number. Students have no other-student picker; their identity is enforced by the server. Faculty can select project reports but not system usage.
+
+Run the report, then use CSV or PDF. Report titles and context notes identify the selected data; no reservation duration or equipment-loan duration is added to attendance hours. Long tables scroll inside the phone page. `npm run e2e:reports` covers 17 browser checks for the controls, CSV downloads, permissions, stale responses, safe text and phone layout on local fakes.

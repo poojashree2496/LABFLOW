@@ -780,34 +780,48 @@ LF.ui.flagsView = () => {
 
 /* ------------------------------------------------------------------ generic reports view (all roles) */
 const REPORT_LABEL = { digest: 'Daily digest (per lab)', monthlyAudit: 'Monthly audit', custom: 'Custom date range', session: 'Session log', erp: 'ERP export (fixed columns)', daily: 'Daily sessions table', monthly: 'Monthly summary',
-  faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail' };
+  faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail', systemUsage: 'System usage', projects: 'Project outcomes and hours' };
 LF.ui.reports = (allowed) => {
   const box = h('div', { style: { display: 'grid', gap: '16px' } }), out = h('div');
   const type = h('select', { class: 'input', id: 'rp-type', style: { maxWidth: '280px' } }, allowed.map((t) => h('option', { value: t }, REPORT_LABEL[t])));
   const date = h('input', { class: 'input', type: 'date', id: 'rp-date', value: LF.fmt.todayIst() });
   const month = h('input', { class: 'input', type: 'month', id: 'rp-month', value: LF.fmt.todayIst().slice(0, 7) });
-  const from = h('input', { class: 'input', type: 'date', id: 'rp-from', value: new Date(Date.now() - 30 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) });
+  const from = h('input', { class: 'input', type: 'date', id: 'rp-from', value: new Date(LF.now() - 30 * 86400000 + IST_MIN * 60000).toISOString().slice(0, 10) });
   const to = h('input', { class: 'input', type: 'date', id: 'rp-to', value: LF.fmt.todayIst() });
   const who = h('input', { class: 'input', id: 'rp-who', placeholder: 'Student roll number' });
   const fac = h('select', { class: 'input', id: 'rp-fac', 'aria-label': 'Faculty member' }); let facLoaded = false;
   const lab = h('select', { class: 'input', id: 'rp-lab', 'aria-label': 'Lab' }, h('option', { value: '' }, 'All labs')); let labsLoaded = false;
+  const asset = h('select', { class: 'input', id: 'rp-asset', 'aria-label': 'System' }, h('option', { value: '' }, 'Choose a system')); let assetVersion = 0;
   const ses = h('select', { class: 'input', id: 'rp-ses', 'aria-label': 'Session' }); let sesLoaded = '';
   const wrap = (lbl, el, id) => h('div', { class: 'field', dataset: { k: id } }, h('label', { for: el.id }, lbl), el);
-  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses');
-  const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp'];
+  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses'), fAsset = wrap('System', asset, 'asset');
+  const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp', 'systemUsage', 'projects'];
   let last = null;
   const priv = () => LF.me.roles.includes('admin') || LF.me.roles.includes('staff');
   function loadSessions() {
     const d = date.value; if (sesLoaded === d) return; sesLoaded = d; clear(ses);
     api('sessions.day', { date: d }).then((r) => { const xs = r.sessions.filter((s) => s.status === 'open' || s.status === 'closed'); if (!xs.length) ses.append(h('option', { value: '' }, 'No sessions held that day')); xs.forEach((s) => ses.append(h('option', { value: s.sessionId }, LF.fmt.time(s.scheduledStart) + ' ' + s.title + ' · ' + (s.labCode || '')))); }).catch(fail);
   }
+  async function loadAssets() {
+    const version = ++assetVersion; asset.disabled = true; clear(asset).append(h('option', { value: '' }, 'Loading systems…'));
+    try {
+      const [a, c] = await Promise.all([api('assets.list', { labId: lab.value || undefined, limit: 500 }), api('categories.list')]);
+      if (version !== assetVersion) return;
+      const ids = new Set(c.categories.filter((x) => x.workstation === true).map((x) => x.categoryId));
+      const systems = a.assets.filter((x) => x.trackingMode === 'individual' && ids.has(x.categoryId));
+      clear(asset).append(h('option', { value: '' }, a.total > a.assets.length ? 'First 500 assets shown — narrow by lab' : systems.length ? 'Choose a system' : 'No workstations found'), ...systems.map((x) => h('option', { value: x.assetId }, x.name + ' · ' + x.assetTag)));
+    } catch (e) { if (version === assetVersion) { clear(asset).append(h('option', { value: '' }, 'Could not load systems')); fail(e); } }
+    finally { if (version === assetVersion) asset.disabled = false; }
+  }
+  lab.addEventListener('change', () => { if (type.value === 'systemUsage') loadAssets(); });
   function sync() {
     const t = type.value;
     fDate.hidden = !(t === 'daily' || t === 'digest' || t === 'session'); fMonth.hidden = !(t === 'monthly' || t === 'monthlyAudit');
     fFrom.hidden = fTo.hidden = RANGED.indexOf(t) < 0;
     fFac.hidden = !(t === 'faculty' && priv()); if (!fFac.hidden && !facLoaded) { facLoaded = true; api('directory.faculty').then((r) => { r.faculty.forEach((f) => fac.appendChild(h('option', { value: f.facultyId }, f.name))); }).catch(fail); }
     fWho.hidden = !(t === 'student' && (priv() || LF.me.roles.includes('faculty')));
-    fLab.hidden = !(t === 'digest' || t === 'custom'); if (!fLab.hidden && !labsLoaded) { labsLoaded = true; api('labs.list').then((r) => r.labs.forEach((l) => lab.appendChild(h('option', { value: l.labId }, l.code + ' ' + l.name)))).catch(fail); }
+    fLab.hidden = !['digest', 'custom', 'student', 'projects', 'systemUsage'].includes(t); if (!fLab.hidden && !labsLoaded) { labsLoaded = true; api('labs.list', { includeInactive: priv() }).then((r) => r.labs.forEach((l) => lab.appendChild(h('option', { value: l.labId }, l.code + ' ' + l.name)))).catch(fail); }
+    fAsset.hidden = t !== 'systemUsage'; if (!fAsset.hidden) loadAssets();
     fSes.hidden = t !== 'session'; if (!fSes.hidden) loadSessions();
   }
   type.addEventListener('change', sync); date.addEventListener('change', () => { if (type.value === 'session') loadSessions(); }); sync();
@@ -816,27 +830,30 @@ LF.ui.reports = (allowed) => {
     if (t === 'daily' || t === 'digest') p.date = date.value;
     if (t === 'monthly' || t === 'monthlyAudit') p.month = month.value;
     if (RANGED.indexOf(t) >= 0) { p.from = from.value; p.to = to.value; }
-    if ((t === 'digest' || t === 'custom') && lab.value) p.labId = lab.value;
+    if (['digest', 'custom', 'student', 'projects', 'systemUsage'].includes(t) && lab.value) p.labId = lab.value;
+    if (t === 'systemUsage') { if (asset.disabled || !asset.value) throw new ApiError('BAD_INPUT', 'Choose a system after the list finishes loading.'); p.assetId = asset.value; }
     if (t === 'session') { if (!ses.value) throw new ApiError('BAD_INPUT', 'Choose a session.'); p.sessionId = ses.value; }
     if (t === 'faculty' && !fFac.hidden) p.facultyId = fac.value;
-    if (t === 'student' && who.value.trim()) { const r = await api('students.list', { q: who.value.trim(), limit: 5 }); const s = r.students.find((x) => x.rollNo.toLowerCase() === who.value.trim().toLowerCase()) || r.students[0]; if (!s) throw new ApiError('NOT_FOUND', 'No student matches that roll number.'); p.studentId = s.studentId; }
+    if (t === 'student' && who.value.trim()) { const roll = who.value.trim(); const r = await api('students.list', { q: roll, limit: 5 }); const s = r.students.find((x) => x.rollNo.toLowerCase() === roll.toLowerCase()); if (!s) throw new ApiError('NOT_FOUND', 'No student matches that exact register number.'); p.studentId = s.studentId; }
     return p;
   }
   const sectionTable = (s, title) => table({ columns: s.columns.map((c, i) => ({ key: 'c' + i, label: c, text: (row) => row[i] === null || row[i] === undefined ? '' : String(row[i]), render: (row) => (row[i] === null || row[i] === undefined ? '' : String(row[i])), align: typeof (s.rows[0] || [])[i] === 'number' ? 'right' : 'left' })), rows: s.rows, pageSize: 50, caption: title || s.title, search: s.rows.length > 10 }).el;
   const run = button('Run report', { kind: 'primary', icon: 'chart', onClick: async () => {
-    const p = await params(); clear(out).appendChild(skeleton(5));
+    clear(out).appendChild(skeleton(5));
     try {
+      const p = await params();
       const r = await api('reports.run', p); last = p; clear(out);
       const sections = r.sections || [{ title: '', columns: r.columns, rows: r.rows }];
       append(out, [h('div', { class: 'toolbar', style: { justifyContent: 'space-between', marginBottom: '8px' } }, h('h3', { class: 't-h2' }, r.title),
         h('div', { class: 'toolbar' }, button('CSV', { icon: 'download', size: 'sm', onClick: async () => { const c = await api('reports.csv', last); LF.util.download(c.filename, c.csv, 'text/csv'); } }),
           button('PDF', { icon: 'download', size: 'sm', onClick: async () => { toast('Preparing PDF...'); const c = await api('reports.pdf', last); LF.util.download(c.filename, c.base64, 'application/pdf', true); if (c.truncated) toast('PDF shows the first 1000 rows. Use CSV for everything.'); } }))),
         r.summary && r.summary.length ? h('div', { class: 'grid-stats', style: { marginBottom: '12px' } }, r.summary.map(([k, v]) => stat(k, String(v)))) : null,
+        r.meta && r.meta.note ? h('p', { class: 'hint' }, r.meta.note) : null,
         r.truncated ? h('div', { class: 'card warn', style: { marginBottom: '8px' } }, 'Showing the first 5000 rows only. Narrow the date range for the full data.') : null,
         h('div', { style: { display: 'grid', gap: '16px' } }, sections.map((s) => h('section', null, s.title ? h('h4', { class: 't-h3', style: { margin: '0 0 6px' } }, s.title) : null, sectionTable(s, r.title))))]);
     } catch (e) { clear(out).appendChild(errorBox(e)); }
   } });
-  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fLab, fSes, fWho, fFac, run), out]);
+  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fLab, fAsset, fSes, fWho, fFac, run), out]);
   return box;
 };
 const ui = LF.ui;

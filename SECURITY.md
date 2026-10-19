@@ -17,6 +17,8 @@ Project/system assignments are checked against the authenticated student, active
 
 The named `labs.live` board is restricted to faculty/staff/admin and department-scoped HOD accounts. HOD reads fail closed until the shared department helper is implemented. Snapshots never enter the public occupancy cache. `systems.status` returns no occupant, project or reservation identities; student responses use only free/busy. The board clears previous visitor data after a failed/refused refresh and discards late responses after navigation.
 
+New system-usage reports are staff/admin-only through the current routes; project reports also allow the named supervisor. Client-supplied report scope is overwritten by server authorization. HOD report routing and department scope remain B1/B3 prerequisites. Student reports remain self-only or subject to the existing faculty roster check. CSV formula neutralization and safe text rendering apply to the new report fields.
+
 ## 2. Attendance: device-bound reverse QR
 
 Design: the phone proves possession of a registered key by signing a fresh server challenge; the kiosk only relays. The QR is `token~signature`, the token is an HMAC-protected, stateless blob bound to student, credential, session, lab and challenge.

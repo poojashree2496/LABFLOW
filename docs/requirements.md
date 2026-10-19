@@ -43,11 +43,11 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
 | R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
-| R7 | Missing | A booking stores only `purpose` | Projects with timeline and outcome | C1, C3 |
+| R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | HOD report access and deployment checks | B1, B3, Deployment |
 | R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
-| R10 | Partial | Student report found by roll number, minutes per session (`Reports._student`) | Total hours and distinct days | B5 |
-| R11 | Partial | Asset usage report counts loans and units (`Reports._assetUsage`) | Distinct people and purposes per system | B5 |
+| R10 | Done on local fakes | Student report totals and per-lab hours/days/visits/automatic sign-outs; student home has a 90-day per-lab view | Deployment checks | Deployment |
+| R11 | Done for staff/admin on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | HOD report access and deployment checks | B1, B3, Deployment |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
 | R14 | Missing | Nothing | Nightly backup copies and a yearly archive spreadsheet | A3, A4 |

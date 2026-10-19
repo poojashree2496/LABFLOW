@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-19)
 
-- Latest local checks: **268 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **85 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, automatic sign-out **15**, and live-board **26** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **268 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **85 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, automatic sign-out **15**, live-board **26**, and reports **17** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -44,6 +44,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 - Intel Unnati AI Lab demo in every preset: 30 marked placeholder systems, sample equipment/projects and three live system assignments; confirmed lab data still pending.
 - Daily opt-in open labs, pending-project/system selection, mid-visit work changes and automatic sign-out at closing with resumable recovery and repeated missed-exit flags.
 - Lab-wide live board with current student/project/system assignments, workstation availability, filters and automatic refresh; HOD scope remains B3.
+- Student attendance totals/per-lab days and hours, system usage with reservation/loan context, and supervisor-scoped project reports with CSV/PDF export; HOD report access remains B1/B3.
 - Live roster and live occupancy on every dashboard; student history including open sessions.
 
 **People and events**
@@ -86,6 +87,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | B5 screens complete: staff/admin system picker and project reports, faculty supervised-project reports, student self-report and per-lab 90-day days/hours on Today. Added range/lab controls, exact register-number matching, stale asset-response protection, report context notes and CSV downloads. HOD report route access/scope remain B1/B3 prerequisites. | `npm run check`: lint and 268 backend tests passed. `npm run sim`: 27/27 in the backend slice. Isolated Brave: general 85/85 and new `npm run e2e:reports` 17/17. Report/student-home phone screenshots visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | B5 backend: student totals/per-lab stats and 90-day dashboard data, verified work-time attribution across system/project changes, system usage with separate reservation/loan context, and supervisor-scoped project reports. Historical summaries mark unavailable visit counts. Attendance exposes optional internal credit intervals without changing scan policy. HOD reports still depend on B1 route access and B3 scope; report controls/home display remain in progress. | `npm run check`: lint and 268 backend tests passed, including 16 new report cases. `npm run sim`: 27/27. `git diff --check`: passed. |
 | 2026-10-19 | B4 screen complete: shared Live board for faculty/staff/admin/HOD, lab and register/name/project/system search, current visits and workstation statuses, automatic refresh, preserved phone table scrolling, safe text rendering and clearing old identities when refresh is refused. Existing dashboard landing pages and session roster remain separate. HOD access awaits B3 scope and shows a clear pending-configuration message. | `npm run check`: lint and 252 backend tests passed. `npm run sim`: 27/27 in the backend slice. Isolated Brave: general 85/85 and new `npm run e2e:live` 26/26. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | B4 backend: scoped current-visitor snapshots with effective project/system assignments, anonymous workstation availability, reservation holds and unavailable equipment, and read-time recovery of overdue open-lab closure. No names enter the public occupancy cache. HOD reads fail closed until B3 provides department scope. Board screen remains in progress. | `npm run check`: lint and 252 backend tests passed (nine new live-board cases). `npm run sim`: 27/27. `git diff --check`: passed. |

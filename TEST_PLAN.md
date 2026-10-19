@@ -1,6 +1,6 @@
 # LABFLOW test plan and results
 
-Latest local run (2026-10-19): `npm run check` passed 268 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks and 26 live-board checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
+Latest local run (2026-10-19): `npm run check` passed 268 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks and 17 report checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
@@ -13,6 +13,7 @@ Latest local run (2026-10-19): `npm run check` passed 268 backend tests and `npm
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
 | Focused project E2E (Playwright, Brave/Chromium) | `npm run e2e:projects` with `CHROMIUM_PATH` | **27 pass, 0 fail** |
 | Focused open-lab E2E (Playwright, Brave/Chromium) | `npm run e2e:openlab` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
+| Focused reports E2E (Playwright, Brave/Chromium) | `npm run e2e:reports` with `CHROMIUM_PATH` | **17 pass, 0 fail** |
 | Focused live-board E2E (Playwright, Brave/Chromium) | `npm run e2e:live` with `CHROMIUM_PATH` | **26 pass, 0 fail** |
 | Focused automatic sign-out E2E (Playwright, Brave/Chromium) | `npm run e2e:autoclose` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
 | Focused work-selection E2E (Playwright, Brave/Chromium) | `npm run e2e:work` with `CHROMIUM_PATH` | **23 pass, 0 fail** |
@@ -34,6 +35,8 @@ Project/system selection coverage includes pending projects, group/owner/lab che
 Unnati demo seed checks run all three presets: marked placeholder inventory, individually tracked workstation categories, distinct current system/project claims, valid pending/active projects and entry times before the initial clock. The seeded visits are also closed and reopened through the production attendance workflow. Browser inspection verified the student phone layout, admin placeholder labels and simulated Unnati GPS selection. See [Unnati demo](docs/unnati-demo.md).
 
 Live-board coverage includes effective current visits, WORK/VOID changes, departures and delayed automatic closing, workstation/booking status, unavailable assets, role denial, HOD scope and anonymous public responses. Browser checks cover shared navigation, lab/search filters, automatic refresh, safe literal rendering, phone layout and table-scroll preservation, error recovery and clearing previous identities after a refused refresh. HOD still depends on B3; see [Live board](docs/live-board.md).
+
+Report coverage includes verified-time partitioning across work changes, re-entry/day counts, voids, breaks, missing exits/rescans, automatic close, overnight clipping, contextual reservations/loans, historical summary fallback, faculty scope and CSV/PDF export. Browser checks cover lab/system selection, stale asset responses, student lookup/totals, supervised projects, safe text rendering, CSV downloads and student home/report screens at phone width. See [Reports](docs/reports.md).
 
 ## B. NOT tested: needs a real Workspace deployment
 
