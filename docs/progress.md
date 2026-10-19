@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-19)
 
-- Latest local checks: **170 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **83 checks** and the focused issue suite passes **33** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **184 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **83 checks** and the focused issue suite passes **33** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -83,6 +83,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | C1 backend: project creation, scoped lists/details, supervisor/coordinator decisions, versioned outcome submission and supervisor acceptance; active-group leader checks, pending-project eligibility, audited actions and notifications. Optional client-generated project ids make creation retries idempotent. HOD project reads depend on B3 department scope and fail closed until it is implemented. Student/faculty screens remain open. | `npm run check`: lint and 184 backend tests passed (14 project cases). `npm run sim`: 27/27. `git diff --check`: passed. |
 | 2026-10-19 | S0: v2 contracts in code. Appended the agreed schema columns and the Projects table, `hod` role, `openlab` type, `PRJ` id prefix; every v2 route with its final roles, each handler a stub that answers `NOT_IMPLEMENTED` with its task id; new `ProjectService.gs` and `BackupService.gs` in both load orders; `Auth.canView`; HOD label and a placeholder HOD overview; HOD account in the test and dev worlds; `test/contracts.test.js` guards the contracts. | `npm run check`: lint and 170 backend tests passed. `npm run sim`: 27/27. `npm run e2e`: 83 passed. HOD page opened in Chrome via the dev server: renders the overview with live occupancy. |
 | 2026-10-19 | Captured the course teacher's v2 brief as R1-R18 with status, decisions and frozen contracts (docs/requirements.md); split the work into WS-A/B/C plus shared tasks (docs/tasks.md); added CONTRIBUTING.md. Docs only. | `npm run check`: lint and 167 backend tests passed (no code changed). |
 | 2026-10-18 | Preserved the complete issue payload while submitting or confirming an uncertain outcome; freezes editing until confirmation, retains the original request key across retries, and allows correction after a definite refusal. Refreshes collection guidance while the idle form remains open. | `npm run check`: lint and 167 backend tests passed. `npm run sim`: 27/27 passed. Isolated Brave: `npm run e2e` 83/83, `npm run e2e:issue` 33/33, including a real server-committed issue with interrupted confirmation and no duplicate loan. `git diff --check`: passed. |

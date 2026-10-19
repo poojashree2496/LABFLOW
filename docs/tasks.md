@@ -138,7 +138,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [ ] **C1 Projects** (R7)
+- [~] **C1 Projects** (R7; backend complete, screens pending)
   - Files: `ProjectService.gs` (all `projects.*` handlers, `Projects.usableBy`), `NotificationService.gs` (the supervisor is notified on create; the student on decide), `ScriptsStudent.html` (My projects: create, list, submit outcome), `ScriptsFaculty.html` (Project approvals, accept outcome).
   - A group project uses the existing `Groups` (`groupId`). Only the group leader creates it.
   - Audit log entries for create, decide and outcome.
