@@ -21,7 +21,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 project management is implemented; see docs/projects.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 project management and C2 daily open-lab sessions are implemented; see docs/projects.md, docs/openlab.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
 - Contact point between streams: A4 moves one read inside `Attend.rebuildSummary`, which C4 also relies on. Tell each other before touching it.
@@ -138,13 +138,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [~] **C2 Open lab session** (R3, R8; backend complete, configuration/labels pending)
-  - Files: `SessionService.gs` (new `Sessions.materializeOpenLab(date)`, `Sessions._labConflicts`, `Sessions.open`, `Sessions._systemOpen`, `Sessions.autoOpenDue`, `Sessions.listForStudent`), `AttendanceService.gs` (`Attend.reasonOf`), `CheckinService.gs` (the sort map in `Checkin.options`), `TriggerService.gs` (`Jobs.nightly` materialize, `Jobs.tickSessions`), `ReportService.gs` (bucket openlab separately).
-  - One session per lab per day where `Labs.openLab` is set and the lab has opening hours. Use `slotKey 'open|labId|date'`, `openToAll: true` and `rescanMode: 'off'`. `Sessions.selfWorkFor` is the closest model.
-  - The one-open-session rule must exempt `openlab` in all three places (today they test `type !== 'research'`), or timetabled classes will silently fail to auto-open.
-  - Show it in the student's Today list only while it is open.
-  - Done when: at 15:00 a student with no booking checks in to Open lab; at 10:00 the timetabled class still auto-opens beside it.
-  - Tests: `test/checkin.test.js`, `test/platform.test.js`.
 - [ ] **C3 Check-in with project and system** (R1, R7)
   - Files: `CheckinService.gs` (`Checkin.options` returns the student's usable projects and the free systems; a new step after `target` in `Checkin.STEPS_A`, re-checked inside the lock), `AttendanceService.gs` (`Attend._record` writes `projectId` and `assetId`; new `Attend.setWork` writes a `WORK` event; `Attend._compute` ignores `WORK`), `ScriptsStudent.html` (project and system pickers in `LF.kioskCheckin`; a "Change system / project" button while inside, which covers Version B).
   - A booked system is preselected and required. A system that someone inside is using cannot be picked. "Own laptop" is allowed.

@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-19)
 
-- Latest local checks: **200 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **84 checks**, the focused issue suite **33**, and the project suite **27** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **200 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **84 checks**, the focused issue suite **33**, the project suite **27**, and the open-lab suite **15** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -83,6 +83,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | C2 screens complete: lab editor opt-in and availability badge, explicit walk-in entry reason and Today guidance, updated scanner text, and daily open-lab integration notes. Automatic sign-out and project/system selection remain C4/C3. | `npm run check`: lint and 200 backend tests passed (16 open-lab cases). `npm run sim`: 27/27 in the backend slice. Isolated Brave: general suite 84/84; new `npm run e2e:openlab` 15/15 including real server entry/exit and closing-time refusal using the shared Test Lab clock. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | Isolated open-lab auto-opening failures so regular timetable sessions still open; reports the failure count and logs its cause. | `npm run check`: lint and 200 backend tests passed, including a simulated open-lab failure during the session tick. |
 | 2026-10-19 | C2 backend: opt-in daily open-lab sessions with valid hours, idempotent nightly materialization, trigger and arrival-based opening, roster-free walk-in entry, separate openlab reasons/report bucket, class/event coexistence and fresh entry-hour checks for both QR modes. Scheduled hours refresh before opening; active sessions retain their original schedule. Configuration screen and check-in labels remain open; automatic sign-out remains C4. | `npm run check`: lint and 199 backend tests passed (15 open-lab cases). `npm run sim`: 27/27. `git diff --check`: passed. |
 | 2026-10-19 | C1 screens complete: shared student, faculty, coordinator and super-admin project views, group-leader creation, timelines, approval/rejection, outcome submission and version-checked acceptance. Preserves uncertain creation payloads across retries and editor close/reopen while the page remains loaded. Added project integration notes; pending-project check-in integration remains C3 and HOD scope remains B3. | `npm run check`: lint and 184 backend tests passed. `npm run sim`: 27/27 (backend slice). Isolated Brave: `npm run e2e` 84/84, `npm run e2e:issue` 33/33, `npm run e2e:projects` 27/27. Phone screenshot visually inspected; `git diff --check`: passed. |

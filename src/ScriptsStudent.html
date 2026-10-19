@@ -165,12 +165,12 @@ LF.kioskCheckin = (code) => {
     let action = op.actions[0], choice = op.prefill;
     const actLabel = { in: 'Check in', out: 'Check out', rescan: 'Confirm I am still here' };
     const actions = op.actions.length > 1 ? h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'What do you want to do?' }, op.actions.map((a) => h('label', null, h('input', { type: 'radio', name: 'kc-act', value: a, checked: a === action, onchange: () => { action = a; draw(); } }), h('span', null, h('strong', null, actLabel[a]), a === 'out' && op.inside ? h('div', { class: 'hint' }, op.inside.title + (op.inside.closed ? ' (session closed, exit still accepted)' : '')) : null)))) : null;
-    const reasonText = { 'class': 'Regular lab course', event: 'Event or workshop', research: 'Individual research' };
+    const reasonText = { 'class': 'Regular lab course', event: 'Event or workshop', research: 'Individual research', openlab: 'Walk-in open lab' };
     const sessionsBox = h('div');
     function draw() {
       clear(sessionsBox);
       if (action !== 'in') { if (op.inside) sessionsBox.append(h('div', { class: 'row' }, h('span', null, h('strong', null, op.inside.title), h('span', { class: 'hint' }, ' · inside since ' + fmt.time(op.inside.since))), ui.badge('inside', 'good'))); return; }
-      if (!op.candidates.length) { sessionsBox.append(ui.empty('Nothing to check in to', 'No session you are part of is open in this lab right now. For self-work, book a workstation or request a research visit first.')); return; }
+      if (!op.candidates.length) { sessionsBox.append(ui.empty('Nothing to check in to', 'No eligible session is open here now. Open lab appears during its enabled opening hours. A workstation booking or approved research visit can offer other choices.')); return; }
       sessionsBox.append(h('div', { class: 't-label', style: { marginBottom: '6px' } }, 'What are you here for?'), h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'Entry reason' }, op.candidates.map((c) => {
         const id = c.sessionId || c.reservationId;
         return h('label', { class: c.eligible ? '' : 'disabled' }, h('input', { type: 'radio', name: 'kc-ses', value: id, checked: id === choice, disabled: !c.eligible, onchange: () => { choice = id; } }),
@@ -229,13 +229,14 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
   };
   reload = ui.loadInto(list, async () => {
     const [r] = await Promise.all([api('sessions.mine'), loadStats().catch(() => {})]);
-    if (!r.sessions.length) return ui.empty('No lab sessions today', 'Sessions for your courses and events you are enrolled in appear here.');
+    if (!r.sessions.length) return ui.empty('No lab sessions today', 'Your course sessions, events and available open labs appear here.');
     const hasKey = await Device.load();
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => {
       const m = s.mine, canIn = s.status === 'open' && m.state !== 'in', canOut = (s.status === 'open' || s.status === 'closed') && m.state === 'in', resc = s.status === 'open' && m.rescan && !m.rescan.done;
       const a = hasMode(s, 'A'), b = hasMode(s, 'B'), need = canIn || canOut || resc;
       const warn = b && !a && !hasKey && me.student.status === 'verified' && need ? h('div', { class: 'hint err' }, 'This lab uses device QR codes and this phone has no device key yet. Use the Device tab first.') : null;
       return h('article', { class: 'card', 'aria-label': s.title }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s) + (s.facultyName ? ' · ' + s.facultyName : ''))), h('div', { style: { display: 'flex', gap: '6px', alignItems: 'start', flexWrap: 'wrap' } }, ui.status(s.status), stateBadge(m))),
+        s.type === 'openlab' ? h('p', { class: 'hint' }, 'Walk in during opening hours; no advance booking needed.') : null,
         resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Scan again before ' + fmt.time(m.rescan.closesAt) + ' to stay verified.') : null,
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
         s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,

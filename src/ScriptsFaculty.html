@@ -6,7 +6,7 @@ const LF = window.LF, h = LF.h, icon = LF.icon, api = LF.api, fmt = LF.fmt, ui =
 LF.sel = LF.sel || { sessionId: null };
 
 const times = (s) => fmt.time(s.scheduledStart) + ' - ' + fmt.time(s.scheduledEnd);
-const TYPE_LABEL = { class: 'Class', event: 'Event', research: 'Research' };
+const TYPE_LABEL = { class: 'Class', event: 'Event', research: 'Research', openlab: 'Open lab' };
 /** How a student was checked in: kiosk or phone scan, who scanned (class rep / coordinator are tagged), GPS result. */
 function howCell(x) {
   if (!x.method) return '-';

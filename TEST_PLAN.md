@@ -1,6 +1,6 @@
 # LABFLOW test plan and results
 
-Latest local run (2026-10-19): `npm run check` passed 200 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 84 general browser checks, 33 focused issue checks and 27 project checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
+Latest local run (2026-10-19): `npm run check` passed 200 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 84 general browser checks, 33 focused issue checks, 27 project checks and 15 open-lab checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
@@ -12,6 +12,7 @@ Latest local run (2026-10-19): `npm run check` passed 200 backend tests and `npm
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **84 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
 | Focused project E2E (Playwright, Brave/Chromium) | `npm run e2e:projects` with `CHROMIUM_PATH` | **27 pass, 0 fail** |
+| Focused open-lab E2E (Playwright, Brave/Chromium) | `npm run e2e:openlab` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
@@ -22,6 +23,8 @@ What the E2E covers (browser against the real server code on fakes): student dev
 Focused issue coverage includes detaching requests after lab/borrower changes; delayed booking, equipment and kit responses; missing and extra request quantities; strict numeric and combined-stock validation; multi-unit and oversized kits; the 390 px phone layout; early booking collection and exact reserved units; booking-end due dates; opening an issued loan directly for return; and identical retries after a server-committed checkout loses its confirmation. A definite refusal allows correction, while an earlier uncertain outcome keeps the original payload frozen.
 
 Project coverage includes creation, group leadership and membership, scoped reads and denied writes, active supervisors, valid timelines, safe result links, supervisor/coordinator decisions, outcome submission, stale-review refusal, acceptance, audited notifications and idempotent retries. The focused browser suite also checks navigation and layout at 390 px, literal rendering of HTML-like titles, and a server-committed creation whose confirmation is lost. HOD reads are tested with a supplied scope; the real shared scope helper is still task B3. See [Projects](docs/projects.md).
+
+Open-lab coverage includes opt-in lab settings, required opening hours, daily idempotent sessions, exact opening/closing entry gates in both QR modes, roster-free walk-ins, class/event coexistence, class prefill, delayed triggers, configuration changes and a separate monthly report bucket. Browser checks exercise settings, QR/GPS entry and exit, 390 px layout, late-entry refusal and disabling walk-ins. Automatic sign-out is still C4; see [Daily open lab](docs/openlab.md).
 
 ## B. NOT tested: needs a real Workspace deployment
 

@@ -11,7 +11,7 @@ Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mod
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
 | 200 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 84 general browser checks, 33 focused issue checks and 27 project checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 84 general browser checks, 33 focused issue checks, 27 project checks and 15 open-lab checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
 Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
@@ -21,6 +21,8 @@ The [critical workflow audit](docs/workflow-audit.md) adds 29 regression cases a
 The issue screen adds a request/kit checklist, combined stock validation, booking collection guidance and an action to open the new loan for return. Its 33 focused browser checks also cover stale responses, multi-unit kits and retrying an uncertain checkout without changing the original payload.
 
 Students can now create individual or group projects, choose a supervisor and timeline, and submit outcomes after approval. Supervisors review outcomes; coordinators and super admins can approve or reject projects. See [Projects](docs/projects.md) for permissions, retry behaviour and the remaining check-in/HOD dependencies.
+
+Super admins can enable daily Open lab sessions in lab settings. Verified students can walk in during opening hours without a booking, and regular classes continue alongside them. See [Daily open lab](docs/openlab.md); project/system selection and automatic sign-out are still pending.
 
 ## Authentication: the blocker you must check
 
@@ -77,6 +79,7 @@ npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)
 npm run e2e:projects # project lifecycle and phone navigation (same browser setup)
+npm run e2e:openlab # lab settings and walk-in QR/GPS attendance (same browser setup)
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.

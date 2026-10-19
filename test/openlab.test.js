@@ -137,6 +137,12 @@ test('open lab: closed or cancelled daily sessions are not recreated or reopened
   assert.equal(mine(w).length, 0);
   assert.equal(w.eval('Sessions.autoOpenDue()').openLabsOpened, 0);
   assert.equal(sessions(w).length, 1);
+  w.eval("Sessions.materializeOpenLab('2026-10-15')");
+  const tomorrow = sessions(w).find((r) => r.date === '2026-10-15');
+  w.ok(w.admin, 'sessions.cancel', { sessionId: tomorrow.sessionId, reason: 'Closed for maintenance' });
+  setTime(w, '10:00', '2026-10-15');
+  assert.equal(mine(w).length, 0);
+  assert.equal(sessions(w).find((r) => r.sessionId === tomorrow.sessionId).status, 'cancelled');
 });
 
 test('open lab: nightly creates three days once and a failing class step does not stop it', () => {

@@ -170,6 +170,7 @@ LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root
           { key: 'mode', label: 'Check-in', render: (x) => h('span', { class: 'pill-row' }, ui.badge(MODE_LABEL[x.mode] || x.mode, 'info'), x.checkinMode ? null : ui.badge('default', '')) },
           { label: 'Geofence', text: (x) => x.latitude ? 'set' : 'none', render: (x) => x.latitude !== null && x.latitude !== undefined && x.latitude !== '' ? ui.badge((x.radiusM || 'default') + ' m', 'good') : (x.mode.indexOf('A') >= 0 ? ui.badge('not set', 'warn') : '-') },
           { label: 'Hours', text: (x) => x.openTime || '', render: (x) => x.openTime ? x.openTime + '-' + x.closeTime : '-' },
+          { label: 'Open lab', text: (x) => x.openLab ? 'Walk-ins enabled' : 'Off', render: (x) => ui.badge(x.openLab ? 'Walk-ins enabled' : 'Off', x.openLab ? 'good' : '') },
           { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => labForm(x, reload) }) }] }).el);
   }
   function labForm(l, reload) {
@@ -181,6 +182,7 @@ LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root
     const lat = f({ name: 'latitude', label: 'Latitude', type: 'number', step: 'any', value: l && l.latitude !== null ? l.latitude : '' }), lng = f({ name: 'longitude', label: 'Longitude', type: 'number', step: 'any', value: l && l.longitude !== null ? l.longitude : '' });
     const radius = f({ name: 'radiusM', label: 'Geofence radius (m)', type: 'number', min: 5, max: 500, value: l && l.radiusM ? l.radiusM : '', hint: 'Blank = the default in Settings (20 m).' });
     const open = f({ name: 'openTime', label: 'Opens', type: 'time', value: l ? l.openTime : '' }), close = f({ name: 'closeTime', label: 'Closes', type: 'time', value: l ? l.closeTime : '', hint: 'Staff are alerted about anyone still inside after closing.' });
+    const walkins = f({ name: 'openLab', label: 'Allow open-lab walk-ins', type: 'checkbox', value: !!(l && l.openLab), hint: 'Creates a daily Open lab session during these hours. Verified students can enter without a booking. Hours can be changed before a session opens; active sessions keep their original schedule.' });
     const inch = f({ name: 'inchargeEmails', label: 'Lab incharge emails', value: l ? l.inchargeEmails : '', hint: 'Comma separated. They receive the daily digest and overstay alerts.' });
     const status = f({ name: 'status', label: 'Status', type: 'select', value: l ? l.status : 'active', options: ['active', 'inactive'] }), notes = f({ name: 'notes', label: 'Notes', value: l ? l.notes : '' });
     const here = h('div', { class: 'hint', role: 'status' });
@@ -197,13 +199,13 @@ LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root
       try {
         await api('labs.upsert', { labId: l ? l.labId : undefined, code: code.get(), name: name.get(), type: type.get(), capacity: Number(cap.get()) || 60, building: building.get(), room: room.get(), checkinMode: mode.get(),
           latitude: lat.get() === '' ? undefined : Number(lat.get()), longitude: lng.get() === '' ? undefined : Number(lng.get()), radiusM: radius.get() === '' ? undefined : Number(radius.get()),
-          openTime: open.get() || undefined, closeTime: close.get() || undefined, inchargeEmails: inch.get(), status: status.get(), notes: notes.get() });
+          openTime: open.get() || undefined, closeTime: close.get() || undefined, openLab: walkins.get(), inchargeEmails: inch.get(), status: status.get(), notes: notes.get() });
         LF.toast('Saved', 'good'); m.close(); reload();
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
     } });
     m = LF.modal(l ? 'Edit ' + l.name : 'Add lab', h('div', { style: { display: 'grid', gap: '12px' } }, grid(code.el, name.el, type.el, cap.el), grid(building.el, room.el, status.el),
       h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '12px', display: 'grid', gap: '12px' } }, h('legend', { class: 't-label' }, 'Check-in and geofence'), mode.el, grid(lat.el, lng.el, radius.el), h('div', { class: 'toolbar' }, useHere, here)),
-      grid(open.el, close.el), inch.el, notes.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), save)), { wide: true });
+      grid(open.el, close.el), walkins.el, inch.el, notes.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), save)), { wide: true });
   }
   async function kiosksView() {
     const [k, labs] = await Promise.all([api('kiosks.list'), api('labs.list', { includeInactive: true })]), reload = () => LF.go('labs'), name = (id) => (labs.labs.find((l) => l.labId === id) || {}).name || id;

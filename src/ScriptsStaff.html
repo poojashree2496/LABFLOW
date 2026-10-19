@@ -535,7 +535,7 @@ LF.register({ role: 'staff', id: 'people', label: 'Students', icon: 'users', ren
 
 /* ------------------------------------------------------------------ Scanning self-work and research visits (Version B) */
 LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', render(root) {
-  root.append(h('h1', { class: 't-h1' }, 'Scan visitors'), h('p', { class: 't-muted' }, 'For self-work and research visits when no teacher is present (SRS 7.2). Open the scanner, then point it at the student\'s live QR, or open their QR link with your phone camera.'),
+  root.append(h('h1', { class: 't-h1' }, 'Scan visitors'), h('p', { class: 't-muted' }, 'For open-lab walk-ins, self-work and research visits when no teacher is present (SRS 7.2). Open the scanner, then point it at the student\'s live QR, or open their QR link with your phone camera.'),
     h('div', { class: 'toolbar' }, ui.button('Open scanner', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan visitors') })), h('h2', { class: 't-h2', style: { marginTop: '16px' } }, 'Live occupancy'), ui.occupancy());
 } });
 
