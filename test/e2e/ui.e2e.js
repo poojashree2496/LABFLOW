@@ -62,7 +62,7 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     setClock(IST(10, 1)); await tick(); // the 10:00 IoT class opens by itself from the timetable
     const sctx = await browser.newContext(mobile), s1 = await page(sctx, 'student1@karunya.edu', 'student');
     await s1.waitForSelector('text=Today\'s lab sessions'); await s1.waitForTimeout(400); await shot(s1, '01-student-today-mobile');
-    check('student home renders with sessions and the live lab count', await s1.locator('article').count() >= 1 && await s1.locator('.occ-card').count() === 3);
+    check('student home renders with sessions and the live lab count', await s1.locator('article').count() >= 1 && await s1.locator('.occ-card').count() === 4 && await s1.locator('.occ-card').filter({ hasText: 'Intel Unnati AI Lab' }).count() === 1);
     await s1.getByRole('button', { name: 'Device' }).last().click();
     await s1.getByRole('button', { name: 'Register this phone' }).click();
     await s1.waitForSelector('text=Device registered');
@@ -122,8 +122,64 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     check('staff issues the requested item and the request closes', w.call('student1@karunya.edu', 'equipment.mine', {}).data.requests[0].status === 'fulfilled');
     await t.evaluate((loanId) => { LF.sel = LF.sel || {}; LF.sel.loanId = loanId; LF.go('desk'); }, issuedLoan.loanId);
     await t.getByRole('button', { name: 'All back' }).waitFor();
+    const individualReturn = t.getByRole('region', { name: 'Return items' });
+    check('return form disables consumption of individually tracked equipment', await individualReturn.getByLabel(/^Consumed /).isDisabled());
+    const returnedCount = individualReturn.getByLabel(/^Returned /);
+    await returnedCount.fill('2');
+    await individualReturn.getByRole('button', { name: 'Record return' }).click();
+    check('over-return is explained locally and does not change the loan',
+      /Only 1 outstanding/.test(await individualReturn.innerText()) && w.call(w.staff, 'loans.get', { loanId: issuedLoan.loanId }).data.loan.items[0].qtyReturned === 0);
+    let badCountsRejected = true;
+    for (const value of ['-1', '0.5']) {
+      await returnedCount.fill(value);
+      await individualReturn.getByRole('button', { name: 'Record return' }).click();
+      badCountsRejected = badCountsRejected && /Use whole numbers of zero or more/.test(await individualReturn.innerText());
+    }
+    await returnedCount.fill(''); await returnedCount.press('e');
+    badCountsRejected = badCountsRejected && /Use whole numbers of zero or more/.test(await individualReturn.innerText());
+    check('negative, fractional and incomplete return quantities receive inline feedback', badCountsRejected);
     await t.getByRole('button', { name: 'All back' }).first().click(); await t.getByRole('button', { name: 'Record return' }).click(); await t.waitForSelector('text=Loan closed');
     check('staff records the return; the issued loan closes', w.call(w.staff, 'loans.get', { loanId: issuedLoan.loanId }).data.loan.status === 'closed');
+
+    // Quantity return: live remaining count, and retrying a response lost after the server committed.
+    const returnCategory = w.ok(w.staff, 'categories.upsert', { name: 'Return flow demo', trackingMode: 'quantity' }).category;
+    const returnAsset = w.ok(w.staff, 'assets.upsert', { labId: w.lab.labId, categoryId: returnCategory.categoryId, name: 'Return demo components', quantityTotal: 20 }).asset;
+    const partialLoan = w.ok(w.staff, 'loans.issue', { idemKey: 'browser-partial-return-issue', borrowerType: 'student', borrowerId: w.students[8].studentId,
+      labId: w.lab.labId, items: [{ assetId: returnAsset.assetId, qty: 10 }] }).loan;
+    await t.evaluate((loanId) => { LF.sel.loanId = loanId; LF.go('desk'); }, partialLoan.loanId);
+    const partialReturn = t.getByRole('region', { name: 'Return items' });
+    await partialReturn.getByLabel(/^Returned /).fill('4'); await partialReturn.getByLabel(/^Consumed /).fill('3');
+    check('partial-return summary shows accounted units and the remaining balance', /7 accounted for · 3 still out/.test(await partialReturn.getByLabel('Return summary').innerText()));
+    await t.setViewportSize({ width: 390, height: 844 });
+    await partialReturn.screenshot({ path: path.join(SHOTS, '14-staff-return-preview-mobile.png') });
+    check('staff return form fits a 390 px phone with the table scrolling inside its container', await t.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await t.setViewportSize({ width: 1280, height: 820 });
+    const attempts = []; let loseResponse = true;
+    await t.route('**/rpc', async (route) => {
+      const body = route.request().postDataJSON();
+      if (body.action !== 'loans.return') return route.continue();
+      attempts.push(JSON.stringify(body.payload));
+      if (!loseResponse) return route.continue();
+      loseResponse = false;
+      const response = await route.fetch();
+      if (!(await response.json()).ok) throw new Error('The partial return did not commit before the simulated lost response.');
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'INTERNAL', message: 'Return confirmation interrupted.' } }) });
+    });
+    await partialReturn.getByRole('button', { name: 'Record return' }).click();
+    await partialReturn.getByRole('button', { name: 'Retry return' }).waitFor();
+    const held = await partialReturn.getByLabel(/^Returned /).isDisabled() && await partialReturn.getByRole('button', { name: 'Return all items' }).isDisabled();
+    await partialReturn.getByRole('button', { name: 'Retry return' }).click();
+    await t.getByText('Partial return recorded', { exact: true }).waitFor();
+    await t.unroute('**/rpc');
+    const partialState = w.call(w.staff, 'loans.get', { loanId: partialLoan.loanId }).data.loan;
+    check('uncertain return freezes editing and retries the same payload without double-counting', held && attempts.length === 2 && attempts[0] === attempts[1] &&
+      partialState.items[0].qtyReturned === 4 && partialState.items[0].qtyConsumed === 3 && partialState.items[0].outstanding === 3);
+    await t.evaluate((loanId) => { LF.sel.loanId = loanId; LF.go('desk'); }, partialLoan.loanId);
+    await t.getByRole('button', { name: 'Return all items', exact: true }).click();
+    check('return-all shortcut fills only the outstanding balance and previews loan closure', /3 accounted for · 0 still out · This will close the loan/.test(await t.getByLabel('Return summary').innerText()));
+    await t.getByRole('button', { name: 'Record return' }).click();
+    await t.getByText('Loan closed', { exact: true }).last().waitFor();
+    check('return-all closes a partially returned loan with the correct final counts', w.call(w.staff, 'loans.get', { loanId: partialLoan.loanId }).data.loan.items[0].qtyReturned === 7);
 
     // ---------------- Version B: device QR at the GPU lab kiosk scanner, and a teacher phone opening the QR link
     setClock(IST(14, 1)); await tick();

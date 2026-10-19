@@ -118,6 +118,8 @@ var Admin = {
 
 /** Dashboard summaries computed from live data only. */
 var Dash = {
+  // v2 stubs (docs/requirements.md section 4); each task replaces its own.
+  hod: function () { notBuilt_('B3'); },
   student: function (ctx) {
     if (!ctx.student) return { profile: null };
     var sid = ctx.student.studentId, now = U.now();

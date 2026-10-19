@@ -9,6 +9,9 @@
  *    original result instead of issuing or returning twice (Loans.idemKey and AssetEvents.idemKey are unique).
  *  - Each multi-sheet operation runs under the script lock. A loan is written as 'issuing', completed, then set
  *    to 'open'; a crash in between leaves a visible 'issuing' loan that reconcile() rolls back.
+ *  - Returns first persist a zero-quantity return-plan ledger row. Absolute patches and deduplicated events
+ *    can be replayed after interruption; a return-complete row closes the plan. Stock mutations and reconciliation
+ *    recover pending plans before making new changes. No sheet/header migration is required.
  *
  * Quantity items: quantityTotal is working stock. Consumed / damaged / missing units leave quantityTotal
  * (written off); returned units go back to quantityAvailable. Individual items are always quantity 1.
@@ -27,9 +30,15 @@ var Assets = {
       var c;
       if (p.categoryId) {
         var cur = Db.mustGet('Categories', V.id(p.categoryId, 'Category', 'category'), 'Category');
+        rec.workstation = p.workstation === undefined ? cur.workstation : V.bool(p.workstation);
+        if (rec.workstation && rec.trackingMode !== 'individual') fail('BAD_INPUT', 'Workstations must be individually tracked.');
         if (cur.trackingMode !== rec.trackingMode && Db.whereEq('Assets', { categoryId: cur.categoryId }).length) fail('INVALID_STATE', 'Tracking mode cannot change once assets exist in the category.');
         c = Db.update('Categories', cur.categoryId, rec);
-      } else c = Db.insert('Categories', Object.assign({ categoryId: U.id('category') }, rec));
+      } else {
+        rec.workstation = V.bool(p.workstation);
+        if (rec.workstation && rec.trackingMode !== 'individual') fail('BAD_INPUT', 'Workstations must be individually tracked.');
+        c = Db.insert('Categories', Object.assign({ categoryId: U.id('category') }, rec));
+      }
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: p.categoryId ? 'category.update' : 'category.create', entityType: 'Category', entityId: c.categoryId, detail: rec });
       return { category: c };
     });
@@ -95,6 +104,7 @@ var Assets = {
   upsert: function (ctx, p) {
     V.obj(p);
     return Locks.with(function () {
+      Loans._recoverReturns();
       var cur = p.assetId ? Db.mustGet('Assets', V.id(p.assetId, 'Asset', 'asset'), 'Asset') : null;
       var rec = Assets._validate(p, cur), now = U.now(), a;
       if (cur && cur.trackingMode !== rec.trackingMode) fail('INVALID_STATE', 'The category tracking mode of an existing asset cannot change.');
@@ -146,6 +156,7 @@ var Assets = {
     V.obj(p);
     var key = Assets._idem(p.idemKey), condition = V.enumOf(p.condition, 'Condition', Cfg.CONDITIONS), note = V.str(p.note, 'Note', { optional: true, max: 300 });
     return Locks.with(function () {
+      Loans._recoverReturns();
       if (Db.getBy('AssetEvents', 'idemKey', 'cond:' + key)) return { replayed: true };
       var a = Db.mustGet('Assets', V.id(p.assetId, 'Asset', 'asset'), 'Asset');
       var patch = { condition: condition, updatedAt: U.now() };
@@ -177,6 +188,7 @@ var Assets = {
   reconcile: function (opts) {
     var fix = !opts || opts.fix !== false;
     return Locks.with(function () {
+      if (fix) Loans._recoverReturns();
       var report = { staleLoans: [], drift: [], fixed: 0 };
       var staleBefore = U.now() - 5 * 60000;
       var forced = {}; ((opts && opts.failLoanIds) || []).forEach(function (id) { forced[id] = true; });
@@ -190,6 +202,9 @@ var Assets = {
           if (Db.getBy('AssetEvents', 'idemKey', 'iss:' + l.loanId + ':' + i.assetId)) Assets._event(i.assetId, l.loanId, 'rollback', i.qtyIssued, 'system', 'issue rolled back', 'rb:' + l.loanId + ':' + i.assetId);
         });
         if (l.reservationId) { var rsv = Db.get('Reservations', l.reservationId); if (rsv && rsv.status === 'fulfilled') Db.update('Reservations', rsv.reservationId, { status: 'approved' }); }
+        Db.where('EquipmentRequests', function (r) { return r.loanId === l.loanId && r.status === 'fulfilled'; }).forEach(function (r) {
+          Db.update('EquipmentRequests', r.requestId, { status: 'pending', loanId: '', decidedBy: '', decidedAt: null, decisionNote: '' });
+        });
         Db.update('Loans', l.loanId, { status: 'failed', notes: 'Rolled back by reconcile: issue did not complete.' });
         Audit.log({ actor: 'system', role: 'system', action: 'loan.rollback', entityType: 'Loan', entityId: l.loanId, result: 'ok', detail: { reason: 'issue did not complete' } });
       });
@@ -323,7 +338,7 @@ var Loans = {
       var assets = {};
       o.items = Db.whereEq('LoanItems', { loanId: l.loanId }).map(function (i) {
         var a = assets[i.assetId] || (assets[i.assetId] = Db.get('Assets', i.assetId));
-        return { loanItemId: i.loanItemId, assetId: i.assetId, name: a ? a.name : i.assetId, assetTag: a ? a.assetTag : '', qtyIssued: i.qtyIssued, qtyReturned: i.qtyReturned, qtyConsumed: i.qtyConsumed, qtyDamaged: i.qtyDamaged,
+        return { loanItemId: i.loanItemId, assetId: i.assetId, name: a ? a.name : i.assetId, assetTag: a ? a.assetTag : '', trackingMode: a ? a.trackingMode : '', qtyIssued: i.qtyIssued, qtyReturned: i.qtyReturned, qtyConsumed: i.qtyConsumed, qtyDamaged: i.qtyDamaged,
           qtyMissing: i.qtyMissing, outstanding: i.status === Assets.OUT ? i.qtyIssued - i.qtyReturned - i.qtyConsumed - i.qtyDamaged - i.qtyMissing : 0, conditionOut: i.conditionOut, conditionIn: i.conditionIn, status: i.status };
       });
     }
@@ -400,6 +415,7 @@ var Loans = {
     var labId = V.id(p.labId, 'Lab', 'lab');
     var notes = V.str(p.notes, 'Notes', { optional: true, max: 300 });
     return Locks.with(function () {
+      Loans._recoverReturns();
       var prior = Db.getBy('Loans', 'idemKey', key);
       if (prior) {
         if (prior.status === 'failed') fail('RETRY', 'That attempt did not complete and was rolled back. Try again.');
@@ -418,7 +434,7 @@ var Loans = {
         reservation = Db.mustGet('Reservations', V.id(p.reservationId, 'Reservation', 'reservation'), 'Reservation');
         if (reservation.status !== 'approved') fail('INVALID_STATE', 'The booking is ' + reservation.status + ', not approved.');
         if (reservation.labId !== labId) fail('BAD_INPUT', 'The booking is for a different lab.');
-        if (now < reservation.startAt - 2 * 3600000) fail('TOO_EARLY', 'The booking starts at ' + U.fmt(reservation.startAt) + '. Collection opens 2 hours before.');
+        if (now < reservation.startAt - Booking.COLLECT_EARLY_MS) fail('TOO_EARLY', 'The booking starts at ' + U.fmt(reservation.startAt) + '. Collection opens at ' + U.fmt(reservation.startAt - Booking.COLLECT_EARLY_MS) + '.');
         if (now > reservation.endAt) fail('INVALID_STATE', 'The booking has ended.');
         var okReq = (reservation.requesterType === 'student' && type === 'student' && reservation.requesterId === borrowerId) || (reservation.requesterType === 'group' && type === 'group' && reservation.requesterId === borrowerId);
         if (!okReq) fail('BAD_INPUT', 'This booking belongs to a different borrower.');
@@ -428,14 +444,22 @@ var Loans = {
       var resolved = Loans._lines(p, labId);
       // Re-read each asset INSIDE the lock; this is what prevents two counters issuing the same item.
       var assets = {}, demand = {};
+      var namedHolds = Db.where('Reservations', function (r) {
+        return r.labId === labId && r.resourceType === 'asset' && Booking._holds(r) &&
+          (!reservation || r.reservationId !== reservation.reservationId) && U.overlaps(now, dueAt, r.startAt, r.endAt);
+      });
       resolved.lines.forEach(function (ln) {
         var a = Db.mustGet('Assets', ln.assetId, 'Asset'); assets[a.assetId] = a;
         if (a.labId !== labId) fail('BAD_INPUT', a.name + ' belongs to a different lab.');
         if (a.status !== 'available' && !(a.trackingMode === 'quantity' && a.status === 'on_loan')) fail('UNAVAILABLE', a.name + ' is not available (' + a.status + ').');
         if (a.trackingMode === 'individual' && ln.qty !== 1) fail('BAD_INPUT', a.name + ' is tracked individually: quantity must be 1.');
         if (ln.qty > a.quantityAvailable) fail('UNAVAILABLE', 'Only ' + a.quantityAvailable + ' of ' + a.name + ' available.');
+        if (namedHolds.some(function (r) { return r.resourceId === a.assetId; })) fail('RESERVED', a.name + ' is reserved by another booking during this loan.');
         demand[a.categoryId] = (demand[a.categoryId] || 0) + ln.qty;
       });
+      if (reservation) Booking.validateContents(reservation, demand, resolved.lines);
+      var requestId = p.requestId ? V.id(p.requestId, 'Request', 'request') : '';
+      if (requestId) Requests.validateFulfilment(requestId, type, borrowerId, labId, demand, resolved.lines);
       // Immediate checkout must not eat stock promised to approved advance bookings in the loan window.
       Object.keys(demand).forEach(function (catId) {
         var av = Booking.availability(labId, catId, now, dueAt, reservation ? reservation.reservationId : null);
@@ -459,17 +483,18 @@ var Loans = {
           else Db.update('Assets', a.assetId, { quantityAvailable: a.quantityAvailable - ln.qty, updatedAt: now });
           Assets._event(a.assetId, loan.loanId, 'issue', -ln.qty, ctx.email, 'issued', 'iss:' + loan.loanId + ':' + a.assetId);
         });
-        loan = Db.update('Loans', loan.loanId, { status: 'open' });
         if (reservation) Db.update('Reservations', reservation.reservationId, { status: 'fulfilled' });
-        if (p.requestId) Requests.fulfil(V.id(p.requestId, 'Request', 'request'), loan, ctx);
+        if (requestId) Requests.fulfil(requestId, loan, ctx);
         Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'loan.issue', entityType: 'Loan', entityId: loan.loanId, detail: { borrowerType: type, borrowerId: borrowerId, items: resolved.lines.length, dueAt: dueAt, kitId: loan.kitId, reservationId: loan.reservationId } });
-        Loans._notifyBorrower(loan, 'loan', 'Items issued', resolved.lines.length + ' item line(s) issued. Due ' + U.fmt(dueAt) + '.', 'loan-issued:' + loan.loanId);
-
+        // Commit only after every linked record is written; reconcile can recover any earlier failure.
+        loan = Db.update('Loans', loan.loanId, { status: 'open' });
       } catch (err) {
         // Not transactional: undo what was written so the loan is never left half-issued.
         try { Assets.reconcile({ fix: true, failLoanIds: [loan.loanId] }); } catch (x) { Syslog.error('loans', 'ROLLBACK_FAILED', String(x && x.message), { loanId: loan.loanId }); }
         throw err;
       }
+      try { Loans._notifyBorrower(loan, 'loan', 'Items issued', resolved.lines.length + ' item line(s) issued. Due ' + U.fmt(dueAt) + '.', 'loan-issued:' + loan.loanId); }
+      catch (e) { Syslog.warn('loans', 'NOTIFY_FAILED', String(e && e.message), { loanId: loan.loanId }); }
       return { loan: Loans._view(loan, true), replayed: false };
     });
   },
@@ -477,6 +502,39 @@ var Loans = {
   _notifyBorrower: function (loan, type, title, body, dedupe) {
     if (loan.borrowerType === 'student') Notify.toStudent(loan.borrowerId, type, title, body, dedupe);
     else Db.whereEq('GroupMembers', { groupId: loan.borrowerId }).forEach(function (m) { Notify.toStudent(m.studentId, type, title, body, dedupe ? dedupe + ':' + m.studentId : ''); });
+  },
+
+  /** Finish persisted return plans before any later stock mutation. Caller holds the script lock. */
+  _recoverReturns: function () {
+    var events = Db.readAll('AssetEvents'), done = {};
+    events.forEach(function (e) { if (e.type === 'return-complete') done[e.idemKey] = true; });
+    events.forEach(function (e) {
+      if (e.type !== 'return-plan') return;
+      if (done[e.idemKey.replace('ret-plan:', 'ret-done:')]) return;
+      Loans._applyReturnPlan(JSON.parse(e.note));
+    });
+  },
+
+  /** Absolute patches plus deduplicated ledger entries make replay safe after any intermediate write. */
+  _applyReturnPlan: function (data) {
+    data.lines.forEach(function (x) {
+      Db.update('LoanItems', x.id, x.itemPatch);
+      Db.update('Assets', x.assetId, x.assetPatch);
+      x.events.forEach(function (ev) {
+        if (!Db.getBy('AssetEvents', 'idemKey', ev.key)) Assets._event(x.assetId, data.loanId, ev.type, ev.delta, data.by, ev.note, ev.key);
+      });
+    });
+    var after = Db.whereEq('LoanItems', { loanId: data.loanId }).filter(function (i) { return i.status !== 'voided'; });
+    var allDone = after.every(function (i) { return i.status !== Assets.OUT; });
+    var loan = Db.update('Loans', data.loanId, allDone ? { status: 'closed', returnedAt: data.at } : { status: 'partial' });
+    Audit.log({ actor: data.by, role: data.role, action: 'loan.return', entityType: 'Loan', entityId: data.loanId, detail: { lines: data.lines.length, closed: allDone, problems: data.problems, requestKey: data.key } });
+    Assets._event('', data.loanId, 'return-complete', 0, data.by, 'Return committed', 'ret-done:' + data.key + ':' + data.loanId);
+    // Notification failure must not turn a committed return into a failed response.
+    try {
+      if (data.problems.length) Notify.toRole('admin', 'inventory', 'Damaged / missing items', Loans._borrowerName(loan) + ': ' + data.problems.join('; '), 'loan-problem:' + data.loanId + ':' + data.key);
+      Loans._notifyBorrower(loan, 'loan', allDone ? 'Loan closed' : 'Partial return recorded', allDone ? 'All items on this loan have been returned or accounted for.' : 'Some items are still outstanding.', 'loan-return:' + data.loanId + ':' + data.key);
+    } catch (e) { Syslog.warn('loans', 'NOTIFY_FAILED', String(e && e.message), { loanId: data.loanId }); }
+    return loan;
   },
 
   /**
@@ -489,7 +547,9 @@ var Loans = {
     var lines = V.arr(p.lines, 'Lines', 80);
     if (!lines.length) fail('BAD_INPUT', 'Select at least one item to return.');
     return Locks.with(function () {
+      Loans._recoverReturns();
       var loan = Db.mustGet('Loans', loanId, 'Loan');
+      if (Db.getBy('AssetEvents', 'idemKey', 'ret-plan:' + key + ':' + loanId)) return { loan: Loans._view(loan, true), replayed: true };
       if (loan.status !== 'open' && loan.status !== 'partial') {
         if (Db.getBy('AssetEvents', 'idemKey', 'ret:' + key + ':' + lines[0].loanItemId)) return { loan: Loans._view(loan, true), replayed: true };
         fail('INVALID_STATE', 'This loan is ' + loan.status + ', not open.');
@@ -515,11 +575,11 @@ var Loans = {
       });
       if (!plan.length && replay) return { loan: Loans._view(loan, true), replayed: true };
       var problems = [];
-      plan.forEach(function (x) {
+      var journalLines = plan.map(function (x) {
         var it = x.it, a = x.asset;
         var done = it.qtyReturned + x.r + it.qtyConsumed + x.c + it.qtyDamaged + x.d + it.qtyMissing + x.m >= it.qtyIssued;
-        Db.update('LoanItems', it.loanItemId, { qtyReturned: it.qtyReturned + x.r, qtyConsumed: it.qtyConsumed + x.c, qtyDamaged: it.qtyDamaged + x.d, qtyMissing: it.qtyMissing + x.m,
-          conditionIn: x.cond, status: done ? 'closed' : Assets.OUT, note: x.note || it.note });
+        var itemPatch = { qtyReturned: it.qtyReturned + x.r, qtyConsumed: it.qtyConsumed + x.c, qtyDamaged: it.qtyDamaged + x.d, qtyMissing: it.qtyMissing + x.m,
+          conditionIn: x.cond, status: done ? 'closed' : Assets.OUT, note: x.note || it.note };
         var patch = { updatedAt: now };
         if (a.trackingMode === 'individual') {
           patch.currentLoanId = '';
@@ -530,21 +590,24 @@ var Loans = {
           patch.quantityAvailable = a.quantityAvailable + x.r;
           patch.quantityTotal = a.quantityTotal - x.c - x.d - x.m;
         }
-        Db.update('Assets', a.assetId, patch);
         var base = 'ret:' + key + ':' + x.id;
-        if (x.r) Assets._event(a.assetId, loanId, 'return', x.r, ctx.email, 'returned (' + x.cond + ')' + (x.note ? ': ' + x.note : ''), base);
-        if (x.c) Assets._event(a.assetId, loanId, 'consume', -x.c, ctx.email, 'consumed', base + ':c');
-        if (x.d) Assets._event(a.assetId, loanId, 'damage', -x.d, ctx.email, 'damaged' + (x.note ? ': ' + x.note : ''), base + ':d');
-        if (x.m) Assets._event(a.assetId, loanId, 'missing', -x.m, ctx.email, 'missing' + (x.note ? ': ' + x.note : ''), base + ':m');
-        if (!x.r && (x.c || x.d || x.m)) { try { Db.insert('AssetEvents', { txId: U.id('tx'), assetId: a.assetId, loanId: loanId, type: 'return-marker', qtyDelta: 0, at: now, by: ctx.email, note: 'return recorded', idemKey: base }); } catch (e) { /* marker already present */ } }
+        var events = [];
+        function event(type, delta, note, suffix) { events.push({ type: type, delta: delta, note: note, key: base + (suffix || '') }); }
+        if (x.r) event('return', x.r, 'returned (' + x.cond + ')' + (x.note ? ': ' + x.note : ''));
+        if (x.c) event('consume', -x.c, 'consumed', ':c');
+        if (x.d) event('damage', -x.d, 'damaged' + (x.note ? ': ' + x.note : ''), ':d');
+        if (x.m) event('missing', -x.m, 'missing' + (x.note ? ': ' + x.note : ''), ':m');
+        if (!x.r && (x.c || x.d || x.m)) event('return-marker', 0, 'return recorded');
         if (x.d || x.m) problems.push((a.name) + (x.d ? ' damaged x' + x.d : '') + (x.m ? ' missing x' + x.m : ''));
+        return { id: it.loanItemId, assetId: a.assetId, itemPatch: itemPatch, assetPatch: patch, events: events };
       });
-      var after = Db.whereEq('LoanItems', { loanId: loanId }).filter(function (i) { return i.status !== 'voided'; });
-      var allDone = after.every(function (i) { return i.status !== Assets.OUT; });
-      loan = Db.update('Loans', loanId, allDone ? { status: 'closed', returnedAt: now } : { status: 'partial' });
-      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'loan.return', entityType: 'Loan', entityId: loanId, detail: { lines: plan.length, closed: allDone, problems: problems } });
-      if (problems.length) Notify.toRole('admin', 'inventory', 'Damaged / missing items', Loans._borrowerName(loan) + ': ' + problems.join('; '), 'loan-problem:' + loanId + ':' + key);
-      Loans._notifyBorrower(loan, 'loan', allDone ? 'Loan closed' : 'Partial return recorded', allDone ? 'All items on this loan have been returned or accounted for.' : 'Some items are still outstanding.', 'loan-return:' + loanId + ':' + key);
+      var data = { key: key, loanId: loanId, by: ctx.email, role: ctx.roles[0], at: now, lines: journalLines, problems: problems };
+      var journal = JSON.stringify(data);
+      // Keep the recovery record comfortably within one spreadsheet cell, even with long per-item notes.
+      if (journal.length > 40000) fail('BAD_INPUT', 'Too many items or notes for one return. Return fewer items at a time.');
+      // Write intent before touching counts. A retry, reconciliation or the next stock mutation finishes it.
+      Db.insert('AssetEvents', { txId: U.id('tx'), assetId: '', loanId: loanId, type: 'return-plan', qtyDelta: 0, at: now, by: ctx.email, note: journal, idemKey: 'ret-plan:' + key + ':' + loanId });
+      loan = Loans._applyReturnPlan(data);
       return { loan: Loans._view(loan, true), replayed: false };
     });
   },

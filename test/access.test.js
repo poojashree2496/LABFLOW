@@ -31,15 +31,16 @@ test('permission table: every route points at a real handler and role set', () =
   const w = world({ students: 0 });
   const routes = w.eval("Object.keys(ROUTES).map(function(k){ return { k: k, roles: ROUTES[k].roles, fn: typeof ROUTES[k].fn }; })");
   assert.ok(routes.length > 90);
-  const valid = new Set(['any', 'user', 'student', 'faculty', 'staff', 'admin', 'kiosk']);
+  const valid = new Set(['any', 'user', 'student', 'faculty', 'staff', 'admin', 'hod', 'kiosk']);
   for (const r of routes) { assert.equal(r.fn, 'function', r.k); assert.ok(r.roles.length > 0, r.k); r.roles.forEach((x) => assert.ok(valid.has(x), r.k + ':' + x)); }
-  // every write-ish admin route is admin only
-  for (const r of routes) if (/^(users|settings|kiosks|labs|timetable|audit|system)\./.test(r.k) && !/\.(list|occupancy)$/.test(r.k)) assert.deepEqual(r.roles, ['admin'], r.k);
+  // every write-ish admin route is admin only (reads, and the audited one-number phone reveal, are listed apart)
+  const notAdminOnly = { 'labs.live': ['faculty', 'staff', 'admin', 'hod'], 'users.revealMobile': ['staff', 'admin'] };
+  for (const r of routes) if (/^(users|settings|kiosks|labs|timetable|audit|system)\./.test(r.k) && !/\.(list|occupancy)$/.test(r.k)) assert.deepEqual(r.roles, notAdminOnly[r.k] || ['admin'], r.k);
 });
 
 test('role matrix: every route denies roles not listed (backend enforcement, not UI)', () => {
   const w = world({ students: 1 });
-  const roleUser = { student: w.students[0].email, faculty: w.faculty, staff: w.staff, admin: w.admin };
+  const roleUser = { student: w.students[0].email, faculty: w.faculty, staff: w.staff, admin: w.admin, hod: w.hod };
   const routes = w.eval("Object.keys(ROUTES).map(function(k){ return { k: k, roles: ROUTES[k].roles }; })");
   let denied = 0;
   for (const r of routes) {

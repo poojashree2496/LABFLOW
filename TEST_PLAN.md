@@ -1,20 +1,36 @@
 # LABFLOW test plan and results
 
-Last full run on the build in this repository: `npm run check` and `npm run e2e`.
+Latest local run (2026-10-19): `npm run check` passed 252 backend tests and `npm run sim` passed 27/27 scenarios. Brave/Chromium passed 84 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks and 15 automatic sign-out checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: foundation (16), access (16), attendance (30), checkin (12), scanning (9), inventory (21), jobs (12), platform (14), api (7), dev-world (1) | `npm test` | **138 pass, 0 fail** |
-| Browser E2E (Playwright, real Chromium) | `npm run e2e` | **74 pass, 0 fail** |
+| Backend and Test Lab seed: foundation (16), access (16), attendance (31), checkin (21), scanning (9), inventory (21), jobs (33), platform (14), api (7), dev-world (3), workflow-audit (29), contracts (3), projects (14), openlab (16), work-selection (19) | `npm test` | **252 pass, 0 fail** |
+| Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
+| Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **84 pass, 0 fail** |
+| Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
+| Focused project E2E (Playwright, Brave/Chromium) | `npm run e2e:projects` with `CHROMIUM_PATH` | **27 pass, 0 fail** |
+| Focused open-lab E2E (Playwright, Brave/Chromium) | `npm run e2e:openlab` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
+| Focused automatic sign-out E2E (Playwright, Brave/Chromium) | `npm run e2e:autoclose` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
+| Focused work-selection E2E (Playwright, Brave/Chromium) | `npm run e2e:work` with `CHROMIUM_PATH` | **23 pass, 0 fail** |
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
-What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (a missing exit never credits the whole session); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the four trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
+What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (missing class exits only credit verified presence; open labs credit to automatic closing); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the four trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
 
-What the E2E covers (browser against the real server code on fakes): student device registration with real WebCrypto and server-side P-256 verification, key-storage compatibility check, faculty opens session, QR render and countdown, kiosk accept and replay refusal, student phone confirmation, live roster, spot check, exit scan, advance booking, research-visit approval, staff issue and return, booking approval, all 13 admin pages load, no horizontal scroll at 390 px (using `scrollWidth`), a student calling an admin action is denied by the server, no unlabeled controls on the admin page, no console errors. Every site theme (10) is switched on in turn: student (390 px phone), faculty, admin, kiosk and the hosted sign-in screen must render with no sideways scroll, and the kiosk QR and every element above it must carry no transform, filter, blend mode, clip or opacity, so no theme can make the code unscannable.
+What the E2E covers (browser against the real server code on fakes): student device registration with real WebCrypto and server-side P-256 verification, key-storage compatibility check, faculty opens session, QR render and countdown, kiosk accept and replay refusal, student phone confirmation, live roster, spot check, exit scan, advance booking, research-visit approval, staff issue and return, booking approval, all 14 admin pages load, no horizontal scroll at 390 px (using `scrollWidth`), a student calling an admin action is denied by the server, no unlabeled controls on the admin page, no console errors. Every site theme (10) is switched on in turn: student (390 px phone), faculty, admin, kiosk and the hosted sign-in screen must render with no sideways scroll, and the kiosk QR and every element above it must carry no transform, filter, blend mode, clip or opacity, so no theme can make the code unscannable.
+
+Focused issue coverage includes detaching requests after lab/borrower changes; delayed booking, equipment and kit responses; missing and extra request quantities; strict numeric and combined-stock validation; multi-unit and oversized kits; the 390 px phone layout; early booking collection and exact reserved units; booking-end due dates; opening an issued loan directly for return; and identical retries after a server-committed checkout loses its confirmation. A definite refusal allows correction, while an earlier uncertain outcome keeps the original payload frozen.
+
+Project coverage includes creation, group leadership and membership, scoped reads and denied writes, active supervisors, valid timelines, safe result links, supervisor/coordinator decisions, outcome submission, stale-review refusal, acceptance, audited notifications and idempotent retries. The focused browser suite also checks navigation and layout at 390 px, literal rendering of HTML-like titles, and a server-committed creation whose confirmation is lost. HOD reads are tested with a supplied scope; the real shared scope helper is still task B3. See [Projects](docs/projects.md).
+
+Open-lab coverage includes opt-in lab settings, required opening hours, daily idempotent sessions, exact opening/closing entry gates in both QR modes, roster-free walk-ins, class/event coexistence, class prefill, delayed triggers, configuration changes and a separate monthly report bucket. Browser checks exercise settings, QR/GPS entry and exit, 390 px layout, late-entry refusal and disabling walk-ins. Automatic sign-out coverage includes exact/delayed closing, early manual closure, mixed/three automatic missed exits, last-minute entries, workstation release and interruptions before/after event, session, audit, summary, flag and completion writes. The focused browser suite checks credited time, automatic-exit badges/totals/details and phone layout. See [Daily open lab](docs/openlab.md).
+
+Project/system selection coverage includes pending projects, group/owner/lab checks, required projects at open-lab kiosk entry, workstation flags, busy/reserved systems, exact named bookings, mid-visit WORK events, unchanged attendance minutes and exit gaps, stale visit/version rejection, idempotent updates, VOID derivation, and both QR modes. Browser cases exercise category editing, project/system entry, unavailable choices, lost-response recovery, booked-system preselection and 390 px layout. See [Project and system selection](docs/work-selection.md).
+
+Unnati demo seed checks run all three presets: marked placeholder inventory, individually tracked workstation categories, distinct current system/project claims, valid pending/active projects and entry times before the initial clock. The seeded visits are also closed and reopened through the production attendance workflow. Browser inspection verified the student phone layout, admin placeholder labels and simulated Unnati GPS selection. See [Unnati demo](docs/unnati-demo.md).
 
 ## B. NOT tested: needs a real Workspace deployment
 
@@ -35,6 +51,8 @@ Run these after deploying; each is a pass/fail check.
 | 11 | Physical controls dry run | A real session with a rescan, a spot check and a deliberate relay attempt | Measures whether the controls catch what the design claims |
 
 ## C. Known gaps in automated coverage
+
+The staff return flow now also checks individually tracked consumption is disabled; excess, negative, fractional and incomplete numbers are refused locally; live remaining balances; a 390 px phone layout; a server-committed return whose confirmation is interrupted; retry with the identical payload and request key; and return-all after a partial return.
 
 - No frontend unit tests; the UI is covered only by the E2E flow. Admin pages are checked for loading, not for every form.
 - The E2E uses Chromium only. Safari/Firefox are untested.

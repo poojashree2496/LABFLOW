@@ -15,14 +15,14 @@ var Cfg = (function () {
   var TZ = 'Asia/Kolkata';
   var TZ_OFFSET_MIN = 330; // India has no DST, so a fixed offset is exact.
 
-  var ROLES = ['student', 'faculty', 'staff', 'admin'];
+  var ROLES = ['student', 'faculty', 'staff', 'admin', 'hod'];
   var DEFAULT_ALLOWED_DOMAINS = ['karunya.edu', 'karunya.edu.in'];
 
   var SCHEMA_SRC = {
-    Users: 'userId email:s:u:c displayName roles status createdAt:n updatedAt:n lastLoginAt:n mobile consentAt:n consentVersion',
-    StudentProfiles: 'studentId userId:s:c email:s:c importedEmail rollNo:s:u:c name department section year:n photoFileId status verifiedBy verifiedAt:n createdAt:n updatedAt:n',
+    Users: 'userId email:s:u:c displayName roles status createdAt:n updatedAt:n lastLoginAt:n mobile consentAt:n consentVersion department',
+    StudentProfiles: 'studentId userId:s:c email:s:c importedEmail rollNo:s:u:c name department section year:n photoFileId status verifiedBy verifiedAt:n createdAt:n updatedAt:n joinYear:n',
     FacultyProfiles: 'facultyId userId:s:c email:s:c name department employeeCode status createdAt:n',
-    Labs: 'labId code:s:u name type building room capacity:n status notes createdAt:n latitude:n longitude:n radiusM:n openTime closeTime checkinMode inchargeEmails',
+    Labs: 'labId code:s:u name type building room capacity:n status notes createdAt:n latitude:n longitude:n radiusM:n openTime closeTime checkinMode inchargeEmails department openLab:b',
     Kiosks: 'kioskId labId name authorizedEmail:s:u:c status lastSeenAt:n createdAt:n revokedAt:n',
     Courses: 'courseId code:s:u name department semester status createdAt:n',
     Rosters: 'rosterId scopeType scopeId studentId status addedBy addedAt:n',
@@ -31,15 +31,15 @@ var Cfg = (function () {
     Timetable: 'slotId labId courseId facultyId section dayOfWeek:n startTime endTime validFrom validTo status createdAt:n',
     Events: 'labEventId name labId coordinatorEmail:s:c startAt:n endAt:n breakStart:n breakEnd:n capacity:n sessionId status description createdBy createdAt:n',
     EventGuests: 'guestId labEventId name organisation addedBy addedAt:n',
-    Sessions: 'sessionId type labId courseId facultyId title slotId slotKey:s:u section date scheduledStart:n scheduledEnd:n status openedAt:n openedBy closedAt:n closedBy closeReason openToAll:b rescanMode nextRescanAt:n rescansDone:n requestedBy approvedBy approvedAt:n notes createdBy createdAt:n labEventId breakStart:n breakEnd:n',
-    AttendanceEvents: 'eventId sessionId labId studentId type source kioskId credentialId nonce at:n recordedBy reason approvalStatus approvedBy ref createdAt:n mode method scannedBy scannerRole geofence distanceM:n accuracyM:n entryReason assurance',
+    Sessions: 'sessionId type labId courseId facultyId title slotId slotKey:s:u section date scheduledStart:n scheduledEnd:n status openedAt:n openedBy closedAt:n closedBy closeReason openToAll:b rescanMode nextRescanAt:n rescansDone:n requestedBy approvedBy approvedAt:n notes createdBy createdAt:n labEventId breakStart:n breakEnd:n archivedAt:n',
+    AttendanceEvents: 'eventId sessionId labId studentId type source kioskId credentialId nonce at:n recordedBy reason approvalStatus approvedBy ref createdAt:n mode method scannedBy scannerRole geofence distanceM:n accuracyM:n entryReason assurance projectId assetId',
     AttendanceSummaries: 'sumId sessionId studentId status firstIn:n lastOut:n verifiedUntil:n verifiedMinutes:n flags:j computedAt:n',
     SpotChecks: 'checkId sessionId studentId requestedBy requestedAt:n outcome resolvedBy resolvedAt:n note',
     RescanWindows: 'windowId sessionId kind openedAt:n closesAt:n openedBy status',
     DeviceCredentials: 'credentialId studentId:s:c userEmail publicKey:s:u alg label status replacesCredentialId createdAt:n approvedBy approvedAt:n revokedAt:n revokedBy revokeReason lastUsedAt:n',
     Redemptions: 'nonce purpose studentId sessionId kioskId at:n eventId',
     Flags: 'flagId type severity studentId sessionId labId detail:j status createdAt:n resolvedBy resolvedAt:n note dedupeKey:s:u',
-    Categories: 'categoryId name:s:u trackingMode notes',
+    Categories: 'categoryId name:s:u trackingMode notes workstation:b',
     Assets: 'assetId labId categoryId name serialNo assetTag:s:u trackingMode quantityTotal:n quantityAvailable:n status condition location valueInr:n currentLoanId notes createdAt:n updatedAt:n',
     Kits: 'kitId labId name description status createdAt:n',
     KitComponents: 'componentId kitId categoryId quantity:n note',
@@ -48,13 +48,14 @@ var Cfg = (function () {
     Loans: 'loanId labId borrowerType borrowerId kitId reservationId status issuedBy issuedAt:n dueAt:n returnedAt:n verifiedBy notes idemKey:s:u',
     LoanItems: 'loanItemId loanId assetId categoryId qtyIssued:n qtyReturned:n qtyConsumed:n qtyDamaged:n qtyMissing:n conditionOut conditionIn status note',
     AssetEvents: 'txId assetId loanId type qtyDelta:n at:n by note idemKey:s:u',
-    Reservations: 'reservationId labId resourceType resourceId quantity:n requesterType requesterId requestedBy startAt:n endAt:n status purpose requestedAt:n decidedBy decidedAt:n decisionNote cancelledAt:n usedAt:n',
+    Reservations: 'reservationId labId resourceType resourceId quantity:n requesterType requesterId requestedBy startAt:n endAt:n status purpose requestedAt:n decidedBy decidedAt:n decisionNote cancelledAt:n usedAt:n projectId waitlistedAt:n',
     EquipmentRequests: 'requestId labId sessionId studentId resourceType resourceId quantity:n note status requestedAt:n decidedBy decidedAt:n decisionNote loanId',
     Notifications: 'notificationId userId type title body createdAt:n readAt:n emailStatus dedupeKey:s:u',
     AuditEvents: 'seq:n eventId at:n actor role action entityType entityId result detail:j prevHash hash',
     AuditCheckpoints: 'checkpointId seq:n hash at:n note',
     SystemLog: 'logId at:n level source code message detail:j',
-    JobRuns: 'runId job startedAt:n finishedAt:n status detail:j'
+    JobRuns: 'runId job startedAt:n finishedAt:n status detail:j',
+    Projects: 'projectId title description ownerStudentId groupId supervisorFacultyId labId startDate endDate status outcome outcomeLink outcomeAt:n approvedBy approvedAt:n createdAt:n updatedAt:n'
   };
 
   var SCHEMA = {};
@@ -144,10 +145,10 @@ var Cfg = (function () {
   };
 
   var LAB_TYPES = ['iot', 'computing', 'gpu', 'research', 'other'];
-  var SESSION_TYPES = ['class', 'event', 'research'];
+  var SESSION_TYPES = ['class', 'event', 'research', 'openlab'];
   var CONDITIONS = ['good', 'fair', 'poor', 'damaged'];
   var CHECKIN_MODES = ['A', 'B', 'AB'];
-  var ENTRY_REASONS = ['class', 'event', 'research'];
+  var ENTRY_REASONS = ['class', 'event', 'research', 'openlab'];
   /** Bump when the privacy notice text changes; users accept it again on their next visit. */
   var CONSENT_VERSION = '2026-10';
 
@@ -160,7 +161,7 @@ var Cfg = (function () {
       slot: 'SLT', session: 'SES', event: 'EVT', spot: 'SPC', window: 'RSW', cred: 'CRD', category: 'CAT', asset: 'AST',
       kit: 'KIT', component: 'KCP', group: 'GRP', member: 'GMB', loan: 'LON', loanItem: 'LIT', tx: 'TXN',
       reservation: 'RSV', notification: 'NTF', audit: 'AUD', checkpoint: 'CHK', log: 'LOG', run: 'RUN',
-      labEvent: 'LEV', guest: 'GST', rep: 'CRP', flag: 'FLG', request: 'EQR'
+      labEvent: 'LEV', guest: 'GST', rep: 'CRP', flag: 'FLG', request: 'EQR', project: 'PRJ'
     },
     /** Script-property keys (secrets and deployment configuration; never stored in a sheet). */
     PROP: { DB_ID: 'DB_SPREADSHEET_ID', HMAC: 'QR_HMAC_SECRET', BOOTSTRAP_ADMIN: 'BOOTSTRAP_ADMIN_EMAIL', DOMAINS: 'ALLOWED_DOMAINS',

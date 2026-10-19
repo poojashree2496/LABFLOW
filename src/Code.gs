@@ -9,11 +9,12 @@
  * Hiding a button in the UI is cosmetic; this table is the control.
  *
  * Role tokens: 'any' = a signed-in allowed-domain Google account even without a LABFLOW account (onboarding only);
- * 'user' = has a LABFLOW account; otherwise one or more of student | faculty | staff | admin | kiosk.
+ * 'user' = has a LABFLOW account; otherwise one or more of student | faculty | staff | admin | hod | kiosk.
+ * Labels in the UI: staff = Coordinator, admin = Super admin, hod = HOD (read-only).
  * rl = [maxCalls, windowSeconds] per caller; default is DEFAULT_RL. Denials are audited (throttled).
  */
 var DEFAULT_RL = [150, 60];
-var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk', 'ScriptsThemes'];
+var FRONTEND_FILES = ['Styles', 'SharedComponents', 'Vendor_QR', 'Scripts', 'ScriptsStudent', 'ScriptsFaculty', 'ScriptsStaff', 'ScriptsAdmin', 'ScriptsKiosk', 'ScriptsThemes', 'ScriptsProjects'];
 
 var ROUTES = {
   // identity / onboarding
@@ -168,7 +169,24 @@ var ROUTES = {
   // reports
   'reports.run': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [20, 300], fn: function (c, p) { return Reports.run(c, p); } },
   'reports.csv': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [10, 300], fn: function (c, p) { return Reports.csv(c, p); } },
-  'reports.pdf': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [5, 300], fn: function (c, p) { return Reports.pdf(c, p); } }
+  'reports.pdf': { roles: ['student', 'faculty', 'staff', 'admin'], rl: [5, 300], fn: function (c, p) { return Reports.pdf(c, p); } },
+
+  // v2 (docs/requirements.md section 4). Roles are final; the handlers are built by the task named on each line.
+  'projects.create': { roles: ['student'], rl: [10, 300], fn: function (c, p) { return Projects.create(c, p); } }, // C1
+  'projects.mine': { roles: ['student'], fn: function (c, p) { return Projects.mine(c, p); } }, // C1
+  'projects.get': { roles: ['student', 'faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Projects.get(c, p); } }, // C1
+  'projects.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Projects.list(c, p); } }, // C1
+  'projects.decide': { roles: ['faculty', 'staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Projects.decide(c, p); } }, // C1
+  'projects.outcome': { roles: ['student', 'faculty'], rl: [20, 300], fn: function (c, p) { return Projects.outcome(c, p); } }, // C1
+  'attend.setWork': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Attend.setWork(c, p); } }, // C3
+  'labs.live': { roles: ['faculty', 'staff', 'admin', 'hod'], rl: [90, 60], fn: function (c, p) { return Occupancy.live(c, p); } }, // B4
+  'systems.status': { roles: ['user'], rl: [90, 60], fn: function (c, p) { return Occupancy.systems(c, p); } }, // B4
+  'users.revealMobile': { roles: ['staff', 'admin'], rl: [20, 300], fn: function (c, p) { return Users.revealMobile(c, p); } }, // A2
+  'students.status': { roles: ['staff', 'admin'], fn: function (c, p) { return Users.setStudentStatus(c, p); } }, // B2
+  'dash.hod': { roles: ['hod', 'admin'], fn: function (c, p) { return Dash.hod(c, p); } }, // B3
+  'system.backup': { roles: ['admin'], rl: [5, 300], fn: function (c, p) { return Backup.now(c, p); } }, // A3
+  'system.backups': { roles: ['admin'], fn: function (c, p) { return Backup.list(c, p); } }, // A3
+  'system.archive': { roles: ['admin'], rl: [3, 300], fn: function (c, p) { return Backup.archiveYear(c, p); } } // A4
 };
 
 /**

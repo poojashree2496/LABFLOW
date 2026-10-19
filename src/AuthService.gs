@@ -35,6 +35,14 @@ var Auth = {
       fail('NO_IDENTITY', 'Google did not share your identity with this app. Sign in with your @karunya.edu or @karunya.edu.in account. ' +
         'If you are signed in, the administrator must check that the web app is deployed for your domain (see README, Authentication).');
     }
+    return Auth._contextForEmail(email);
+  },
+
+  /** Rebuild context for an already authenticated identity; fresh reads are used at scan commit time. */
+  _contextForEmail: function (email, fresh) {
+    var lookup = function (table, col, value) {
+      return fresh ? Db.getBy(table, col, value) : Db.cachedGet(table, col, value, 120);
+    };
     var domain = email.split('@')[1] || '';
     if (Auth.allowedDomains().indexOf(domain) < 0) {
       fail('DOMAIN_NOT_ALLOWED', 'Only ' + Auth.allowedDomains().map(function (d) { return '@' + d; }).join(' and ') + ' accounts can use LABFLOW.');
@@ -43,17 +51,17 @@ var Auth = {
     var ctx = { email: email, user: null, roles: [], student: null, faculty: null, kiosk: null };
     ctx.has = function (role) { return ctx.roles.indexOf(role) >= 0; };
 
-    var kiosk = Db.cachedGet('Kiosks', 'authorizedEmail', email, 120);
+    var kiosk = lookup('Kiosks', 'authorizedEmail', email);
     if (kiosk && kiosk.status === 'active') { ctx.kiosk = kiosk; ctx.roles.push('kiosk'); }
 
-    var user = Db.cachedGet('Users', 'email', email, 120);
+    var user = lookup('Users', 'email', email);
     if (!user) user = Auth._maybeBootstrapAdmin(email);
     if (user) {
       if (user.status !== 'active') fail('ACCOUNT_DISABLED', 'Your LABFLOW account is disabled. Contact the lab office.');
       ctx.user = user;
       String(user.roles || '').split(',').forEach(function (r) { r = r.trim(); if (Cfg.ROLES.indexOf(r) >= 0 && ctx.roles.indexOf(r) < 0) ctx.roles.push(r); });
-      if (ctx.has('student')) ctx.student = Db.cachedGet('StudentProfiles', 'userId', user.userId, 120);
-      if (ctx.has('faculty')) ctx.faculty = Db.cachedGet('FacultyProfiles', 'userId', user.userId, 120);
+      if (ctx.has('student')) ctx.student = lookup('StudentProfiles', 'userId', user.userId);
+      if (ctx.has('faculty')) ctx.faculty = lookup('FacultyProfiles', 'userId', user.userId);
       Auth._touchLogin(user);
     }
     return ctx;
@@ -83,6 +91,10 @@ var Auth = {
   },
 
   /** Throw FORBIDDEN unless the caller holds one of the roles. Central check used by the RPC router. */
+  /** Read access to department-wide data (coordinator, HOD, super admin). Use for reads only, never for writes. */
+  canView: function (ctx) { return ctx.has('admin') || ctx.has('staff') || ctx.has('hod'); },
+  /** Lab ids this account may see (task B3). */
+  labScope: function () { notBuilt_('B3'); },
   requireRole: function (ctx, roles) {
     if (!roles.some(function (r) { return ctx.has(r); })) fail('FORBIDDEN', 'You do not have permission to do that.');
   },

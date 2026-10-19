@@ -91,12 +91,16 @@ var Flags = {
   },
   afterClose: function (session) {
     var since = U.now() - Flags.WINDOW_MS, month = U.local(U.now()).month;
-    var mine = Db.where('AttendanceSummaries', function (x) { return x.sessionId === session.sessionId && x.status === 'unverified_exit'; });
+    var missedExit = function (x) { return x.status === 'unverified_exit' || (x.flags || []).indexOf('auto_out') >= 0; };
+    var mine = Db.where('AttendanceSummaries', function (x) { return x.sessionId === session.sessionId && missedExit(x); });
     if (!mine.length) return;
     var recent = {}; Db.where('Sessions', function (s) { return s.closedAt && s.closedAt >= since; }).forEach(function (s) { recent[s.sessionId] = true; });
-    var counts = {}; Db.where('AttendanceSummaries', function (x) { return x.status === 'unverified_exit' && recent[x.sessionId]; }).forEach(function (x) { counts[x.studentId] = (counts[x.studentId] || 0) + 1; });
+    var counts = {}, unverified = {}; Db.where('AttendanceSummaries', function (x) { return missedExit(x) && recent[x.sessionId]; }).forEach(function (x) {
+      counts[x.studentId] = (counts[x.studentId] || 0) + 1;
+      if (x.status === 'unverified_exit') unverified[x.studentId] = (unverified[x.studentId] || 0) + 1;
+    });
     mine.forEach(function (x) {
-      if ((counts[x.studentId] || 0) >= 3) Flags.raise('never_scans_out', { studentId: x.studentId, sessionId: session.sessionId, labId: session.labId, detail: { unverifiedExitsLast30Days: counts[x.studentId] }, dedupeKey: 'noexit|' + x.studentId + '|' + month });
+      if ((counts[x.studentId] || 0) >= 3) Flags.raise('never_scans_out', { studentId: x.studentId, sessionId: session.sessionId, labId: session.labId, detail: { unverifiedExitsLast30Days: unverified[x.studentId] || 0, missedExitsLast30Days: counts[x.studentId] }, dedupeKey: 'noexit|' + x.studentId + '|' + month });
     });
   },
   afterRegistration: function (student, credentialId, desktop) {

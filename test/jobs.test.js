@@ -167,3 +167,153 @@ test('audit: tamper, truncation and head rewrite are all detected', () => {
   assert.equal(v.ok, false);
   assert.ok(v.checkpointProblems.length > 0 || v.storedHeadProblem, 'checkpoint/anchor reveals the truncation');
 });
+
+function openLabVisit(n = 1) {
+  const w = world({ students: n });
+  w.ok(w.admin, 'labs.upsert', { ...w.lab, openLab: true });
+  const projectIds = w.students.map((s) => w.ok(s.email, 'projects.create', { title: 'Closing test', description: 'Closing time test', labId: w.lab.labId,
+    supervisorFacultyId: w.facultyId, startDate: w.today, endDate: '2026-12-01' }).project.projectId);
+  w.eval('Sessions.autoOpenDue()');
+  w.sid = w.eval("Db.readAll('Sessions').filter(function(s){return s.type==='openlab';})[0].sessionId");
+  w.setClock = (time) => w.e.setTime(w.eval(`U.fromLocal('${w.today}','${time}')`));
+  w.enter = (i = 0) => { const r = w.checkin(w.students[i], { sessionId: w.sid, projectId: projectIds[i] }); assert.equal(r.ok, true, JSON.stringify(r)); };
+  w.exits = () => w.eval(`Db.whereEq('AttendanceEvents',{sessionId:'${w.sid}'}).filter(function(e){return e.method==='auto';})`);
+  w.summary = (i = 0) => w.eval(`Db.whereEq('AttendanceSummaries',{sessionId:'${w.sid}',studentId:'${w.students[i].studentId}'})[0]`);
+  w.closeAudit = () => w.eval(`Db.whereEq('AuditEvents',{entityId:'${w.sid}',action:'session.close'})`);
+  return w;
+}
+
+test('open-lab closure: exact deadline, delayed execution, all visitors, and repeat execution', () => {
+  for (const clock of ['19:00', '19:45']) {
+    const w = openLabVisit(2); w.setClock('18:00'); w.enter(0); w.enter(1);
+    w.setClock('18:59'); w.eval('Sessions.autoCloseStale()'); assert.equal(w.eval(`Db.get('Sessions','${w.sid}').status`), 'open');
+    w.setClock(clock); assert.equal(w.eval('Sessions.autoCloseStale()').closed, 1);
+    assert.equal(w.exits().length, 2);
+    for (const e of w.exits()) { assert.equal(e.at, w.eval(`U.fromLocal('${w.today}','19:00')`)); assert.equal(e.createdAt, w.eval('U.now()')); assert.equal(e.source, 'system'); }
+    for (let i = 0; i < 2; i++) { assert.equal(w.summary(i).verifiedMinutes, 60); assert.ok(w.summary(i).flags.includes('auto_out')); assert.equal(w.summary(i).status, 'present'); }
+    assert.deepEqual(w.eval('Sessions.autoCloseStale()'), { closed: 0, failed: 0 });
+    assert.equal(w.exits().length, 2); assert.equal(w.closeAudit().length, 1);
+    assert.deepEqual(w.eval(`Work.occupants('${w.lab.labId}')`), []);
+    const h = w.ok(w.students[0].email, 'attend.history'); assert.equal(h.totals.autoSignOuts, 1);
+    assert.equal(w.ok(w.students[0].email, 'attend.events', { sessionId: w.sid }).events.at(-1).method, 'auto');
+  }
+});
+
+test('open-lab closure: early manual close uses actual time and only exits the current visit', () => {
+  const w = openLabVisit(2); w.enter(0); w.enter(1); w.setClock('11:00');
+  assert.equal(w.checkin(w.students[0], { sessionId: w.sid, action: 'out' }).ok, true);
+  w.setClock('11:30'); w.enter(0); w.setClock('12:00');
+  w.ok(w.admin, 'sessions.close', { sessionId: w.sid, reason: 'Maintenance' });
+  assert.equal(w.exits().length, 2); assert.ok(w.exits().every((e) => e.at === w.eval('U.now()')));
+  assert.equal(w.summary(0).verifiedMinutes, 90); assert.equal(w.summary(1).verifiedMinutes, 120);
+  assert.equal(w.closeAudit()[0].actor, w.admin);
+});
+
+test('open-lab closure: scanned departures stay normal and a last-second entry bypasses the scan gap', () => {
+  const w = openLabVisit(2); w.enter(0); w.setClock('11:00');
+  assert.equal(w.checkin(w.students[0], { sessionId: w.sid, action: 'out' }).ok, true);
+  w.setClock('18:59'); w.enter(1); w.setClock('19:00'); w.eval('Sessions.autoCloseStale()');
+  assert.equal(w.exits().length, 1); assert.equal(w.summary(0).verifiedMinutes, 60);
+  assert.ok(!w.summary(0).flags.includes('auto_out')); assert.equal(w.summary(1).verifiedMinutes, 1);
+});
+
+test('open-lab closure: arrival reads and history recover a delayed trigger', () => {
+  for (const route of ['sessions.mine', 'attend.history']) {
+    const w = openLabVisit(); w.enter(); w.setClock('19:05');
+    w.ok(w.students[0].email, route); assert.equal(w.exits().length, 1); assert.equal(w.summary().verifiedMinutes, 540);
+  }
+});
+
+test('open-lab closure: late scanner submission cannot append an additional departure', async () => {
+  const w = openLabVisit(); const s = w.students[0]; await w.registerDevice(s); w.enter();
+  w.setClock('18:59'); const qr = await w.qr(s, w.sid, 'out'); w.setClock('19:00');
+  assert.equal(w.scan(await w.sign(qr.split('~')[0], w.devices[s.studentId])).error.code, 'OUT_OF_WINDOW');
+  assert.equal(w.exits().length, 1);
+  assert.equal(w.eval(`Db.whereEq('AttendanceEvents',{sessionId:'${w.sid}',type:'OUT'}).length`), 1);
+});
+
+// Fail both before a write and after its durable append/update: retries must recover the actual
+// sheet state, including a session already marked closed and a partially rebuilt summary.
+for (const stage of ['event', 'session', 'audit', 'summary', 'flags', 'complete']) {
+  for (const after of [false, true]) test(`open-lab closure recovery: ${stage}, failure ${after ? 'after' : 'before'} write`, () => {
+    const w = openLabVisit(2); w.enter(0); w.enter(1); w.setClock('19:05');
+    w.e.run(`
+      var originalInsert = Db.insert, originalUpdate = Db.update, originalMany = Db.insertMany, originalFlags = Flags.afterClose, fired = false;
+      function inject(kind, table, record, fn) {
+        var match = !fired && (
+          ('${stage}'==='event' && kind==='insert' && table==='AttendanceEvents' && record.method==='auto') ||
+          ('${stage}'==='session' && kind==='update' && table==='Sessions' && record.status==='closed') ||
+          ('${stage}'==='audit' && kind==='insert' && table==='AuditEvents' && record.action==='session.close') ||
+          ('${stage}'==='summary' && kind==='many' && table==='AttendanceSummaries') ||
+          ('${stage}'==='complete' && kind==='update' && table==='JobRuns' && record.status==='ok') ||
+          ('${stage}'==='flags' && kind==='flags'));
+        if (match) { fired=true; if (${after}) fn(); throw new Error('Injected close interruption'); }
+        return fn();
+      }
+      Db.insert = function(t,r){return inject('insert',t,r,function(){return originalInsert(t,r);});};
+      Db.insertMany = function(t,r){return inject('many',t,r,function(){return originalMany(t,r);});};
+      Db.update = function(t,id,r){return inject('update',t,r,function(){return originalUpdate(t,id,r);});};
+      Flags.afterClose = function(s){return inject('flags','',{},function(){return originalFlags(s);});};
+    `);
+    assert.equal(w.eval('Sessions.autoCloseStale()').failed, 1); assert.equal(w.eval('fired'), true);
+    w.e.run('Db.insert=originalInsert;Db.update=originalUpdate;Db.insertMany=originalMany;Flags.afterClose=originalFlags;');
+    w.eval('Sessions.autoCloseStale()');
+    assert.equal(w.exits().length, 2); assert.equal(w.closeAudit().length, 1);
+    for (let i = 0; i < 2; i++) { assert.equal(w.summary(i).verifiedMinutes, 540); assert.ok(w.summary(i).flags.includes('auto_out')); }
+    assert.equal(w.eval(`Db.get('JobRuns',Sessions._closeRunId('${w.sid}')).status`), 'ok');
+    assert.equal(w.eval('Audit.verify().ok'), true);
+  });
+}
+
+test('open-lab closure: an interrupted early close is resumed before any new entry', () => {
+  const w = openLabVisit(2); w.enter(); w.setClock('11:00');
+  w.e.run("var savedFlags=Flags.afterClose; Flags.afterClose=function(){throw new Error('Interrupted');};");
+  assert.equal(w.call(w.admin, 'sessions.close', { sessionId: w.sid }).ok, false);
+  w.e.run('Flags.afterClose=savedFlags;'); w.setClock('11:30');
+  const result = w.checkin(w.students[1], { sessionId: w.sid });
+  assert.equal(result.ok, false); assert.equal(w.exits().length, 1); assert.equal(w.summary().verifiedMinutes, 60);
+  assert.equal(w.eval(`Db.get('JobRuns',Sessions._closeRunId('${w.sid}')).status`), 'ok');
+});
+
+test('open-lab closure: auto-outs and class missed exits share the repeated missed-exit detector', () => {
+  const w = openLabVisit(); w.enter(); w.setClock('19:00'); w.eval('Sessions.autoCloseStale()');
+  const sid = w.students[0].studentId;
+  w.e.run(`
+    ['one','two'].forEach(function(n){
+      var id=U.id('session');
+      Db.insert('Sessions',{sessionId:id,type:'class',labId:'${w.lab.labId}',status:'closed',closedAt:U.now()-86400000,scheduledStart:U.now()-90000000});
+      Db.insert('AttendanceSummaries',{sumId:id+':${sid}',sessionId:id,studentId:'${sid}',status:'unverified_exit',flags:['unverified_exit']});
+    });
+    Flags.afterClose(Db.get('Sessions','${w.sid}')); Flags.afterClose(Db.get('Sessions','${w.sid}'));
+  `);
+  const flags = w.eval("Db.whereEq('Flags',{type:'never_scans_out'})");
+  assert.equal(flags.length, 1); assert.equal(flags[0].detail.missedExitsLast30Days, 3);
+});
+
+test('open-lab closure: three actual automatic departures raise one repeated missed-exit flag', () => {
+  const w = openLabVisit();
+  for (const date of ['2026-10-14', '2026-10-15', '2026-10-16']) {
+    w.e.setTime(w.eval(`U.fromLocal('${date}','18:00')`));
+    w.eval(`Sessions._openLabsDue('${date}')`);
+    w.sid = w.eval(`Db.whereEq('Sessions',{date:'${date}',type:'openlab'})[0].sessionId`);
+    w.enter(); w.e.setTime(w.eval(`U.fromLocal('${date}','19:00')`)); w.eval('Sessions.autoCloseStale()');
+    assert.equal(w.eval("Db.whereEq('Flags',{type:'never_scans_out'}).length"), date === '2026-10-16' ? 1 : 0);
+  }
+  w.eval('Sessions.autoCloseStale()');
+  assert.equal(w.eval("Db.whereEq('Flags',{type:'never_scans_out'})[0].detail.missedExitsLast30Days"), 3);
+});
+
+test('open-lab closure: work changes do not shorten credit and a workstation is released', () => {
+  const w = openLabVisit(), s = w.students[0]; w.enter();
+  const category = w.ok(w.staff, 'categories.upsert', { name: 'Test systems', trackingMode: 'individual', workstation: true }).category;
+  const asset = w.ok(w.staff, 'assets.upsert', { labId: w.lab.labId, categoryId: category.categoryId, name: 'Closing system', assetTag: 'CLOSE-SYSTEM' }).asset;
+  w.setClock('18:00');
+  const state = w.ok(s.email, 'sessions.mine').sessions.find((x) => x.sessionId === w.sid).mine.work;
+  w.ok(s.email, 'attend.setWork', { sessionId: w.sid, entryEventId: state.entryEventId, expectedEventId: state.eventId, projectId: state.projectId, assetId: asset.assetId });
+  assert.equal(w.eval(`Work.occupants('${w.lab.labId}').length`), 1);
+  w.setClock('19:00'); w.eval('Sessions.autoCloseStale()');
+  assert.equal(w.summary().verifiedMinutes, 540);
+  assert.deepEqual(w.eval(`Work.occupants('${w.lab.labId}')`), []);
+  const effective = w.eval(`Attend._effective(Attend._eventsFor(Db.get('Sessions','${w.sid}')))`);
+  assert.equal(w.eval(`Work.current(${JSON.stringify(effective[s.studentId])})`), null);
+});

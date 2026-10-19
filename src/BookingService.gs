@@ -66,6 +66,17 @@ var Booking = {
     if (clash.length) fail('NOT_AVAILABLE', 'That item is already booked for an overlapping period.');
   },
 
+  /** A completed booking/request must receive every promised unit; extra checked items are allowed. */
+  validateContents: function (r, demand, lines) {
+    var needed = Booking.demand(r.resourceType, r.resourceId, r.quantity);
+    Object.keys(needed).forEach(function (catId) {
+      if ((demand[catId] || 0) < needed[catId]) fail('BAD_INPUT', 'The issued items do not fill the requested resource and quantity.');
+    });
+    if (r.resourceType === 'asset' && !lines.some(function (ln) { return ln.assetId === r.resourceId && ln.qty === 1; })) {
+      fail('BAD_INPUT', 'Issue the specific item named in this booking.');
+    }
+  },
+
   checkAvailability: function (ctx, p) {
     V.obj(p);
     var labId = V.id(p.labId, 'Lab', 'lab'), start = V.int(p.startAt, 'Start', 0, 4102444800000), end = V.int(p.endAt, 'End', 0, 4102444800000);
@@ -87,7 +98,7 @@ var Booking = {
   },
   _view: function (r) {
     return { reservationId: r.reservationId, labId: r.labId, resourceType: r.resourceType, resourceId: r.resourceId, resourceName: Booking._resourceName(r), quantity: r.quantity, requesterType: r.requesterType, requesterId: r.requesterId,
-      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, status: r.status, purpose: r.purpose, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote };
+      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, collectionOpensAt: r.startAt - Booking.COLLECT_EARLY_MS, status: r.status, purpose: r.purpose, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote };
   },
   _mayAct: function (ctx, r) {
     if (ctx.has('admin') || ctx.has('staff')) return true;
@@ -122,9 +133,9 @@ var Booking = {
       if (rt !== 'category' && res.labId !== labId) fail('BAD_INPUT', 'That resource belongs to a different lab.');
       if (rt === 'asset') { qty = 1; if (res.trackingMode !== 'individual') fail('BAD_INPUT', 'Book consumable stock by category.'); }
       var active = Db.where('Reservations', function (r) { return r.requesterType === requesterType && r.requesterId === requesterId && (r.status === 'pending' || r.status === 'approved'); });
-      if (active.length >= Settings.get('bookingMaxActivePerRequester')) fail('LIMIT', 'You already have ' + active.length + ' active bookings (limit ' + Settings.get('bookingMaxActivePerRequester') + ').');
-      var dup = active.filter(function (r) { return r.resourceType === rt && r.resourceId === rid && r.startAt === start && r.endAt === end; });
+      var dup = active.filter(function (r) { return r.labId === labId && r.resourceType === rt && r.resourceId === rid && r.quantity === qty && r.startAt === start && r.endAt === end; });
       if (dup.length) return { reservation: Booking._view(dup[0]), replayed: true };
+      if (active.length >= Settings.get('bookingMaxActivePerRequester')) fail('LIMIT', 'You already have ' + active.length + ' active bookings (limit ' + Settings.get('bookingMaxActivePerRequester') + ').');
       var demand = Booking.demand(rt, rid, qty);
       var rec = { reservationId: U.id('reservation'), labId: labId, resourceType: rt, resourceId: rid, quantity: qty, requesterType: requesterType, requesterId: requesterId, requestedBy: ctx.email, startAt: start, endAt: end,
         status: 'pending', purpose: purpose, requestedAt: now, decidedBy: '', decidedAt: null, decisionNote: '', cancelledAt: null };
@@ -200,8 +211,9 @@ var Booking = {
     });
   },
   /** A check-in by the booking's student during the slot marks it used (utilisation counts used slots, FR-25). */
-  markUsed: function (studentId, labId, now) {
+  markUsed: function (studentId, labId, now, assetId) {
     Booking.activeWorkstationBookings(studentId, labId, now, 15 * 60000).forEach(function (r) {
+      if (Work.isSystem(Db.get('Assets', r.resourceId)) && r.resourceId !== assetId) return;
       if (r.usedAt) return;
       Db.update('Reservations', r.reservationId, { usedAt: now });
       Audit.log({ actor: 'system', role: 'system', action: 'booking.used', entityType: 'Reservation', entityId: r.reservationId, detail: { studentId: studentId } });
@@ -300,6 +312,13 @@ var Requests = {
     });
   },
   /** Called by Loans.issue (inside its lock) when a loan hands over a requested item. */
+  validateFulfilment: function (requestId, type, borrowerId, labId, demand, lines) {
+    var r = Db.mustGet('EquipmentRequests', requestId, 'Request');
+    if (r.status !== 'pending') fail('INVALID_STATE', 'That request is already ' + r.status + '.');
+    if (type !== 'student' || borrowerId !== r.studentId || labId !== r.labId) fail('BAD_INPUT', 'That request belongs to a different student or lab.');
+    Booking.validateContents(r, demand, lines);
+    return r;
+  },
   fulfil: function (requestId, loan, ctx) {
     var r = Db.mustGet('EquipmentRequests', requestId, 'Request');
     if (r.status !== 'pending') fail('INVALID_STATE', 'That request is already ' + r.status + '.');

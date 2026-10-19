@@ -25,6 +25,8 @@ test('individual vs quantity assets: issue, availability, uniqueness', () => {
   assert.equal(w.err(w.staff, 'assets.upsert', { labId: w.lab.labId, categoryId: s.arduino.categoryId, name: 'no tag' }).code, 'BAD_INPUT', 'individual assets need a tag');
   const r = issue(w, a, [{ assetId: s.ards[0].assetId, qty: 1 }, { assetId: s.res.assetId, qty: 30 }]);
   assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.data.loan.items.find((i) => i.assetId === s.ards[0].assetId).trackingMode, 'individual');
+  assert.equal(r.data.loan.items.find((i) => i.assetId === s.res.assetId).trackingMode, 'quantity');
   assert.equal(get(w, s.ards[0].assetId).status, 'on_loan');
   assert.equal(get(w, s.res.assetId).quantityAvailable, 70);
   assert.equal(issue(w, w.students[1], [{ assetId: s.ards[0].assetId, qty: 1 }]).error.code, 'UNAVAILABLE', 'same physical item cannot go out twice');
@@ -204,6 +206,7 @@ test('advance booking: capacity is enforced, pending holds stock, approval re-ch
   assert.equal(book(w, a, Object.assign({ quantity: 2 }, slot)).ok, true);
   const r2 = book(w, b, Object.assign({ quantity: 1 }, slot));
   assert.equal(r2.ok, true, 'one left');
+  assert.equal(r2.data.reservation.collectionOpensAt, slot.startAt - 2 * 3600000, 'the booking exposes its server-defined collection window');
   const r3 = book(w, c, Object.assign({ quantity: 1 }, slot));
   assert.equal(r3.error.code, 'NOT_AVAILABLE', 'pending requests hold stock');
   // a different, non-overlapping window is fine

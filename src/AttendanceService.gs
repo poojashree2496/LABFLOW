@@ -65,11 +65,17 @@ var Attend = {
 
   /** Pure derivation for ONE student from their effective events. */
   _compute: function (session, evts, windows, now) {
-    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, lastEvent = null;
+    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, autoOut = false, lastEvent = null;
     (evts || []).forEach(function (e) {
+      if (e.type === 'WORK') return; // work metadata never verifies presence or resets the scan gap
       if (e.type === 'CORR_IN' || e.type === 'CORR_OUT') corrected = true;
       if (e.type === 'IN' || e.type === 'CORR_IN') { if (inAt === null) { inAt = e.at; if (firstIn === null) firstIn = e.at; verified.push(e.at); } }
-      else if (e.type === 'OUT' || e.type === 'CORR_OUT') { if (inAt !== null) { stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at); } }
+      else if (e.type === 'OUT' || e.type === 'CORR_OUT') {
+        if (inAt !== null) {
+          if (session.type === 'openlab' && e.type === 'OUT' && e.method === 'auto') autoOut = true;
+          stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at);
+        }
+      }
       else if (e.type === 'RESCAN' || e.type === 'SPOT_OK') verified.push(e.at);
       else if (e.type === 'SPOT_FAIL') spotFail = true;
       if (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT') lastEvent = e;
@@ -94,6 +100,7 @@ var Attend = {
       var inStint = verified.filter(function (t) { return t >= s.inAt && (s.out === null || t <= s.out); });
       var lastV = Math.max.apply(null, inStint.concat([s.inAt]));
       var end = s.out !== null ? s.out : (requireExit ? lastV : Math.min(session.closedAt || now, session.scheduledEnd));
+      if (session.type === 'openlab') end = Math.min(end, session.scheduledEnd, session.closedAt || now);
       var m = missed.filter(function (t) { return t > s.inAt && (s.out === null || t < s.out); });
       if (m.length) {
         var cap = Math.min.apply(null, m);
@@ -110,6 +117,7 @@ var Attend = {
     if (missed.length) flags.push('missed_rescan');
     if (spotFail) flags.push('spot_check_failed');
     if (corrected) flags.push('corrected');
+    if (autoOut) flags.push('auto_out');
     var status = firstIn === null ? 'absent' : spotFail ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
     return { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
              status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent };
@@ -124,6 +132,16 @@ var Attend = {
   // ---- gates shared by both check-in modes -----------------------------------------------------------------
   /** Is the session in a state that accepts this kind of scan right now? */
   _sessionGate: function (session, purpose, now) {
+    if (session.type === 'openlab') {
+      var pending = Db.get('JobRuns', Sessions._closeRunId(session.sessionId));
+      if ((session.status === 'open' && now >= session.scheduledEnd) || (pending && pending.status === 'pending')) {
+        Sessions._closeOpenLab(session, 'system', 'system', 'Open lab closed at scheduled end');
+        // Refuse this scan even if its caller read events before closure. A new scan must read fresh state.
+        fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
+      }
+      if (purpose === 'in' && !Sessions.openLabAvailable(session, now)) fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
+      if (session.status === 'closed') fail('SESSION_NOT_OPEN', 'This open lab is closed. Check your history for your sign-out.');
+    }
     var st = session.status;
     if (purpose === 'in') { if (st !== 'open') fail('SESSION_NOT_OPEN', st === 'closed' ? 'This session is closed.' : 'This session has not been opened yet.'); }
     else if (purpose === 'out') {
@@ -167,23 +185,25 @@ var Attend = {
       eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: c.studentId, type: Attend.TYPE_OF[purpose], source: c.method, kioskId: c.kioskId || '',
       credentialId: c.credentialId || '', nonce: c.nonce, at: now, recordedBy: c.scannedBy, approvalStatus: 'na', ref: win ? win.windowId : '', createdAt: now,
       mode: c.mode, method: c.method, scannedBy: c.scannedBy, scannerRole: c.scannerRole, geofence: c.geofence || '', distanceM: c.distanceM === undefined ? null : c.distanceM,
-      accuracyM: c.accuracyM === undefined ? null : c.accuracyM, entryReason: c.entryReason || (purpose === 'in' ? Attend.reasonOf(s) : ''), assurance: c.assurance || 'standard'
+      accuracyM: c.accuracyM === undefined ? null : c.accuracyM, entryReason: c.entryReason || (purpose === 'in' ? Attend.reasonOf(s) : ''), assurance: c.assurance || 'standard',
+      projectId: purpose === 'in' ? c.projectId || '' : '', assetId: purpose === 'in' ? c.assetId || '' : ''
     });
     Tokens.redeem(c.nonce, c.redeemPurpose || purpose, c.studentId, s.sessionId, c.kioskId || '', ev.eventId);
     Audit.log({ actor: c.scannedBy, role: c.scannerRole, action: 'scan.accept', entityType: 'AttendanceEvent', entityId: ev.eventId,
-                detail: { type: ev.type, mode: c.mode, method: c.method, studentId: c.studentId, sessionId: s.sessionId, kioskId: c.kioskId || '', geofence: ev.geofence, assurance: ev.assurance } });
+                detail: { type: ev.type, mode: c.mode, method: c.method, studentId: c.studentId, sessionId: s.sessionId, kioskId: c.kioskId || '', geofence: ev.geofence, assurance: ev.assurance,
+                  projectId: ev.projectId, assetId: ev.assetId } });
     Occupancy.invalidate(s.labId);
     var stu = c.student || Db.cachedGet('StudentProfiles', 'studentId', c.studentId, 120) || {};
     c.event = ev;
     c.result = { ok: true, type: ev.type, at: now, eventId: ev.eventId, mode: c.mode, method: c.method, assurance: ev.assurance, geofence: ev.geofence,
                  student: { studentId: c.studentId, name: stu.name, rollNo: stu.rollNo, hasPhoto: !!stu.photoFileId }, session: { sessionId: s.sessionId, title: s.title } };
   },
-  /** The entry reason a session implies (FR-13): class, event or research. */
-  reasonOf: function (session) { return session.type === 'event' ? 'event' : session.type === 'research' ? 'research' : 'class'; },
+  /** The entry reason a session implies (FR-13, plus v2 open lab). */
+  reasonOf: function (session) { return session.type === 'openlab' ? 'openlab' : session.type === 'event' ? 'event' : session.type === 'research' ? 'research' : 'class'; },
 
   /** Follow-up work after an accepted scan. Never changes the outcome; failures are only logged. */
   _afterAccept: function (c) {
-    try { Booking.markUsed(c.studentId, c.session.labId, c.now); } catch (e) { Syslog.warn('attend', 'BOOKING_MARK_FAILED', String(e && e.message)); }
+    try { Booking.markUsed(c.studentId, c.session.labId, c.now, c.assetId || ''); } catch (e) { Syslog.warn('attend', 'BOOKING_MARK_FAILED', String(e && e.message)); }
     try { Flags.afterScan(c); } catch (e) { Syslog.warn('attend', 'FLAG_CHECK_FAILED', String(e && e.message)); }
   },
   /** Record why a scan was refused, and raise a flag for refusals that indicate sharing or relaying. */
@@ -214,6 +234,25 @@ var Attend = {
     return { token: token, expiresAt: exp * 1000, ttl: ttl, serverNow: now, rotateSeconds: Settings.get('studentQrRotateSeconds'), freshSeconds: Settings.get('qrFreshSeconds'), url: Setup.webAppUrl() };
   },
 
+  _nonceFresh: function (c) {
+    var now = U.now();
+    if (now / 1000 > c.exp + 5) fail('EXPIRED', 'This code has expired. Keep the app open; it fetches a new one by itself.');
+    if (c.exp - now / 1000 > 200) fail('BAD_TOKEN', 'Invalid code timing.');
+  },
+  _qrFresh: function (c) {
+    var age = (U.now() - c.ts) / 1000;
+    if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
+    if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
+  },
+  _verifiedStudent: function (studentId) {
+    var st = Db.get('StudentProfiles', studentId);
+    if (!st) fail('UNKNOWN_STUDENT', 'Student not found.');
+    if (st.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
+    var user = st.userId ? Db.get('Users', st.userId) : null;
+    if (!user || user.status !== 'active' || String(user.roles).split(',').indexOf('student') < 0) fail('ACCOUNT_DISABLED', 'This student account is not active.');
+    return st;
+  },
+
   // ---- Version B verification pipeline -------------------------------------------------------------------------
   STEPS_B: [
     { id: 'payload', label: 'Code is a LABFLOW student QR (link or raw text)', run: function (c) {
@@ -230,16 +269,8 @@ var Attend = {
       if (!c.purpose) fail('BAD_TOKEN', 'Unrecognised code.');
       c.subject = { studentId: c.studentId, sessionId: c.sessionId, purpose: c.purpose };
     } },
-    { id: 'nonce_fresh', label: 'Server nonce is still valid', run: function (c) {
-      var now = U.now();
-      if (now / 1000 > c.exp + 5) fail('EXPIRED', 'This code has expired. Keep the app open; it fetches a new one by itself.');
-      if (c.exp - now / 1000 > 200) fail('BAD_TOKEN', 'Invalid code timing.');
-    } },
-    { id: 'qr_fresh', label: 'Rotating timestamp is fresh (screenshots go stale)', run: function (c) {
-      var age = (U.now() - c.ts) / 1000;
-      if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
-      if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
-    } },
+    { id: 'nonce_fresh', label: 'Server nonce is still valid', run: function (c) { Attend._nonceFresh(c); } },
+    { id: 'qr_fresh', label: 'Rotating timestamp is fresh (screenshots go stale)', run: function (c) { Attend._qrFresh(c); } },
     { id: 'mode_enabled', label: 'The lab accepts device QR check-in', run: function (c) {
       c.lab = Db.cachedGet('Labs', 'labId', c.labId, 120);
       if (!c.lab) fail('BAD_TOKEN', 'Unknown lab.');
@@ -268,8 +299,20 @@ var Attend = {
       if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'This code was already used.');
     } },
     { id: 'revocation_recheck', locked: true, label: 'Credential still active (revocation wins a race)', run: function (c) {
-      var again = Creds.get(c.credentialId);
-      if (!again || again.status !== 'active') fail('REVOKED', 'This device is no longer valid.');
+      var again = Db.get('DeviceCredentials', c.credentialId);
+      if (!again || again.status !== 'active' || again.studentId !== c.studentId) fail('REVOKED', 'This device is no longer valid.');
+    } },
+    { id: 'authorization_recheck', locked: true, label: 'Fresh code, active student, lab and scanner at commit time', run: function (c) {
+      Attend._nonceFresh(c); Attend._qrFresh(c);
+      c.student = Attend._verifiedStudent(c.studentId);
+      c.lab = Db.get('Labs', c.labId);
+      if (!c.lab || c.lab.status !== 'active' || !Labs.allows(c.lab, 'B')) fail('MODE_DISABLED', 'This lab no longer accepts device QR check-in.');
+      if (c.scanner.kind === 'kiosk') {
+        var kiosk = Db.get('Kiosks', c.scanner.kiosk.kioskId);
+        if (!kiosk || kiosk.status !== 'active' || kiosk.authorizedEmail !== c.scannedBy) fail('KIOSK_INACTIVE', 'This kiosk is not active.');
+        c.scanner.kiosk = kiosk;
+      } else c.scanner.ctx = Auth._contextForEmail(c.scanner.ctx.email, true);
+      Attend._authorizeScanner(c);
     } },
     { id: 'session_open', locked: true, label: 'Session is open in this lab (or inside the exit grace)', run: function (c) {
       c.session = Db.get('Sessions', c.sessionId);
@@ -280,6 +323,12 @@ var Attend = {
     { id: 'enrolment', locked: true, label: 'Student is on the roster for this session', run: function (c) { Attend._enrolmentGate(c.session, c.studentId); } },
     { id: 'attendance_state', locked: true, label: 'Direction is valid (no double entry, minimum gap, one rescan)', run: function (c) {
       c.state = Attend._stateGate(c.session, c.studentId, c.purpose, c.now, Attend._effective(Attend._eventsFor(c.session)));
+    } },
+    { id: 'work', locked: true, label: 'Booked workstation is available at entry', run: function (c) {
+      if (c.purpose !== 'in') return;
+      var booked = Work.booked(c.studentId, c.labId, c.now);
+      c.assetId = Work.reservedSystem(c.session) || (booked.length ? booked[0].resourceId : '');
+      Work.validate(c.studentId, c.session, '', c.assetId, false);
     } },
     { id: 'record', locked: true, label: 'Append the event and consume the nonce', run: function (c) { Attend._record(c); } }
   ],
@@ -369,6 +418,7 @@ var Attend = {
     var c = Attend._compute(session, eff[studentId] || [], wins, now);
     var w = Attend.activeWindow(session.sessionId, now), done = w ? (eff[studentId] || []).some(function (e) { return e.type === 'RESCAN' && e.at >= w.openedAt; }) : false;
     return { state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, lastIn: c.lastIn, status: c.status, verifiedMinutes: c.verifiedMinutes, flags: c.flags,
+             work: Work.describe(Work.current(eff[studentId] || [])),
              rescan: w && c.inside ? { windowId: w.windowId, closesAt: w.closesAt, done: done } : null };
   },
 
@@ -520,7 +570,7 @@ var Attend = {
           rec.type = 'CORR_IN';
         } else {
           if (!cur.inside) fail('NO_ENTRY', 'The student has no open entry to close.');
-          if (at < cur.firstIn) fail('BAD_INPUT', 'An exit cannot be before the entry.');
+          if (at < cur.lastIn) fail('BAD_INPUT', 'An exit cannot be before the current entry.');
           rec.type = 'CORR_OUT';
         }
         rec.at = at;
@@ -608,7 +658,40 @@ var Attend = {
 
   // ---- history -----------------------------------------------------------------------------------------------
   /** A student's own attendance history. Never reads another student's rows. */
+  /** Record a project or system change during a visit as a WORK event (task C3). */
+  setWork: function (ctx, p) {
+    V.obj(p);
+    var sessionId = V.id(p.sessionId, 'Session', 'session'), entryId = V.id(p.entryEventId, 'Entry', 'event');
+    var expected = V.id(p.expectedEventId, 'Work version', 'event'), id = p.eventId ? V.id(p.eventId, 'Event', 'event') : U.id('event');
+    var projectId = p.projectId ? V.id(p.projectId, 'Project', 'project') : '', assetId = p.assetId ? V.id(p.assetId, 'System', 'asset') : '';
+    return Locks.with(function () {
+      ctx = Auth._contextForEmail(ctx.email, true); Auth.requireRole(ctx, ['student']);
+      var student = Creds._requireVerifiedStudent(ctx), sid = student.studentId;
+      var saved = Db.get('AttendanceEvents', id);
+      if (saved) {
+        if (saved.type !== 'WORK' || saved.studentId !== sid || saved.sessionId !== sessionId || saved.ref !== entryId || saved.projectId !== projectId || saved.assetId !== assetId) fail('CONFLICT', 'This work request id was already used.');
+        return { work: Work.fromEvent(saved, entryId), replay: true };
+      }
+      var session = Db.mustGet('Sessions', sessionId, 'Session'), now = U.now();
+      Attend._sessionGate(session, 'in', now);
+      var lab = Db.mustGet('Labs', session.labId, 'Lab');
+      if (lab.status !== 'active') fail('FORBIDDEN', 'This lab is not active.');
+      var effective = Attend._effective(Attend._eventsFor(session)), current = Work.current(effective[sid] || []);
+      if (!current || current.entryEventId !== entryId) fail('NO_ENTRY', 'This visit has ended. Refresh your sessions.');
+      if (current.eventId !== expected) fail('CONFLICT', 'Your system or project changed. Refresh before saving.');
+      Work.validate(sid, session, projectId, assetId, session.type === 'openlab');
+      if (current.projectId === projectId && current.assetId === assetId) return { work: current, unchanged: true };
+      var ev = Db.insert('AttendanceEvents', { eventId: id, sessionId: sessionId, labId: session.labId, studentId: sid, type: 'WORK',
+        at: now, createdAt: now, source: 'student', recordedBy: ctx.email, approvalStatus: 'na', ref: entryId, projectId: projectId, assetId: assetId });
+      Audit.log({ actor: ctx.email, role: 'student', action: 'attend.work', entityType: 'AttendanceEvent', entityId: id,
+        detail: { sessionId: sessionId, entryEventId: entryId, projectId: projectId, assetId: assetId } });
+      Occupancy.invalidate(session.labId);
+      try { Booking.markUsed(sid, session.labId, now, assetId); } catch (e) { Syslog.warn('attend', 'BOOKING_MARK_FAILED', String(e && e.message)); }
+      return { work: Work.fromEvent(ev, entryId) };
+    });
+  },
   myHistory: function (ctx, p) {
+    Sessions.closeOpenLabsDue();
     if (!ctx.student) return { history: [], totals: {} };
     p = p || {};
     var limit = V.int(p.limit, 'Limit', 1, 200, { optional: true, def: 60 });
@@ -623,8 +706,8 @@ var Attend = {
     });
     rows = rows.map(function (r) { var s = sessions[r.sessionId] || {}; return { sessionId: r.sessionId, title: s.title, date: s.date, labName: (labs[s.labId] || {}).name, status: r.status, firstIn: r.firstIn, lastOut: r.lastOut, verifiedMinutes: r.verifiedMinutes, flags: r.flags || [], scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd }; })
       .sort(function (a, b) { return (b.scheduledStart || 0) - (a.scheduledStart || 0); });
-    var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, flagged: 0, verifiedMinutes: 0 };
-    rows.forEach(function (r) { if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
+    var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, autoSignOuts: 0, flagged: 0, verifiedMinutes: 0 };
+    rows.forEach(function (r) { if ((r.flags || []).indexOf('auto_out') >= 0) totals.autoSignOuts++; if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
     totals.verifiedMinutes = Math.round(totals.verifiedMinutes);
     return { history: rows.slice(0, limit), totals: totals };
   },
@@ -636,7 +719,7 @@ var Attend = {
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });
-    return { events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
+    return { events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, method: e.method, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
   },
   /** One session's raw events for the student themselves (shows exceptions and corrections transparently). */
   myEvents: function (ctx, p) {
@@ -644,9 +727,90 @@ var Attend = {
     if (!ctx.student) return { events: [] };
     var sessionId = V.id(p.sessionId, 'Session', 'session'), sid = ctx.student.studentId;
     return { events: Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId && e.studentId === sid && e.type !== 'DECISION'; })
-      .map(function (e) { return { type: e.type, at: e.at, source: e.source, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
+      .map(function (e) { return { type: e.type, at: e.at, source: e.source, method: e.method, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
   }
 };
 
 /** Identification at the lab desk: the device checks of Version B without the session and attendance steps. */
 Attend.STEPS_IDENTIFY = Attend.STEPS_B.filter(function (s) { return ['payload', 'token_mac', 'nonce_fresh', 'qr_fresh', 'device_active', 'student_verified', 'signature'].indexOf(s.id) >= 0; });
+
+/** Project/system metadata is derived from effective IN/WORK/OUT events, independently of attendance minutes. */
+var Work = {
+  fromEvent: function (e, entryId) { return { entryEventId: entryId, eventId: e.eventId, projectId: e.projectId || '', assetId: e.assetId || '' }; },
+  current: function (events) {
+    var current = null;
+    (events || []).forEach(function (e) {
+      if ((e.type === 'IN' || e.type === 'CORR_IN') && !current) current = Work.fromEvent(e, e.eventId);
+      else if ((e.type === 'OUT' || e.type === 'CORR_OUT') && current) current = null;
+      else if (e.type === 'WORK' && current && e.ref === current.entryEventId) current = Work.fromEvent(e, current.entryEventId);
+    });
+    return current;
+  },
+  describe: function (work) {
+    if (!work) return null;
+    var project = work.projectId && Db.get('Projects', work.projectId), asset = work.assetId && Db.get('Assets', work.assetId);
+    return Object.assign({}, work, { projectTitle: project ? project.title : '', assetName: asset ? asset.name : '' });
+  },
+  occupants: function (labId) {
+    var result = [];
+    Db.where('Sessions', function (s) { return s.labId === labId && s.status === 'open'; }).forEach(function (s) {
+      var effective = Attend._effective(Attend._eventsFor(s));
+      Object.keys(effective).forEach(function (sid) {
+        var work = Work.current(effective[sid]);
+        if (work && work.assetId) result.push({ sessionId: s.sessionId, studentId: sid, assetId: work.assetId });
+      });
+    });
+    return result;
+  },
+  isSystem: function (asset) {
+    var cat = asset && Db.get('Categories', asset.categoryId);
+    return !!(asset && asset.trackingMode === 'individual' && cat && cat.workstation === true);
+  },
+  _mine: function (studentId, r) {
+    if (r.requesterType === 'student') return r.requesterId === studentId;
+    var group = r.requesterType === 'group' && Db.get('Groups', r.requesterId);
+    return !!(group && group.status === 'active' && Db.whereEq('GroupMembers', { groupId: group.groupId, studentId: studentId }).length);
+  },
+  _reservations: function (labId, now) {
+    return Db.where('Reservations', function (r) { return r.labId === labId && r.resourceType === 'asset' && Booking._holds(r) &&
+      r.startAt - Checkin.BOOKING_EARLY_MS <= now && now < r.endAt; });
+  },
+  booked: function (studentId, labId, now) {
+    return Work._reservations(labId, now).filter(function (r) { return r.status === 'approved' && Work._mine(studentId, r) && Work.isSystem(Db.get('Assets', r.resourceId)); })
+      .sort(function (a, b) { return a.startAt - b.startAt || a.reservationId.localeCompare(b.reservationId); });
+  },
+  reservedSystem: function (session) {
+    if (String(session.slotKey || '').indexOf('rsv|') !== 0) return '';
+    var r = Db.get('Reservations', session.slotKey.slice(4));
+    return r && r.resourceType === 'asset' && Work.isSystem(Db.get('Assets', r.resourceId)) ? r.resourceId : '';
+  },
+  choices: function (studentId, labId, now, sessionId) {
+    var projects = Db.where('Projects', function (p) { return p.labId === labId && Projects.usableBy(studentId, p.projectId); })
+      .map(function (p) { return { projectId: p.projectId, title: p.title, status: p.status }; });
+    var busy = Work.occupants(labId), reservations = Work._reservations(labId, now), booked = Work.booked(studentId, labId, now);
+    var systems = Db.whereEq('Assets', { labId: labId }).filter(Work.isSystem).map(function (a) {
+      var occupied = busy.some(function (x) { return x.assetId === a.assetId && !(x.studentId === studentId && x.sessionId === sessionId); });
+      var held = reservations.some(function (r) { return r.resourceId === a.assetId && !(r.status === 'approved' && Work._mine(studentId, r)); });
+      return { assetId: a.assetId, name: a.name, assetTag: a.assetTag,
+        status: a.status !== 'available' || a.condition === 'damaged' ? 'unavailable' : occupied ? 'busy' : held ? 'booked' : 'free' };
+    });
+    return { projects: projects, systems: systems, bookedAssetIds: U.uniq(booked.map(function (r) { return r.resourceId; })) };
+  },
+  validate: function (studentId, session, projectId, assetId, requireProject) {
+    if (requireProject && !projectId) fail('BAD_INPUT', 'Choose a project for this open-lab visit.');
+    if (projectId) {
+      var project = Db.get('Projects', projectId);
+      if (!project || project.labId !== session.labId || !Projects.usableBy(studentId, projectId)) fail('NOT_ELIGIBLE', 'Choose your own pending or active project in this lab.');
+    }
+    var now = U.now(), booked = Work.booked(studentId, session.labId, now);
+    var exact = Work.reservedSystem(session);
+    if (exact && !booked.some(function (r) { return r.reservationId === session.slotKey.slice(4); })) fail('NOT_ELIGIBLE', 'This workstation booking is no longer active.');
+    if (exact && exact !== assetId) fail('BOOKED_SYSTEM_REQUIRED', 'Use the exact system selected for this booking.');
+    if (booked.length && !booked.some(function (r) { return r.resourceId === assetId; })) fail('BOOKED_SYSTEM_REQUIRED', 'Use one of your currently booked systems.');
+    if (!assetId) return;
+    var asset = Db.get('Assets', assetId);
+    if (!Work.isSystem(asset) || asset.labId !== session.labId || asset.status !== 'available' || asset.condition === 'damaged') fail('NOT_AVAILABLE', 'Choose an available workstation in this lab.');
+    if (Work.occupants(session.labId).some(function (x) { return x.assetId === assetId && !(x.studentId === studentId && x.sessionId === session.sessionId); })) fail('SYSTEM_BUSY', 'That system is in use. Choose another system or your own laptop.');
+    if (Work._reservations(session.labId, now).some(function (r) { return r.resourceId === assetId && !(r.status === 'approved' && Work._mine(studentId, r)); })) fail('NOT_AVAILABLE', 'That system is reserved for another visit.');
+  }
+};

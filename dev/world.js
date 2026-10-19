@@ -9,9 +9,11 @@ const FIRST = ['Aarav', 'Diya', 'Ishaan', 'Ananya', 'Rohan', 'Meera', 'Karthik',
   'Naveen', 'Asha', 'Gokul', 'Revathi', 'Joel', 'Shalini', 'Pranav', 'Keerthana', 'Sanjay', 'Swathi', 'Abel', 'Nandhini', 'Varun', 'Janani', 'Kevin', 'Harini', 'Dinesh', 'Ishwarya', 'Samuel', 'Yamini'];
 const LAST = ['Kumar', 'Raj', 'Nair', 'Menon', 'Iyer', 'Thomas', 'Joseph', 'Pillai', 'Reddy', 'Das', 'Paul', 'Babu', 'Krishnan', 'Varghese', 'Prakash', 'Mathew', 'Suresh', 'George', 'Sharma', 'John'];
 const LAB_C = north(LAB_A, -140);
+// Synthetic geofence for the Unnati demo, not the real lab door. Replace with confirmed C5 data.
+const LAB_UNNATI = north(LAB_A, 600);
 const PRESETS = { small: { students: 12, historyDays: 2 }, demo: { students: 30, historyDays: 5 }, large: { students: 60, historyDays: 10 } };
 // Steps that only check something (safe to skip in the Test Lab to see what that check protects against).
-const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'enrolment', 'attendance_state',
+const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'authorization_recheck', 'enrolment', 'attendance_state',
   'code_mac', 'code_age', 'code_unused', 'pass_fresh', 'geo_plausible', 'geofence', 'code_once', 'pass_mac'];
 
 /** A clock that runs in real time from a chosen moment and can be paused, advanced or set. */
@@ -83,6 +85,7 @@ function seed(lab, preset) {
   w.ok(A, 'users.upsert', { email: 'faculty2@karunya.edu', displayName: 'Dr Sunita Mathew', roles: ['faculty'], employeeCode: 'F002' });
   w.ok(A, 'users.upsert', { email: S, displayName: 'Ravi (Lab staff)', roles: ['staff'] });
   w.ok(A, 'users.upsert', { email: A, displayName: 'Lab Admin', roles: ['admin'] });
+  w.ok(A, 'users.upsert', { email: 'hod@karunya.edu', displayName: 'Dr Meena Krishnan (HOD, CSE)', roles: ['hod'] });
   const fac3 = w.ok('faculty3@karunya.edu', 'me').faculty.facultyId;
   const c2 = w.ok(A, 'courses.upsert', { code: 'CSE302', name: 'Deep Learning Lab' }).course, c3 = w.ok(A, 'courses.upsert', { code: 'CSE303', name: 'Web Technology Lab' }).course;
   w.ok(A, 'facultycourses.set', { facultyId: w.faculty2Id, courseId: c2.courseId, section: 'A' });
@@ -93,7 +96,7 @@ function seed(lab, preset) {
   w.ok(A, 'students.import', { rows });
   rows.forEach((r, i) => { const s = w.ok(r.email, 'onboard', { rollNo: r.rollNo, name: r.name, consent: true, mobile: '98' + String(40000000 + i * 3917).slice(0, 8) }).student; w.students.push({ email: r.email, studentId: s.studentId, rollNo: r.rollNo, name: r.name }); });
   w.demoPendingStudent = w.ok('pending.student@karunya.edu', 'onboard', { rollNo: 'URK24CS1999', name: 'Pending Verification', consent: true, mobile: '9876509999' }).student;
-  [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
+  [w.admin, w.staff, w.faculty, w.faculty2, 'faculty3@karunya.edu', 'hod@karunya.edu'].forEach((e, i) => w.ok(e, 'profile.update', { consent: true, mobile: '90000000' + String(10 + i) }));
   const rolls = rows.map((r) => r.rollNo);
   w.ok(A, 'roster.import', { courseId: w.course.courseId, rows: rolls });
   w.ok(A, 'roster.import', { courseId: c2.courseId, rows: rolls.slice(0, Math.ceil(rolls.length / 2)) });
@@ -154,7 +157,48 @@ function seed(lab, preset) {
   w.ok(S, 'booking.decide', { reservationId: approved.reservationId, approve: true, note: 'Approved for the scheduled project work.' });
   const rejected = w.ok(w.students[7].email, 'booking.request', { labId: w.lab2.labId, resourceType: 'asset', resourceId: workstations[1].assetId, startAt: bookingStart, endAt: bookingEnd, purpose: 'Use the GPU workstation for coursework' }).reservation;
   w.ok(S, 'booking.decide', { reservationId: rejected.reservationId, approve: false, note: 'Please use the next available slot.' });
+  seedUnnati(lab);
   lab.studentsMeta = rows;
+}
+
+/** C5 demo placeholders only: no real room, coordinates, models or inventory have been supplied. */
+function seedUnnati(lab) {
+  const w = lab.w, placeholder = 'DEMO PLACEHOLDER: quantities, models and locations await the confirmed lab inventory.';
+  w.e.setTime(NOW - 10 * 60000); // 09:50, before the Test Lab clock starts at 09:54
+  const unnati = w.ok(w.admin, 'labs.upsert', { code: 'UNNATI', name: 'Intel Unnati AI Lab', type: 'gpu', capacity: 30,
+    building: 'TBD (demo placeholder)', room: 'TBD (demo)', latitude: LAB_UNNATI.lat, longitude: LAB_UNNATI.lng, radiusM: 25,
+    checkinMode: 'AB', openLab: true, openTime: '08:00', closeTime: '19:00', inchargeEmails: w.staff,
+    notes: 'DEMO PLACEHOLDER: building, room, GPS, radius, capacity, opening hours and inventory are unconfirmed. Replace with real lab data when supplied.' }).lab;
+  const kioskEmail = 'kiosk4@karunya.edu';
+  w.ok(w.admin, 'kiosks.upsert', { labId: unnati.labId, name: 'Unnati demo door', authorizedEmail: kioskEmail });
+  const systems = w.ok(w.staff, 'categories.upsert', { name: 'Unnati GPU workstation (demo)', trackingMode: 'individual', workstation: true, notes: placeholder }).category;
+  const workstationIds = [];
+  const addUnits = (category, label, tag, count) => {
+    const ids = [];
+    for (let i = 1; i <= count; i++) ids.push(w.ok(w.staff, 'assets.upsert', { labId: unnati.labId, categoryId: category.categoryId,
+      name: label + ' ' + String(i).padStart(2, '0') + ' (demo)', assetTag: 'DEMO-UNNATI-' + tag + '-' + String(i).padStart(2, '0'),
+      location: 'TBD (demo placeholder)', notes: placeholder }).asset.assetId);
+    return ids;
+  };
+  workstationIds.push(...addUnits(systems, 'GPU workstation', 'GPU', 30));
+  for (const [label, tag, count] of [['3D printer', '3DP', 2], ['Drone', 'DRONE', 2], ['Development board', 'DEV', 6]]) {
+    const category = w.ok(w.staff, 'categories.upsert', { name: 'Unnati ' + label + ' (demo)', trackingMode: 'individual', notes: placeholder }).category;
+    addUnits(category, label, tag, count);
+  }
+  const students = w.students.slice(9, 12), projectIds = [];
+  ['Image classification', 'Drone navigation', 'Sensor anomaly detection'].forEach((title, i) => {
+    const project = w.ok(students[i].email, 'projects.create', { title: title + ' (demo)',
+      description: 'DEMO PLACEHOLDER: sample AI project for the Unnati walkthrough; not a real research record.',
+      labId: unnati.labId, supervisorFacultyId: w.faculty2Id, startDate: '2026-10-14', endDate: '2026-11-30' }).project;
+    projectIds.push(project.projectId);
+    if (i !== 1) w.ok(w.faculty2, 'projects.decide', { projectId: project.projectId, approve: true });
+  });
+  const session = w.ok(students[0].email, 'sessions.mine').sessions.find((s) => s.labId === unnati.labId && s.type === 'openlab');
+  students.forEach((student, i) => {
+    const result = w.checkin(student, { kiosk: kioskEmail, sessionId: session.sessionId, projectId: projectIds[i], assetId: workstationIds[i], geo: w.at(3 + i, 12, LAB_UNNATI) });
+    if (!result.ok) throw new Error('Unnati demo check-in failed for ' + student.email + ': ' + result.error.code);
+  });
+  lab.unnati = { lab: unnati, kioskEmail, workstationIds, projectIds, studentIds: students.map((s) => s.studentId), sessionId: session.sessionId };
 }
 
 /** Past days: the IoT class runs with kiosk QR check-ins; most students scan out, a few forget. */
@@ -196,7 +240,7 @@ function createLab(opts = {}) {
   lab.w.e.run('Sessions.materialize(U.local(U.now()).date)');
   installSheetMeter(lab);
   installPipelineHooks(lab);
-  lab.labs = { A: LAB_A, B: LAB_B, C: LAB_C };
+  lab.labs = { A: LAB_A, B: LAB_B, C: LAB_C, UNNATI: LAB_UNNATI };
   return lab;
 }
 

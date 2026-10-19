@@ -17,17 +17,20 @@ async function loadMeta() {
 /** Searchable student picker. onPick(student). */
 function studentPicker(label, onPick, opts) {
   opts = opts || {};
+  let searchVersion = 0;
   const out = h('div', { class: 'hint', 'aria-live': 'polite' }), chosen = h('div'), list = h('div', { style: { display: 'grid', gap: '6px' } });
   const input = h('input', { class: 'input', type: 'search', 'aria-label': label, placeholder: 'Roll number or name', oninput: LF.util.debounce(async (e) => {
-    const q = e.target.value.trim(); clear(list); if (q.length < 2) { out.textContent = 'Type at least 2 characters.'; return; }
+    const version = searchVersion, q = e.target.value.trim(); clear(list); if (q.length < 2) { out.textContent = 'Type at least 2 characters.'; return; }
     out.textContent = 'Searching...';
     try {
       const r = await api('students.list', { q, limit: 8, status: opts.status });
+      if (version !== searchVersion) return;
       out.textContent = r.students.length ? '' : 'No student found.';
       r.students.forEach((s) => list.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { clear(list); out.textContent = ''; input.value = ''; setChosen(s); onPick(s); } }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), ui.status(s.status))));
-    } catch (x) { out.textContent = LF.errMsg(x); }
+    } catch (x) { if (version === searchVersion) out.textContent = LF.errMsg(x); }
   }, 250) });
-  function setChosen(s) { clear(chosen).append(h('div', { class: 'row' }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), h('span', { class: 'toolbar' }, ui.status(s.status), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { clear(chosen); onPick(null); } }, 'Change')))); }
+  input.addEventListener('input', () => { searchVersion++; clear(list); });
+  function setChosen(s) { searchVersion++; clear(list); out.textContent = ''; clear(chosen).append(h('div', { class: 'row' }, h('span', null, h('strong', null, s.rollNo), ' ' + s.name), h('span', { class: 'toolbar' }, ui.status(s.status), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { searchVersion++; clear(chosen); onPick(null); } }, 'Change')))); }
   return { el: h('div', { class: 'field' }, h('label', null, label), input, out, list, chosen), set: setChosen };
 }
 
@@ -110,77 +113,209 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     const days = ui.field({ name: 'days', label: 'Loan period (days)', type: 'number', min: 1, max: 120, value: LF.me.settings.loanDefaultDays });
     const notes = ui.field({ name: 'notes', label: 'Notes', maxlength: 300 });
     const who = h('div'), bookingBox = h('div'), kitBox = h('div'), itemBox = h('div'), cart = h('div'), msg = h('div', { class: 'err', role: 'alert', hidden: true }), result = h('div', { role: 'status' });
-    let kitId = '', kitPicks = [], reservationId = '', requestId = request ? request.requestId : '';
+    let kitId = '', kitPicks = [], reservationId = '', selectedBooking = null, requestId = request ? request.requestId : '';
+    const bookingInfo = h('section', { class: 'notice', 'aria-label': 'Booking collection details', hidden: true });
+    let whoVersion = 0, bookingVersion = 0, kitVersion = 0, componentVersion = 0;
+    const knownAssets = new Map(), knownKits = new Map();
+    const checklist = h('section', { class: 'notice', 'aria-label': 'Issue checklist', 'aria-live': 'polite' });
+    let kitsLoading = true, componentsLoading = false, componentError = '';
+    let pendingSubmission = null, mustRetry = false, formFrozen = false;
+    const frozenControls = new Map();
+    function freezeIssue(value) {
+      if (value && !formFrozen) root.querySelectorAll('input, select, textarea, button').forEach((control) => { frozenControls.set(control, control.disabled); control.disabled = true; });
+      if (!value) { frozenControls.forEach((disabled, control) => { control.disabled = disabled; }); frozenControls.clear(); }
+      [who, bookingBox, kitBox, itemBox, cart].forEach((box) => { box.inert = value; });
+      formFrozen = value;
+    }
+    const requestCard = request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null;
+    function clearRequest() { requestId = ''; if (requestCard) requestCard.hidden = true; refreshChecklist(); }
+    function rememberAssets(assets) { assets.forEach((a) => knownAssets.set(a.assetId, a)); }
+    function refreshChecklist() {
+      const errors = [], rows = [], byAsset = new Map(), byCategory = new Map(), required = new Map();
+      const selected = lines.concat(kitPicks);
+      selected.forEach((ln) => {
+        const a = knownAssets.get(ln.assetId);
+        if (!a) { errors.push('Choose an available item.'); return; }
+        if (!Number.isSafeInteger(ln.qty) || ln.qty < 1) { errors.push(a.name + ': enter a whole quantity of at least 1.'); return; }
+        byAsset.set(a.assetId, (byAsset.get(a.assetId) || 0) + ln.qty);
+        byCategory.set(a.categoryId, (byCategory.get(a.categoryId) || 0) + ln.qty);
+      });
+      byAsset.forEach((qty, id) => {
+        const a = knownAssets.get(id), tooMany = qty > a.quantityAvailable || (a.trackingMode === 'individual' && qty !== 1);
+        if (tooMany) errors.push(a.name + ': only ' + a.quantityAvailable + ' available; ' + qty + ' selected.');
+        rows.push(h('li', { class: tooMany ? 'err' : 'hint' }, a.name + ': ' + qty + ' selected · ' + a.quantityAvailable + ' available when selected'));
+      });
+      if (byAsset.size > 80) errors.push('A loan can contain at most 80 different items. Split this issue into smaller loans.');
+      function requirement(label, categoryId, needed, count) {
+        required.set(categoryId, Math.max(required.get(categoryId) || 0, needed));
+        const missing = Math.max(0, needed - count);
+        rows.push(h('li', { class: 'hint' }, label + ': ' + count + ' / ' + needed + ' selected ', ui.badge(missing ? 'Missing ' + missing : 'Ready', missing ? 'warn' : 'good')));
+        if (missing) errors.push(label + ': select ' + missing + ' more.');
+      }
+      if (kitId) {
+        const kit = knownKits.get(kitId);
+        if (componentError) errors.push(componentError);
+        else if (componentsLoading || !kit) errors.push('Wait for the kit components to finish loading.');
+        else kit.components.forEach((c) => requirement('Kit · ' + meta.catName(c.categoryId), c.categoryId, c.quantity,
+          kitPicks.filter((p) => p.componentId === c.componentId).reduce((sum, p) => sum + p.qty, 0)));
+      }
+      function targetRequirements(target, label) {
+        if (target.resourceType === 'category') requirement(label + ' · ' + target.resourceName, target.resourceId, target.quantity, byCategory.get(target.resourceId) || 0);
+        else if (target.resourceType === 'asset') {
+          const count = byAsset.get(target.resourceId) || 0, a = knownAssets.get(target.resourceId);
+          if (a) required.set(a.categoryId, Math.max(required.get(a.categoryId) || 0, 1));
+          rows.push(h('li', { class: 'hint' }, label + ' · ' + target.resourceName + ': ' + count + ' / 1 selected ', ui.badge(count === 1 ? 'Ready' : 'Choose reserved item', count === 1 ? 'good' : 'warn')));
+          if (count !== 1) errors.push('Choose the specific reserved item: ' + target.resourceName + '.');
+        }
+        else {
+          const kit = knownKits.get(target.resourceId);
+          if (kitsLoading) errors.push('Wait for the kit details to load.');
+          else if (!kit || kit.status !== 'active') errors.push('The selected kit is no longer available.');
+          else kit.components.forEach((c) => requirement(label + ' · ' + meta.catName(c.categoryId), c.categoryId, c.quantity * target.quantity, byCategory.get(c.categoryId) || 0));
+        }
+      }
+      if (requestId) targetRequirements(request, 'Request');
+      if (selectedBooking) {
+        targetRequirements(selectedBooking, 'Booking');
+        if (!Number.isFinite(selectedBooking.collectionOpensAt)) errors.push('Collection timing is unavailable. Reload the booking before issuing.');
+        else if (LF.now() < selectedBooking.collectionOpensAt) errors.push('This booking cannot be collected until ' + fmt.dt(selectedBooking.collectionOpensAt) + '.');
+        if (LF.now() > selectedBooking.endAt) errors.push('This booking has ended. Choose another booking or issue directly.');
+      }
+      if (required.size) byCategory.forEach((qty, id) => {
+        const extra = qty - (required.get(id) || 0);
+        if (extra > 0) rows.push(h('li', { class: 'hint' }, ui.badge('Extra ' + extra, 'warn'), ' ' + meta.catName(id) + ' beyond the requested components.'));
+      });
+      if (!selected.length) errors.push('Select equipment or choose the kit components to issue.');
+      clear(checklist).append(h('h3', { class: 't-h3' }, 'Before you issue'),
+        rows.length ? h('ul', { style: { margin: '8px 0', paddingLeft: '20px', display: 'grid', gap: '6px' } }, rows) : h('p', { class: 'hint' }, 'Add equipment to see quantities and availability.'),
+        h('div', { class: 'hint' }, errors.length ? errors[0] : 'Selection ready. Availability is checked again when you issue.'));
+      return errors;
+    }
     if (request) lab.input.value = request.labId;
     function drawWho() {
+      const version = ++whoVersion; bookingVersion++;
       clear(who); borrower = null; group = null; reservationId = '';
       if (kind.get() === 'student') {
-        const picker = studentPicker('Student', (s) => { borrower = s; loadBookings(); }, { status: 'verified' });
+        const picker = studentPicker('Student', (s) => { borrower = s; if (requestId && (!s || s.studentId !== request.studentId)) clearRequest(); loadBookings(); }, { status: 'verified' });
         const idBtn = ui.button('Identify by the student\'s QR', { size: 'sm', icon: 'qr', onClick: () => {
-          let m; const sc = ui.scanner({ title: 'Student QR', onCode: async (code) => { try { const r = await api('student.identify', { qr: code }); m.close(); borrower = r.student; picker.set(r.student); loadBookings(); LF.toast('Identified ' + r.student.name, 'good'); } catch (e) { LF.fail(e); } } });
+          let m; const sc = ui.scanner({ title: 'Student QR', onCode: async (code) => { try { const r = await api('student.identify', { qr: code }); if (version !== whoVersion) return; m.close(); borrower = r.student; if (requestId && r.student.studentId !== request.studentId) clearRequest(); picker.set(r.student); loadBookings(); LF.toast('Identified ' + r.student.name, 'good'); } catch (e) { LF.fail(e); } } });
           m = LF.modal('Identify the borrower', h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Ask the student to open their live QR. This ties the loan to the person holding the registered phone.'), sc.el), { onClose: () => sc.stop() }); sc.focus();
         } });
         who.append(picker.el, idBtn);
-        if (request && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
+        if (requestId && !borrower) { borrower = { studentId: request.studentId, rollNo: request.rollNo, name: request.name, status: 'verified' }; picker.set(borrower); }
       }
-      else api('groups.list').then((r) => { const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
-      clear(bookingBox);
+      else api('groups.list').then((r) => { if (version !== whoVersion) return; const sel = ui.field({ name: 'g', label: 'Group', type: 'select', options: [{ value: '', label: 'Choose a group' }].concat(r.groups.map((g) => ({ value: g.groupId, label: g.name + ' (' + g.members.length + ')' }))) }); sel.input.addEventListener('change', () => { group = sel.get() || null; loadBookings(); }); clear(who).append(sel.el); }).catch(LF.fail);
+      loadBookings();
     }
     async function loadBookings() {
-      clear(bookingBox); reservationId = '';
+      const version = ++bookingVersion, selectedLab = lab.get(), selectedKind = kind.get();
+      clear(bookingBox); reservationId = ''; selectedBooking = null; days.input.disabled = false; bookingInfo.hidden = true; refreshChecklist();
       const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group; if (!id) return;
       try {
-        const r = await api('booking.list', { status: 'approved', labId: lab.get() });
-        const mine = r.reservations.filter((b) => b.requesterId === id && b.endAt > LF.now());
+        const r = await api('booking.list', { status: 'approved', labId: selectedLab });
+        if (version !== bookingVersion) return;
+        const mine = r.reservations.filter((b) => b.requesterType === selectedKind && b.requesterId === id && b.endAt > LF.now());
         if (!mine.length) return;
         const sel = ui.field({ name: 'rsv', label: 'Collect an advance booking (optional)', type: 'select', options: [{ value: '', label: 'No, issue directly' }].concat(mine.map((b) => ({ value: b.reservationId, label: b.resourceName + ' × ' + b.quantity + ' · ' + fmt.dt(b.startAt) }))) });
-        sel.input.addEventListener('change', () => { reservationId = sel.get(); });
-        bookingBox.append(sel.el);
+        sel.input.addEventListener('change', () => { reservationId = sel.get(); selectedBooking = mine.find((b) => b.reservationId === reservationId) || null; renderBookingInfo(); refreshChecklist(); });
+        bookingBox.append(sel.el, bookingInfo);
       } catch (e) { /* optional */ }
     }
+    function renderBookingInfo() {
+      days.input.disabled = !!selectedBooking;
+      bookingInfo.hidden = !selectedBooking;
+      if (!selectedBooking) return;
+      const b = selectedBooking, open = Number.isFinite(b.collectionOpensAt) && LF.now() >= b.collectionOpensAt && LF.now() <= b.endAt;
+      clear(bookingInfo).append(h('strong', null, b.resourceName + ' × ' + b.quantity),
+        h('div', { class: 'hint' }, 'Collection opens ' + fmt.dt(b.collectionOpensAt) + ' · Due ' + fmt.dt(b.endAt)),
+        h('div', { class: 'hint' }, open ? 'Collection is open. The loan will be due at the booking end.' : LF.now() > b.endAt ? 'This booking has ended.' : 'Collection has not opened yet.'));
+    }
     async function drawKits() {
-      clear(kitBox); kitId = ''; kitPicks = [];
-      const r = await api('kits.list', { labId: lab.get() }), kits = r.kits.filter((k) => k.status === 'active'); if (!kits.length) return;
+      const version = ++kitVersion, selectedLab = lab.get(); componentVersion++;
+      clear(kitBox); kitId = ''; kitPicks = []; componentsLoading = false; componentError = ''; kitsLoading = true; knownKits.clear(); refreshChecklist();
+      let r;
+      try { r = await api('kits.list', { labId: selectedLab }); }
+      catch (e) { if (version === kitVersion) { kitsLoading = false; clear(kitBox).append(ui.errorBox(e, drawKits)); refreshChecklist(); } return; }
+      if (version !== kitVersion) return;
+      kitsLoading = false; r.kits.forEach((k) => knownKits.set(k.kitId, k)); refreshChecklist();
+      const kits = r.kits.filter((k) => k.status === 'active'); if (!kits.length) return;
       const sel = ui.field({ name: 'kit', label: 'Issue a kit (optional)', type: 'select', options: [{ value: '', label: 'No kit' }].concat(opt(kits, 'kitId', 'name')) });
       const comps = h('div', { style: { display: 'grid', gap: '8px' } });
       sel.input.addEventListener('change', async () => {
-        kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId); if (!k) return;
-        for (const c of k.components) {
-          const av = await api('assets.list', { labId: lab.get(), categoryId: c.categoryId, status: 'available', limit: 200 });
-          const pick = ui.field({ name: 'c' + c.componentId, label: meta.catName(c.categoryId) + ' × ' + c.quantity, type: 'select', options: [{ value: '', label: 'Choose item' }].concat(av.assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
-          pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.componentId !== c.componentId); if (pick.get()) kitPicks.push({ componentId: c.componentId, assetId: pick.get(), qty: c.quantity }); });
-          comps.append(pick.el);
+        const componentLoad = ++componentVersion;
+        kitId = sel.get(); kitPicks = []; clear(comps); const k = kits.find((x) => x.kitId === kitId);
+        componentsLoading = !!k; componentError = ''; refreshChecklist(); if (!k) return;
+        const slotsNeeded = k.components.reduce((n, c) => n + ((meta.cats.find((x) => x.categoryId === c.categoryId) || {}).trackingMode === 'individual' ? c.quantity : 1), 0);
+        if (slotsNeeded > 80) {
+          componentsLoading = false; componentError = 'This kit needs more than 80 picks. Ask the lab administrator to split it into smaller kits.';
+          comps.append(h('div', { class: 'err', role: 'alert' }, componentError)); refreshChecklist(); return;
         }
+        try {
+          const available = await Promise.all(k.components.map((c) => api('assets.list', { labId: selectedLab, categoryId: c.categoryId, status: 'available', limit: 200 })));
+          if (version !== kitVersion || componentLoad !== componentVersion) return;
+          k.components.forEach((c, index) => {
+            const individual = (meta.cats.find((x) => x.categoryId === c.categoryId) || {}).trackingMode === 'individual';
+            const slots = individual ? c.quantity : 1, qty = individual ? 1 : c.quantity;
+            const assets = available[index].assets.filter((a) => a.quantityAvailable >= qty); rememberAssets(assets);
+            for (let unit = 0; unit < slots; unit++) {
+              const slot = c.componentId + ':' + unit;
+              const label = meta.catName(c.categoryId) + ' × ' + qty + (slots > 1 ? ' (item ' + (unit + 1) + ' of ' + slots + ')' : '');
+              const pick = ui.field({ name: slot, label, type: 'select', options: [{ value: '', label: assets.length ? 'Choose item' : 'No suitable stock available' }].concat(assets.map((a) => ({ value: a.assetId, label: a.name + (a.assetTag ? ' (' + a.assetTag + ')' : '') + (a.trackingMode === 'quantity' ? ' · ' + a.quantityAvailable + ' left' : '') }))) });
+              pick.input.addEventListener('change', () => { kitPicks = kitPicks.filter((p) => p.slot !== slot); if (pick.get()) kitPicks.push({ slot, componentId: c.componentId, assetId: pick.get(), qty }); refreshChecklist(); });
+              comps.append(pick.el);
+            }
+          });
+          componentsLoading = false; refreshChecklist();
+        } catch (e) { if (version === kitVersion && componentLoad === componentVersion) { componentsLoading = true; componentError = 'Kit availability could not be loaded. Try again before issuing.'; clear(comps).append(ui.errorBox(e, () => sel.input.dispatchEvent(new Event('change')))); refreshChecklist(); } }
       });
       kitBox.append(sel.el, comps);
     }
     function drawItems() {
+      let searchVersion = 0;
       clear(itemBox); const q = h('input', { class: 'input', type: 'search', placeholder: 'Scan tag or search equipment', 'aria-label': 'Search equipment to add', oninput: LF.util.debounce(async (e) => {
-        const v = e.target.value.trim(); clear(res); if (v.length < 2) return;
-        try { const r = await api('assets.list', { labId: lab.get(), q: v, status: 'available', limit: 8 }); r.assets.forEach((a) => res.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { addLine(a); e.target.value = ''; clear(res); } }, h('span', null, h('strong', null, a.name), a.assetTag ? ' · ' + a.assetTag : ''), h('span', { class: 'hint' }, a.trackingMode === 'quantity' ? a.quantityAvailable + ' available' : 'single item')))); if (!r.assets.length) res.append(h('div', { class: 'hint' }, 'Nothing available matches.')); } catch (x) { LF.fail(x); }
+        const version = searchVersion, selectedLab = lab.get(), v = e.target.value.trim(); clear(res); if (v.length < 2) return;
+        try { const r = await api('assets.list', { labId: selectedLab, q: v, status: 'available', limit: 8 }); if (version !== searchVersion || selectedLab !== lab.get() || !q.isConnected) return; r.assets.forEach((a) => res.appendChild(h('button', { type: 'button', class: 'row', style: { textAlign: 'left', cursor: 'pointer' }, onclick: () => { addLine(a); searchVersion++; e.target.value = ''; clear(res); } }, h('span', null, h('strong', null, a.name), a.assetTag ? ' · ' + a.assetTag : ''), h('span', { class: 'hint' }, a.trackingMode === 'quantity' ? a.quantityAvailable + ' available' : 'single item')))); if (!r.assets.length) res.append(h('div', { class: 'hint' }, 'Nothing available matches.')); } catch (x) { if (version === searchVersion && q.isConnected) LF.fail(x); }
       }, 250) });
+      q.addEventListener('input', () => { searchVersion++; clear(res); });
       const res = h('div', { style: { display: 'grid', gap: '6px' } }); itemBox.append(h('div', { class: 'field' }, h('label', null, 'Add individual items'), q), res);
     }
-    function addLine(a) { const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
+    function addLine(a) { rememberAssets([a]); const ex = lines.find((l) => l.assetId === a.assetId); if (ex) { if (a.trackingMode === 'quantity') ex.qty++; } else lines.push({ assetId: a.assetId, qty: 1, name: a.name, tag: a.assetTag, mode: a.trackingMode, max: a.quantityAvailable }); drawCart(); }
     function drawCart() {
-      clear(cart); if (!lines.length) return;
-      cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
+      clear(cart); refreshChecklist(); if (!lines.length) return;
+      cart.append(h('div', { class: 't-label' }, 'Items to issue'), ...lines.map((l) => h('div', { class: 'row' }, h('span', null, h('strong', null, l.name), l.tag ? ' · ' + l.tag : ''), h('span', { class: 'toolbar' }, l.mode === 'quantity' ? h('input', { class: 'input', type: 'number', min: 1, max: l.max, step: 1, value: l.qty, 'aria-label': 'Quantity of ' + l.name, style: { width: '84px' }, oninput: (e) => { l.qty = e.target.validity.badInput || e.target.value === '' ? NaN : e.target.valueAsNumber; refreshChecklist(); } }) : h('span', { class: 'hint' }, '1'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Remove ' + l.name, onclick: () => { lines = lines.filter((x) => x !== l); drawCart(); } }, 'Remove')))));
     }
-    kind.input.addEventListener('change', drawWho);
-    lab.input.addEventListener('change', () => { lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
+    kind.input.addEventListener('change', () => { clearRequest(); drawWho(); });
+    lab.input.addEventListener('change', () => { clearRequest(); lines = []; drawCart(); drawKits(); drawItems(); loadBookings(); });
     drawWho(); drawKits(); drawItems();
     const submit = ui.button('Issue items', { kind: 'primary', icon: 'check', onClick: async () => {
       msg.hidden = true; clear(result);
-      const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
-      if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+      if (!pendingSubmission) {
+        const id = kind.get() === 'student' ? (borrower && borrower.studentId) : group;
+        if (!id) { msg.textContent = 'Choose who the items are for.'; msg.hidden = false; return; }
+        renderBookingInfo();
+        const errors = refreshChecklist();
+        if (errors.length) { msg.textContent = errors.join(' '); msg.hidden = false; return; }
+        if (!selectedBooking && (!Number.isSafeInteger(days.get()) || days.get() < 1 || days.get() > 120)) { msg.textContent = 'Enter a whole loan period between 1 and 120 days.'; msg.hidden = false; return; }
+        pendingSubmission = { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: selectedBooking ? undefined : days.get(), notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks.map((p) => ({ componentId: p.componentId, assetId: p.assetId, qty: p.qty })) : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) };
+      }
+      freezeIssue(true);
       try {
-        const r = await api('loans.issue', { idemKey: idem, borrowerType: kind.get(), borrowerId: id, labId: lab.get(), days: Number(days.get()) || undefined, notes: notes.get(), kitId: kitId || undefined, kitPicks: kitId ? kitPicks : undefined, reservationId: reservationId || undefined, requestId: requestId || undefined, items: lines.map((l) => ({ assetId: l.assetId, qty: l.qty })) }, { retry: true });
-        idem = LF.util.uuid(); lines = []; kitPicks = []; requestId = ''; drawCart(); drawKits();
-        result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued)))));
-      } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; if (e.code === 'RETRY') idem = LF.util.uuid(); }
+        const r = await api('loans.issue', pendingSubmission, { retry: true });
+        freezeIssue(false); pendingSubmission = null; mustRetry = false; submit.textContent = 'Issue items';
+        idem = LF.util.uuid(); lines = []; kitPicks = []; clearRequest(); drawCart(); drawKits(); loadBookings();
+        result.append(h('div', { class: 'card good' }, h('strong', null, r.replayed ? 'Already issued (same request). ' : 'Issued. '), 'Due ' + fmt.dt(r.loan.dueAt) + '.', h('ul', { style: { margin: '6px 0 8px', paddingLeft: '18px' } }, r.loan.items.map((i) => h('li', null, i.name + ' × ' + i.qtyIssued))),
+          ui.button('Open loan for return', { size: 'sm', onClick: () => { LF.sel = LF.sel || {}; LF.sel.loanId = r.loan.loanId; LF.go('desk'); } })));
+      } catch (e) {
+        const rolledBack = e.code === 'RETRY';
+        mustRetry = !rolledBack && (mustRetry || ['NETWORK', 'INTERNAL', 'IN_PROGRESS'].includes(e.code));
+        msg.textContent = LF.errMsg(e) + (mustRetry ? ' Retry the same issue to confirm it before changing the selection.' : ''); msg.hidden = false;
+        submit.textContent = mustRetry ? 'Retry issue' : 'Issue items';
+        if (!mustRetry) { pendingSubmission = null; freezeIssue(false); if (rolledBack) idem = LF.util.uuid(); }
+      }
     } });
-    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, request ? h('div', { class: 'card sky' }, h('strong', null, 'Filling a request: '), request.name + ' (' + request.rollNo + ') asked for ' + request.resourceName + ' × ' + request.quantity + '.') : null, lab.el, kind.el, who, bookingBox, days.el, notes.el),
-      h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, msg, submit, result));
+    root.append(h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, requestCard, lab.el, kind.el, who, bookingBox, days.el, notes.el),
+      h('div', { class: 'card', style: { display: 'grid', gap: '12px' } }, kitBox, itemBox, cart, checklist, msg, submit, result));
+    LF.every(15000, () => { if (selectedBooking && !formFrozen) { renderBookingInfo(); refreshChecklist(); } });
     return root;
   }
 
@@ -198,26 +333,78 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
     function openLoan(id) {
       ui.loadInto(detail, async () => {
         const { loan } = await api('loans.get', { loanId: id });
-        const open = loan.items.filter((i) => i.outstanding > 0); let idem = LF.util.uuid();
+        const open = loan.items.filter((i) => i.outstanding > 0), idem = LF.util.uuid();
+        let pendingSubmission = null, mustRetry = false;
+        const summary = h('div', { class: 'notice', role: 'status', 'aria-live': 'polite', 'aria-label': 'Return summary' });
         const rows = open.map((i) => {
-          const f = (name, label, v) => h('input', { class: 'input', type: 'number', min: 0, max: i.outstanding, value: v || 0, 'aria-label': label + ' ' + i.name, style: { width: '72px' } });
+          const balance = h('div', { class: 'hint', id: 'return-balance-' + i.loanItemId });
+          const f = (name, label, v) => h('input', { class: 'input', type: 'number', min: 0, max: i.outstanding, step: 1, value: v || 0, 'aria-label': label + ' ' + i.name, 'aria-describedby': balance.id, style: { width: '72px' }, oninput: () => updateSummary() });
           const ret = f('r', 'Returned', 0), con = f('c', 'Consumed', 0), dam = f('d', 'Damaged', 0), mis = f('m', 'Missing', 0);
+          con.disabled = i.trackingMode === 'individual';
+          if (con.disabled) con.title = 'Individually tracked items cannot be consumed.';
           const cond = h('select', { class: 'input', 'aria-label': 'Condition of ' + i.name, style: { width: '110px' } }, CONDITIONS.map((c) => h('option', { value: c, selected: c === (i.conditionOut || 'good') }, c)));
           const note = h('input', { class: 'input', 'aria-label': 'Note for ' + i.name, placeholder: 'note', maxlength: 200 });
-          const all = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { ret.value = i.outstanding; con.value = 0; dam.value = 0; mis.value = 0; } }, 'All back');
-          return { i, ret, con, dam, mis, cond, note, tr: h('tr', null, h('td', null, h('strong', null, i.name), i.assetTag ? h('div', { class: 'hint' }, i.assetTag) : null), h('td', { style: { textAlign: 'right' } }, String(i.outstanding)), h('td', null, ret), h('td', null, con), h('td', null, dam), h('td', null, mis), h('td', null, cond), h('td', null, note), h('td', null, all)) };
+          const all = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { ret.value = i.outstanding; con.value = 0; dam.value = 0; mis.value = 0; updateSummary(); } }, 'All back');
+          return { i, ret, con, dam, mis, cond, note, all, balance, tr: h('tr', null, h('td', null, h('strong', null, i.name), i.assetTag ? h('div', { class: 'hint' }, i.assetTag) : null, balance), h('td', { style: { textAlign: 'right' } }, String(i.outstanding)), h('td', null, ret), h('td', null, con), h('td', null, dam), h('td', null, mis), h('td', null, cond), h('td', null, note), h('td', null, all)) };
         });
+        function updateSummary() {
+          let total = 0, remaining = 0, invalid = false;
+          rows.forEach((x) => {
+            const fields = [x.ret, x.con, x.dam, x.mis], values = fields.map((f) => f.validity.badInput ? NaN : f.value === '' ? 0 : f.valueAsNumber);
+            const badNumber = values.some((v) => !Number.isSafeInteger(v) || v < 0);
+            const count = values.reduce((sum, v) => sum + v, 0), tooMany = count > x.i.outstanding;
+            const error = badNumber ? 'Use whole numbers of zero or more.' : tooMany ? 'Only ' + x.i.outstanding + ' outstanding; reduce the quantities.' : '';
+            fields.forEach((f) => f.setAttribute('aria-invalid', error ? 'true' : 'false'));
+            x.balance.className = error ? 'err' : 'hint';
+            x.balance.textContent = error || (x.i.outstanding - count) + ' still out after this return';
+            invalid = invalid || !!error;
+            if (!error) { total += count; remaining += x.i.outstanding - count; }
+          });
+          summary.textContent = invalid ? 'Check the highlighted quantities before recording this return.' :
+            total + ' accounted for · ' + remaining + ' still out' + (remaining === 0 && total > 0 ? ' · This will close the loan.' : '.');
+          return { valid: !invalid, total: total };
+        }
+        const allBack = ui.button('Return all items', { size: 'sm', onClick: () => {
+          rows.forEach((x) => { x.ret.value = x.i.outstanding; x.con.value = 0; x.dam.value = 0; x.mis.value = 0; });
+          updateSummary();
+        } });
+        function freeze(value) {
+          rows.forEach((x) => {
+            [x.ret, x.con, x.dam, x.mis, x.cond, x.note, x.all].forEach((f) => { f.disabled = value; });
+            x.con.disabled = value || x.i.trackingMode === 'individual';
+          });
+          allBack.disabled = value;
+        }
         const msg = h('div', { class: 'err', role: 'alert', hidden: true });
         const done = ui.button('Record return', { kind: 'primary', icon: 'check', onClick: async () => {
           msg.hidden = true;
-          const lines = rows.map((x) => ({ loanItemId: x.i.loanItemId, qtyReturned: +x.ret.value || 0, qtyConsumed: +x.con.value || 0, qtyDamaged: +x.dam.value || 0, qtyMissing: +x.mis.value || 0, conditionIn: x.cond.value, note: x.note.value })).filter((l) => l.qtyReturned + l.qtyConsumed + l.qtyDamaged + l.qtyMissing > 0);
-          if (!lines.length) { msg.textContent = 'Enter how many of each item came back (use "All back" for a full return).'; msg.hidden = false; return; }
-          try { const r = await api('loans.return', { idemKey: idem, loanId: id, lines }, { retry: true }); LF.toast(r.loan.status === 'closed' ? 'Loan closed' : 'Partial return recorded', 'good'); clear(detail); loadList(q.value.trim()); }
-          catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+          if (!pendingSubmission) {
+            const state = updateSummary();
+            if (!state.valid || !state.total) {
+              msg.textContent = state.valid ? 'Enter quantities or choose Return all items.' : 'Correct the highlighted quantities first.';
+              msg.hidden = false;
+              const invalid = rows.flatMap((x) => [x.ret, x.con, x.dam, x.mis]).find((f) => f.getAttribute('aria-invalid') === 'true' && !f.disabled);
+              if (invalid) invalid.focus();
+              return;
+            }
+            const lines = rows.map((x) => ({ loanItemId: x.i.loanItemId, qtyReturned: Number(x.ret.value), qtyConsumed: Number(x.con.value), qtyDamaged: Number(x.dam.value), qtyMissing: Number(x.mis.value), conditionIn: x.cond.value, note: x.note.value })).filter((l) => l.qtyReturned + l.qtyConsumed + l.qtyDamaged + l.qtyMissing > 0);
+            pendingSubmission = { idemKey: idem, loanId: id, lines };
+          }
+          freeze(true);
+          try { const r = await api('loans.return', pendingSubmission, { retry: true }); LF.toast(r.loan.status === 'closed' ? 'Loan closed' : 'Partial return recorded', 'good'); clear(detail); loadList(q.value.trim()); }
+          catch (e) {
+            const uncertain = mustRetry || e.code === 'NETWORK' || e.code === 'INTERNAL';
+            mustRetry = uncertain;
+            msg.textContent = LF.errMsg(e) + (uncertain ? ' Retry the same return to confirm it before entering new quantities.' : ''); msg.hidden = false;
+            done.textContent = uncertain ? 'Retry return' : 'Record return';
+            if (!uncertain) { pendingSubmission = null; freeze(false); }
+          }
         } });
+        updateSummary();
         return h('section', { class: 'card', 'aria-label': 'Return items' }, h('h2', { class: 't-h2' }, loan.borrowerName), h('div', { class: 'hint' }, 'Issued ' + fmt.dt(loan.issuedAt) + ' · due ' + fmt.dt(loan.dueAt) + (loan.overdue ? ' · OVERDUE' : '')),
+          open.length ? h('p', { class: 'hint' }, 'Record what came back and what was consumed, damaged or missing. Unaccounted units stay on loan. Individually tracked items cannot be consumed.') : null,
           open.length ? h('div', { class: 'tbl-wrap', style: { marginTop: '10px' } }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['Item', 'Out', 'Returned', 'Consumed', 'Damaged', 'Missing', 'Condition', 'Note', ''].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, rows.map((x) => x.tr)))) : ui.empty('Everything on this loan has been returned.'),
-          msg, open.length ? h('div', { style: { marginTop: '12px' } }, done) : null);
+          msg, open.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '12px' } }, summary, h('div', { class: 'toolbar' }, allBack, done)) : null);
       }, 3);
     }
     loadList(''); if (preselect) openLoan(preselect);
@@ -296,11 +483,13 @@ LF.register({ role: 'staff', id: 'inventory', label: 'Inventory', icon: 'box', r
     const r = await api('categories.list');
     return ui.table({ caption: 'Categories', rows: r.categories, search: false, empty: ui.empty('No categories', 'Create categories first (for example "ESP32 board" as single items, "Jumper wires" as counted stock).'),
       toolbar: ui.button('Add category', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => catForm(null) }),
-      columns: [{ key: 'name', label: 'Category' }, { key: 'trackingMode', label: 'Tracked as', render: (x) => x.trackingMode === 'individual' ? 'Single items (each has a tag)' : 'Counted stock' }, { key: 'notes', label: 'Notes' }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => catForm(x) }) }] }).el;
+      columns: [{ key: 'name', label: 'Category' }, { key: 'trackingMode', label: 'Tracked as', render: (x) => x.trackingMode === 'individual' ? 'Single items (each has a tag)' : 'Counted stock' }, { label: 'Workstations', text: (x) => x.workstation ? 'Yes' : 'No' }, { key: 'notes', label: 'Notes' }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => catForm(x) }) }] }).el;
   }
   function catForm(c) {
-    LF.ui.formModal({ title: c ? 'Edit category' : 'Add category', fields: [{ name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 60 }, { name: 'trackingMode', label: 'Tracked as', type: 'select', value: c ? c.trackingMode : 'individual', options: [{ value: 'individual', label: 'Single items (each has its own tag)' }, { value: 'quantity', label: 'Counted stock (consumables, cables)' }] }, { name: 'notes', label: 'Notes', maxlength: 200, value: c ? c.notes : '' }], submitLabel: 'Save',
-      onSubmit: async (v) => { await api('categories.upsert', { categoryId: c ? c.categoryId : undefined, name: v.name, trackingMode: v.trackingMode, notes: v.notes }); LF.toast('Saved', 'good'); LF.go('inventory'); } });
+    LF.ui.formModal({ title: c ? 'Edit category' : 'Add category', fields: [{ name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 60 }, { name: 'trackingMode', label: 'Tracked as', type: 'select', value: c ? c.trackingMode : 'individual', options: [{ value: 'individual', label: 'Single items (each has its own tag)' }, { value: 'quantity', label: 'Counted stock (consumables, cables)' }] },
+      { name: 'workstation', label: 'Use as selectable lab systems', type: 'checkbox', value: !!(c && c.workstation), hint: 'Individually tracked computers in this category can be selected at check-in.' },
+      { name: 'notes', label: 'Notes', maxlength: 200, value: c ? c.notes : '' }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('categories.upsert', { categoryId: c ? c.categoryId : undefined, name: v.name, trackingMode: v.trackingMode, workstation: v.workstation, notes: v.notes }); LF.toast('Saved', 'good'); LF.go('inventory'); } });
   }
   async function kitsView() {
     const r = await api('kits.list');
@@ -348,7 +537,7 @@ LF.register({ role: 'staff', id: 'people', label: 'Students', icon: 'users', ren
 
 /* ------------------------------------------------------------------ Scanning self-work and research visits (Version B) */
 LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', render(root) {
-  root.append(h('h1', { class: 't-h1' }, 'Scan visitors'), h('p', { class: 't-muted' }, 'For self-work and research visits when no teacher is present (SRS 7.2). Open the scanner, then point it at the student\'s live QR, or open their QR link with your phone camera.'),
+  root.append(h('h1', { class: 't-h1' }, 'Scan visitors'), h('p', { class: 't-muted' }, 'For open-lab walk-ins, self-work and research visits when no teacher is present (SRS 7.2). Open the scanner, then point it at the student\'s live QR, or open their QR link with your phone camera.'),
     h('div', { class: 'toolbar' }, ui.button('Open scanner', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan visitors') })), h('h2', { class: 't-h2', style: { marginTop: '16px' } }, 'Live occupancy'), ui.occupancy());
 } });
 

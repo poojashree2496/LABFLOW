@@ -150,6 +150,56 @@ function readLocation(onStatus) {
  * used "Scan the lab screen" inside the app. The code is checked the moment the page opens; the student then has a
  * couple of minutes to choose what they are here for and send one location reading.
  */
+/** Availability is a snapshot; the server rechecks these choices under the write lock. */
+function workPicker(choices, required, current, exactAsset) {
+  choices = choices || { projects: [], systems: [], bookedAssetIds: [] }; current = current || {};
+  const booked = exactAsset ? [exactAsset] : choices.bookedAssetIds;
+  const project = ui.field({ name: 'projectId', label: required ? 'Project' : 'Project (optional)', type: 'select', required,
+    value: current.projectId || (choices.projects.length === 1 ? choices.projects[0].projectId : ''),
+    options: [{ value: '', label: required ? 'Choose a project' : 'No project' }].concat(choices.projects.map((p) => ({ value: p.projectId, label: p.title + (p.status === 'pending' ? ' (pending approval)' : '') }))) });
+  const system = ui.field({ name: 'assetId', label: 'System', type: 'select', value: exactAsset || (booked.length && !booked.includes(current.assetId) ? booked[0] : current.assetId) || '',
+    options: [{ value: '', label: 'Own laptop / no system' }].concat(choices.systems.map((s) => ({ value: s.assetId, label: s.name + (s.assetTag ? ' · ' + s.assetTag : '') + (s.status !== 'free' ? ' (' + s.status + ')' : '') }))) });
+  Array.from(system.input.options).forEach((o) => {
+    const s = choices.systems.find((s) => s.assetId === o.value);
+    o.disabled = (!!o.value && (!s || s.status !== 'free')) || (booked.length > 0 && !booked.includes(o.value));
+  });
+  [project, system].forEach((field) => { field.el.style.minWidth = '0'; field.input.style.minWidth = '0'; field.input.style.maxWidth = '100%'; });
+  const el = h('section', { 'aria-label': 'Project and system', style: { display: 'grid', gap: '12px', minWidth: 0 } }, project.el, system.el,
+    required && !choices.projects.length ? h('p', { class: 'hint err' }, 'Create a pending or active project for this lab under My projects, then return to check in.') : null,
+    booked.length ? h('p', { class: 'hint' }, 'Your current workstation booking requires its booked system.') : null);
+  return { el, get: () => ({ projectId: project.get(), assetId: system.get() }), freeze: (yes) => { project.input.disabled = yes; system.input.disabled = yes; },
+    valid: () => { if (required && !project.get()) { project.input.reportValidity(); return false; } return true; } };
+}
+
+function editWork(session, reload) {
+  const current = session.mine.work;
+  if (!current) return;
+  const picker = workPicker(session.workChoices, session.type === 'openlab', current);
+  const error = h('div', { class: 'err', role: 'alert', hidden: true });
+  let modal, pending = null, uncertain = false;
+  const eventId = 'EVT-' + LF.util.uuid().replace(/-/g, '').slice(0, 12).toUpperCase();
+  const save = ui.button('Save project and system', { kind: 'primary', onClick: async () => {
+    error.hidden = true;
+    if (!pending) {
+      if (!picker.valid()) return;
+      pending = Object.assign({ sessionId: session.sessionId, entryEventId: current.entryEventId, expectedEventId: current.eventId, eventId }, picker.get());
+    }
+    picker.freeze(true);
+    try { await api('attend.setWork', pending); modal.close(); LF.toast('Project and system saved.', 'good'); reload(); }
+    catch (e) {
+      uncertain = uncertain || ['NETWORK', 'INTERNAL', 'IN_PROGRESS'].includes(e.code);
+      error.textContent = LF.errMsg(e) + (uncertain ? ' Retry to confirm the same saved request. Your original choices are preserved.' : ''); error.hidden = false;
+      if (!uncertain) { pending = null; picker.freeze(false); }
+    }
+  } });
+  const refresh = ui.button('Refresh choices', { onClick: async () => {
+    const result = await api('sessions.mine'); const fresh = result.sessions.find((s) => s.sessionId === session.sessionId);
+    modal.close(); if (fresh && fresh.mine.state === 'in') editWork(fresh, reload); else { LF.toast('This visit has ended.'); reload(); }
+  } });
+  modal = LF.modal('Change system / project', h('div', { style: { display: 'grid', gap: '12px' } },
+    h('p', { class: 'hint' }, 'Changes apply to this visit. They do not add attendance time.'), picker.el, error, h('div', { class: 'toolbar' }, save, refresh)), { sticky: true });
+}
+
 LF.kioskCheckin = (code) => {
   const body = h('div', { style: { display: 'grid', gap: '12px' } }, ui.skeleton(3));
   let timer = null, stopped = false;
@@ -162,32 +212,43 @@ LF.kioskCheckin = (code) => {
     const tick = () => { const ms = op.passExpiresAt - LF.now(); left.textContent = fmt.countdown(ms); if (ms <= 0) { clearInterval(timer); clear(body).append(LF.ui.scanError(new LF.ApiError('PASS_EXPIRED', 'Time is up. Scan the code on the lab screen again.')), ui.button('Close', { onClick: () => m.close() })); } };
     tick(); timer = setInterval(tick, 500);
     const status = h('div', { class: 'hint', role: 'status' }), err = h('div', { role: 'alert' });
-    let action = op.actions[0], choice = op.prefill;
+    let action = op.actions[0], choice = op.prefill, picker = null, selections = {}, uncertain = false;
     const actLabel = { in: 'Check in', out: 'Check out', rescan: 'Confirm I am still here' };
     const actions = op.actions.length > 1 ? h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'What do you want to do?' }, op.actions.map((a) => h('label', null, h('input', { type: 'radio', name: 'kc-act', value: a, checked: a === action, onchange: () => { action = a; draw(); } }), h('span', null, h('strong', null, actLabel[a]), a === 'out' && op.inside ? h('div', { class: 'hint' }, op.inside.title + (op.inside.closed ? ' (session closed, exit still accepted)' : '')) : null)))) : null;
-    const reasonText = { 'class': 'Regular lab course', event: 'Event or workshop', research: 'Individual research' };
+    const reasonText = { 'class': 'Regular lab course', event: 'Event or workshop', research: 'Individual research', openlab: 'Walk-in open lab' };
     const sessionsBox = h('div');
     function draw() {
+      if (picker) selections = picker.get(); picker = null;
       clear(sessionsBox);
       if (action !== 'in') { if (op.inside) sessionsBox.append(h('div', { class: 'row' }, h('span', null, h('strong', null, op.inside.title), h('span', { class: 'hint' }, ' · inside since ' + fmt.time(op.inside.since))), ui.badge('inside', 'good'))); return; }
-      if (!op.candidates.length) { sessionsBox.append(ui.empty('Nothing to check in to', 'No session you are part of is open in this lab right now. For self-work, book a workstation or request a research visit first.')); return; }
+      if (!op.candidates.length) { sessionsBox.append(ui.empty('Nothing to check in to', 'No eligible session is open here now. Open lab appears during its enabled opening hours. A workstation booking or approved research visit can offer other choices.')); return; }
       sessionsBox.append(h('div', { class: 't-label', style: { marginBottom: '6px' } }, 'What are you here for?'), h('div', { class: 'choice', role: 'radiogroup', 'aria-label': 'Entry reason' }, op.candidates.map((c) => {
         const id = c.sessionId || c.reservationId;
-        return h('label', { class: c.eligible ? '' : 'disabled' }, h('input', { type: 'radio', name: 'kc-ses', value: id, checked: id === choice, disabled: !c.eligible, onchange: () => { choice = id; } }),
+        return h('label', { class: c.eligible ? '' : 'disabled' }, h('input', { type: 'radio', name: 'kc-ses', value: id, checked: id === choice, disabled: !c.eligible, onchange: () => { choice = id; draw(); } }),
           h('span', null, h('strong', null, c.title), h('div', { class: 'hint' }, reasonText[c.reason] + ' · ' + fmt.time(c.scheduledStart) + ' - ' + fmt.time(c.scheduledEnd) + (c.eligible ? '' : ' · you are not on this roster'))));
       })));
+      const candidate = op.candidates.find((c) => (c.sessionId || c.reservationId) === choice);
+      if (candidate && (candidate.reason === 'openlab' || (op.workChoices && op.workChoices.bookedAssetIds.length))) {
+        picker = workPicker(op.workChoices, candidate.reason === 'openlab', selections, candidate.assetId); sessionsBox.append(picker.el);
+      }
     }
     draw();
     const go = ui.button('Send location and ' + (op.actions[0] === 'in' ? 'check in' : 'continue'), { kind: 'primary', block: true, icon: 'pin', onClick: async () => {
       clear(err);
+      if (uncertain) { m.close(); LF.go('today'); return; }
       if (action === 'in' && !choice) { err.append(h('div', { class: 'err' }, 'Choose what you are here for.')); return; }
+      if (picker && !picker.valid()) return;
+      const work = picker ? picker.get() : {};
+      const controls = Array.from(body.querySelectorAll('input,select,textarea')).map((input) => ({ input, disabled: input.disabled }));
+      controls.forEach((x) => { x.input.disabled = true; });
+      const unlock = () => controls.forEach((x) => { x.input.disabled = x.disabled; });
       status.textContent = 'Getting your location...';
       const geo = await readLocation((t) => { status.textContent = t; });
       if (stopped) return;
-      if (!geo && op.geoUnavailablePolicy === 'reject') { err.append(h('div', { class: 'err' }, 'LABFLOW needs your location to check you in. Allow location for this page and try again.')); return; }
+      if (!geo && op.geoUnavailablePolicy === 'reject') { unlock(); err.append(h('div', { class: 'err' }, 'LABFLOW needs your location to check you in. Allow location for this page and try again.')); return; }
       const c = op.candidates.find((x) => (x.sessionId || x.reservationId) === choice) || {};
       try {
-        const r = await api('checkin.submit', { pass: op.pass, action, sessionId: action === 'in' ? c.sessionId || undefined : (op.inside ? op.inside.sessionId : undefined), reservationId: action === 'in' ? c.reservationId || undefined : undefined, reason: action === 'in' ? c.reason : undefined, geo: geo || undefined });
+        const r = await api('checkin.submit', { pass: op.pass, action, sessionId: action === 'in' ? c.sessionId || undefined : (op.inside ? op.inside.sessionId : undefined), reservationId: action === 'in' ? c.reservationId || undefined : undefined, reason: action === 'in' ? c.reason : undefined, geo: geo || undefined, ...work });
         clearInterval(timer);
         clear(body).append(h('div', { style: { display: 'grid', justifyItems: 'center', gap: '10px', textAlign: 'center' } }, h('div', { class: 'ok-big' }, icon('check')), h('div', { class: 't-h2' }, LF.SCAN_LABEL[r.type] || r.type),
           h('div', null, r.session.title + ' · ' + fmt.time(r.at)), r.geofence === 'na' ? h('div', { class: 'card warn' }, 'Recorded without a location check. Your faculty may verify you in person.') : h('div', { class: 'hint' }, 'Location check passed.'),
@@ -195,6 +256,9 @@ LF.kioskCheckin = (code) => {
       } catch (e) {
         status.textContent = '';
         err.append(LF.ui.scanError(e));
+        uncertain = ['NETWORK', 'INTERNAL'].includes(e.code);
+        if (uncertain) { clearInterval(timer); go.textContent = 'Refresh sessions to confirm'; }
+        else unlock();
         if (e.code === 'PASS_EXPIRED' || e.code === 'REPLAY') { clearInterval(timer); go.disabled = true; }
       }
     } });
@@ -229,18 +293,21 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
   };
   reload = ui.loadInto(list, async () => {
     const [r] = await Promise.all([api('sessions.mine'), loadStats().catch(() => {})]);
-    if (!r.sessions.length) return ui.empty('No lab sessions today', 'Sessions for your courses and events you are enrolled in appear here.');
+    if (!r.sessions.length) return ui.empty('No lab sessions today', 'Your course sessions, events and available open labs appear here.');
     const hasKey = await Device.load();
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => {
       const m = s.mine, canIn = s.status === 'open' && m.state !== 'in', canOut = (s.status === 'open' || s.status === 'closed') && m.state === 'in', resc = s.status === 'open' && m.rescan && !m.rescan.done;
       const a = hasMode(s, 'A'), b = hasMode(s, 'B'), need = canIn || canOut || resc;
       const warn = b && !a && !hasKey && me.student.status === 'verified' && need ? h('div', { class: 'hint err' }, 'This lab uses device QR codes and this phone has no device key yet. Use the Device tab first.') : null;
       return h('article', { class: 'card', 'aria-label': s.title }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s) + (s.facultyName ? ' · ' + s.facultyName : ''))), h('div', { style: { display: 'flex', gap: '6px', alignItems: 'start', flexWrap: 'wrap' } }, ui.status(s.status), stateBadge(m))),
+        s.type === 'openlab' ? h('p', { class: 'hint' }, 'Walk in during opening hours; no advance booking needed.') : null,
         resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Scan again before ' + fmt.time(m.rescan.closesAt) + ' to stay verified.') : null,
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
+        m.state === 'in' && m.work ? h('p', { class: 'hint', style: { overflowWrap: 'anywhere' } }, 'Project: ' + (m.work.projectTitle || 'Not selected') + ' · System: ' + (m.work.assetName || 'Own laptop / no system')) : null,
         s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,
         need && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Check in by scanning the QR on the lab screen with your phone camera.') : null, warn,
         h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' } },
+          s.status === 'open' && m.state === 'in' ? ui.button('Change system / project', { onClick: () => editWork(s, reload) }) : null,
           need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => scanLabScreen() }) : null,
           canIn && b ? ui.button('Show my QR', { kind: a ? '' : 'primary', icon: 'qr', onClick: () => openQr(s, 'in', () => reload()) }) : null,
           resc && b ? ui.button('Confirm presence (QR)', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'rescan', () => reload()) }) : null,
@@ -260,15 +327,15 @@ LF.register({ role: 'student', id: 'history', label: 'Attendance', icon: 'calend
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },
         { key: 'firstIn', label: 'In', text: (x) => x.firstIn || '', render: (x) => fmt.time(x.firstIn) }, { key: 'lastOut', label: 'Out', text: (x) => x.lastOut || '', render: (x) => x.lastOut ? fmt.time(x.lastOut) : 'not scanned' },
         { key: 'verifiedMinutes', label: 'Verified', align: 'right', render: (x) => fmt.mins(x.verifiedMinutes) },
-        { label: 'Flags', sort: false, render: (x) => (x.flags || []).map((f) => ui.badge(f.replace(/_/g, ' '), f === 'late' || f === 'corrected' ? '' : 'warn')) },
+        { label: 'Flags', sort: false, render: (x) => (x.flags || []).map((f) => ui.badge(f === 'auto_out' ? 'Auto sign-out' : f.replace(/_/g, ' '), f === 'late' || f === 'corrected' ? '' : 'warn')) },
         { label: '', sort: false, render: (x) => h('button', { class: 'btn btn-sm', onclick: () => showEvents(x) }, 'Details') }],
       rows: r.history, pageSize: 20, empty: ui.empty('No attendance yet', 'Your sessions appear here after you check in.') });
-    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Sessions', t.sessions || 0), ui.stat('Present', t.present || 0, null, 'good'), ui.stat('Absent', t.absent || 0), ui.stat('Verified time', fmt.mins(t.verifiedMinutes || 0)), ui.stat('Exit not scanned', t.unverifiedExits || 0, 'Counted only up to your last verified moment', t.unverifiedExits ? 'warn' : '')), tbl.el);
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Sessions', t.sessions || 0), ui.stat('Present', t.present || 0, null, 'good'), ui.stat('Absent', t.absent || 0), ui.stat('Verified time', fmt.mins(t.verifiedMinutes || 0)), ui.stat('Auto sign-outs', t.autoSignOuts || 0, 'Open-lab time counted up to closing'), ui.stat('Exit not scanned', t.unverifiedExits || 0, 'Counted only up to your last verified moment', t.unverifiedExits ? 'warn' : '')), tbl.el);
   });
   function showEvents(x) {
     const body = h('div', null, ui.skeleton(3)); LF.modal(x.title + ' · ' + x.date, body);
     api('attend.events', { sessionId: x.sessionId }).then((r) => {
-      clear(body).append(r.events.length ? h('ol', { style: { display: 'grid', gap: '8px', paddingLeft: '18px' } }, r.events.map((e) => h('li', null, h('strong', null, ({ IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed', CORR_IN: 'Entry added by faculty', CORR_OUT: 'Exit added by faculty', VOID: 'Earlier record cancelled', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed' })[e.type] || e.type), ' at ' + fmt.dt(e.at), e.source === 'manual' ? h('div', { class: 'hint' }, 'Manual entry (' + e.approvalStatus + '): ' + e.reason) : null))) : ui.empty('No records'));
+      clear(body).append(r.events.length ? h('ol', { style: { display: 'grid', gap: '8px', paddingLeft: '18px' } }, r.events.map((e) => h('li', null, h('strong', null, (e.type === 'OUT' && e.method === 'auto' ? 'Automatically signed out at closing' : ({ IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed', WORK: 'Project or system changed', CORR_IN: 'Entry added by faculty', CORR_OUT: 'Exit added by faculty', VOID: 'Earlier record cancelled', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed' })[e.type] || e.type)), ' at ' + fmt.dt(e.at), e.source === 'manual' ? h('div', { class: 'hint' }, 'Manual entry (' + e.approvalStatus + '): ' + e.reason) : null))) : ui.empty('No records'));
     }).catch((e) => clear(body).append(ui.errorBox(e)));
   }
 } });
