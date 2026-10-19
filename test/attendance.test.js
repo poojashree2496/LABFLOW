@@ -429,3 +429,15 @@ test('history shows a session that is still open (computed live), then the store
   h = w.ok(s.email, 'attend.history');
   assert.equal(h.history.length, 1, 'no duplicate row after the summary exists'); assert.equal(h.history[0].verifiedMinutes, 30);
 });
+
+test('automatic OUT credits only open lab through closing and leaves class missed-exit policy unchanged', () => {
+  const w = world();
+  const compute = (type, evts) => w.eval(`Attend._compute({type:'${type}',status:'closed',scheduledStart:U.now(),scheduledEnd:U.now()+3600000,closedAt:U.now()+3600000},${JSON.stringify(evts)},[],U.now()+7200000)`);
+  const at = w.eval('U.now()');
+  const entry = { type: 'IN', at }, out = { type: 'OUT', method: 'auto', at: at + 7200000 };
+  const c = compute('openlab', [entry, out]);
+  assert.equal(c.verifiedMinutes, 60); assert.equal(c.inside, false); assert.ok(c.flags.includes('auto_out'));
+  const cls = compute('class', [entry]);
+  assert.equal(cls.status, 'unverified_exit'); assert.equal(cls.verifiedMinutes, 0); assert.ok(!cls.flags.includes('auto_out'));
+  assert.ok(!compute('class', [entry, out]).flags.includes('auto_out'));
+});

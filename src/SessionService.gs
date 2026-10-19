@@ -79,6 +79,7 @@ var Sessions = {
   _exclusive: function (session) { return session.type !== 'research' && session.type !== 'openlab'; },
   /** Used by the trigger and arrival screens; opening time is exact, with no class-style early window. */
   _openLabsDue: function (date) {
+    Sessions.closeOpenLabsDue();
     Sessions.materializeOpenLab(date);
     var now = U.now(), opened = 0;
     Db.where('Sessions', function (s) { return s.date === date && s.type === 'openlab' && s.status === 'scheduled' && s.scheduledStart <= now && now < s.scheduledEnd; }).forEach(function (s) {
@@ -244,6 +245,7 @@ var Sessions = {
   },
 
   _closeInternal: function (sessionHint, actor, role, reason, authCheck) {
+    if (sessionHint.type === 'openlab') return Sessions._closeOpenLab(sessionHint, actor, role, reason, authCheck);
     var closed = Locks.with(function () {
       var s = Db.mustGet('Sessions', sessionHint.sessionId, 'Session');
       if (authCheck) authCheck(s);
@@ -258,6 +260,62 @@ var Sessions = {
     Occupancy.invalidate(closed.labId);
     try { Flags.afterClose(closed); } catch (e) { Syslog.warn('sessions', 'FLAG_CHECK_FAILED', String(e && e.message)); }
     return closed;
+  },
+
+  _closeRunId: function (sessionId) { return 'RUN-' + U.sha256Hex('openlab.close|' + sessionId).slice(0, 12).toUpperCase(); },
+  /** A pending journal survives partial Sheets writes, including a failure after the session is closed.
+   * Append exits first, then rebuild derived data under the same re-entrant lock. A retry only exits
+   * visitors still inside; the persisted closing time also preserves an interrupted early manual close. */
+  _closeOpenLab: function (hint, actor, role, reason, authCheck) {
+    return Locks.with(function () {
+      var s = Db.mustGet('Sessions', hint.sessionId, 'Session');
+      if (authCheck) authCheck(s);
+      if (s.type !== 'openlab') fail('INVALID_STATE', 'Only open labs use automatic sign-out.');
+      var runId = Sessions._closeRunId(s.sessionId), run = Db.get('JobRuns', runId), now = U.now();
+      if (!run) {
+        if (s.status !== 'open') fail('INVALID_STATE', 'Only an open session can be closed.');
+        run = Db.insert('JobRuns', { runId: runId, job: 'openlabClose', startedAt: now, status: 'pending',
+          detail: { sessionId: s.sessionId, actor: actor, role: role, reason: reason, closedAt: Math.min(now, s.scheduledEnd) } });
+      }
+      if (run.status === 'ok') return s;
+      var d = run.detail, effective = Attend._effective(Attend._eventsFor(s));
+      Object.keys(effective).forEach(function (sid) {
+        var work = Work.current(effective[sid]);
+        if (!work) return;
+        var entry = effective[sid].filter(function (e) { return e.eventId === work.entryEventId; })[0];
+        Db.insert('AttendanceEvents', { eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: sid,
+          type: 'OUT', source: 'system', method: 'auto', at: Math.max(d.closedAt, entry.at), createdAt: now,
+          recordedBy: 'system', approvalStatus: 'na', ref: entry.eventId, reason: 'Automatic sign-out at open-lab close' });
+      });
+      Occupancy.invalidate(s.labId);
+      Db.where('RescanWindows', function (w) { return w.sessionId === s.sessionId && w.status === 'open'; }).forEach(function (w) {
+        Db.update('RescanWindows', w.windowId, { status: 'closed', closesAt: Math.min(w.closesAt, d.closedAt) });
+      });
+      var next = Db.update('Sessions', s.sessionId, { status: 'closed', closedAt: d.closedAt, closedBy: d.actor, closeReason: d.reason, nextRescanAt: null });
+      // If the audit append succeeded before an exception, do not append a second close record.
+      if (!Db.where('AuditEvents', function (e) { return e.action === 'session.close' && e.entityId === s.sessionId && e.detail && e.detail.closeRunId === runId; }).length) {
+        Audit.log({ actor: d.actor, role: d.role, action: 'session.close', entityType: 'Session', entityId: s.sessionId,
+          detail: { reason: d.reason, closeRunId: runId, autoSignOutEventIds: Attend._eventsFor(s).filter(function (e) { return e.type === 'OUT' && e.method === 'auto'; }).map(function (e) { return e.eventId; }) } });
+      }
+      Attend.rebuildSummary(s.sessionId);
+      Flags.afterClose(next);
+      Db.update('JobRuns', runId, { status: 'ok', finishedAt: U.now() });
+      return next;
+    });
+  },
+  /** No class-style grace period: open labs close at their scheduled end. Arrival screens also run
+   * this sweep, so a delayed trigger can recover both overdue sessions and unfinished close journals. */
+  closeOpenLabsDue: function () {
+    var due = {}, now = U.now(), closed = 0, failed = 0;
+    Db.where('Sessions', function (s) { return s.type === 'openlab' && s.status === 'open' && s.scheduledEnd <= now; }).forEach(function (s) { due[s.sessionId] = s; });
+    Db.where('JobRuns', function (r) { return r.job === 'openlabClose' && r.status === 'pending'; }).forEach(function (r) {
+      var s = Db.get('Sessions', r.detail.sessionId); if (s) due[s.sessionId] = s;
+    });
+    Object.keys(due).forEach(function (id) {
+      try { Sessions._closeOpenLab(due[id], 'system', 'system', 'Open lab closed at scheduled end'); closed++; }
+      catch (e) { failed++; Syslog.error('sessions', 'AUTOCLOSE_FAILED', String(e && e.message), { sessionId: id }); }
+    });
+    return { closed: closed, failed: failed };
   },
 
   cancel: function (ctx, p) {
@@ -340,8 +398,9 @@ var Sessions = {
 
   /** Trigger: close sessions left open long after their scheduled end. Each is closed independently. */
   autoCloseStale: function () {
-    var cutoff = U.now() - Settings.get('autoCloseGraceMinutes') * 60000, closed = 0, failed = 0;
-    Db.where('Sessions', function (s) { return s.status === 'open' && s.scheduledEnd < cutoff; }).forEach(function (s) {
+    var openLabs = Sessions.closeOpenLabsDue();
+    var cutoff = U.now() - Settings.get('autoCloseGraceMinutes') * 60000, closed = openLabs.closed, failed = openLabs.failed;
+    Db.where('Sessions', function (s) { return s.type !== 'openlab' && s.status === 'open' && s.scheduledEnd < cutoff; }).forEach(function (s) {
       try { Sessions._closeInternal(s, 'system', 'system', 'auto-closed after scheduled end'); closed++; }
       catch (e) { failed++; Syslog.error('sessions', 'AUTOCLOSE_FAILED', String(e && e.message), { sessionId: s.sessionId }); }
     });

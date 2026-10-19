@@ -65,12 +65,17 @@ var Attend = {
 
   /** Pure derivation for ONE student from their effective events. */
   _compute: function (session, evts, windows, now) {
-    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, lastEvent = null;
+    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, autoOut = false, lastEvent = null;
     (evts || []).forEach(function (e) {
       if (e.type === 'WORK') return; // work metadata never verifies presence or resets the scan gap
       if (e.type === 'CORR_IN' || e.type === 'CORR_OUT') corrected = true;
       if (e.type === 'IN' || e.type === 'CORR_IN') { if (inAt === null) { inAt = e.at; if (firstIn === null) firstIn = e.at; verified.push(e.at); } }
-      else if (e.type === 'OUT' || e.type === 'CORR_OUT') { if (inAt !== null) { stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at); } }
+      else if (e.type === 'OUT' || e.type === 'CORR_OUT') {
+        if (inAt !== null) {
+          if (session.type === 'openlab' && e.type === 'OUT' && e.method === 'auto') autoOut = true;
+          stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at);
+        }
+      }
       else if (e.type === 'RESCAN' || e.type === 'SPOT_OK') verified.push(e.at);
       else if (e.type === 'SPOT_FAIL') spotFail = true;
       if (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT') lastEvent = e;
@@ -95,6 +100,7 @@ var Attend = {
       var inStint = verified.filter(function (t) { return t >= s.inAt && (s.out === null || t <= s.out); });
       var lastV = Math.max.apply(null, inStint.concat([s.inAt]));
       var end = s.out !== null ? s.out : (requireExit ? lastV : Math.min(session.closedAt || now, session.scheduledEnd));
+      if (session.type === 'openlab') end = Math.min(end, session.scheduledEnd, session.closedAt || now);
       var m = missed.filter(function (t) { return t > s.inAt && (s.out === null || t < s.out); });
       if (m.length) {
         var cap = Math.min.apply(null, m);
@@ -111,6 +117,7 @@ var Attend = {
     if (missed.length) flags.push('missed_rescan');
     if (spotFail) flags.push('spot_check_failed');
     if (corrected) flags.push('corrected');
+    if (autoOut) flags.push('auto_out');
     var status = firstIn === null ? 'absent' : spotFail ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
     return { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
              status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent };
@@ -125,6 +132,16 @@ var Attend = {
   // ---- gates shared by both check-in modes -----------------------------------------------------------------
   /** Is the session in a state that accepts this kind of scan right now? */
   _sessionGate: function (session, purpose, now) {
+    if (session.type === 'openlab') {
+      var pending = Db.get('JobRuns', Sessions._closeRunId(session.sessionId));
+      if ((session.status === 'open' && now >= session.scheduledEnd) || (pending && pending.status === 'pending')) {
+        Sessions._closeOpenLab(session, 'system', 'system', 'Open lab closed at scheduled end');
+        // Refuse this scan even if its caller read events before closure. A new scan must read fresh state.
+        fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
+      }
+      if (purpose === 'in' && !Sessions.openLabAvailable(session, now)) fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
+      if (session.status === 'closed') fail('SESSION_NOT_OPEN', 'This open lab is closed. Check your history for your sign-out.');
+    }
     var st = session.status;
     if (purpose === 'in') { if (st !== 'open') fail('SESSION_NOT_OPEN', st === 'closed' ? 'This session is closed.' : 'This session has not been opened yet.'); }
     else if (purpose === 'out') {
@@ -134,7 +151,6 @@ var Attend = {
       if (st !== 'open') fail('SESSION_NOT_OPEN', 'This session is not open.');
       if (!Attend.activeWindow(session.sessionId, now)) fail('NO_RESCAN_WINDOW', 'There is no rescan window open right now.');
     } else fail('BAD_INPUT', 'Unknown action.');
-    if (purpose === 'in' && session.type === 'openlab' && !Sessions.openLabAvailable(session, now)) fail('OUT_OF_WINDOW', 'Open lab is available only during its enabled opening hours.');
   },
   _enrolmentGate: function (session, studentId) {
     if (!Roster.isEligible(session, studentId)) fail('NOT_ELIGIBLE', 'This student is not on the roster for this session.');
@@ -675,6 +691,7 @@ var Attend = {
     });
   },
   myHistory: function (ctx, p) {
+    Sessions.closeOpenLabsDue();
     if (!ctx.student) return { history: [], totals: {} };
     p = p || {};
     var limit = V.int(p.limit, 'Limit', 1, 200, { optional: true, def: 60 });
@@ -689,8 +706,8 @@ var Attend = {
     });
     rows = rows.map(function (r) { var s = sessions[r.sessionId] || {}; return { sessionId: r.sessionId, title: s.title, date: s.date, labName: (labs[s.labId] || {}).name, status: r.status, firstIn: r.firstIn, lastOut: r.lastOut, verifiedMinutes: r.verifiedMinutes, flags: r.flags || [], scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd }; })
       .sort(function (a, b) { return (b.scheduledStart || 0) - (a.scheduledStart || 0); });
-    var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, flagged: 0, verifiedMinutes: 0 };
-    rows.forEach(function (r) { if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
+    var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, autoSignOuts: 0, flagged: 0, verifiedMinutes: 0 };
+    rows.forEach(function (r) { if ((r.flags || []).indexOf('auto_out') >= 0) totals.autoSignOuts++; if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
     totals.verifiedMinutes = Math.round(totals.verifiedMinutes);
     return { history: rows.slice(0, limit), totals: totals };
   },
@@ -702,7 +719,7 @@ var Attend = {
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });
-    return { events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
+    return { events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, method: e.method, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
   },
   /** One session's raw events for the student themselves (shows exceptions and corrections transparently). */
   myEvents: function (ctx, p) {
@@ -710,7 +727,7 @@ var Attend = {
     if (!ctx.student) return { events: [] };
     var sessionId = V.id(p.sessionId, 'Session', 'session'), sid = ctx.student.studentId;
     return { events: Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId && e.studentId === sid && e.type !== 'DECISION'; })
-      .map(function (e) { return { type: e.type, at: e.at, source: e.source, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
+      .map(function (e) { return { type: e.type, at: e.at, source: e.source, method: e.method, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
   }
 };
 

@@ -327,15 +327,15 @@ LF.register({ role: 'student', id: 'history', label: 'Attendance', icon: 'calend
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },
         { key: 'firstIn', label: 'In', text: (x) => x.firstIn || '', render: (x) => fmt.time(x.firstIn) }, { key: 'lastOut', label: 'Out', text: (x) => x.lastOut || '', render: (x) => x.lastOut ? fmt.time(x.lastOut) : 'not scanned' },
         { key: 'verifiedMinutes', label: 'Verified', align: 'right', render: (x) => fmt.mins(x.verifiedMinutes) },
-        { label: 'Flags', sort: false, render: (x) => (x.flags || []).map((f) => ui.badge(f.replace(/_/g, ' '), f === 'late' || f === 'corrected' ? '' : 'warn')) },
+        { label: 'Flags', sort: false, render: (x) => (x.flags || []).map((f) => ui.badge(f === 'auto_out' ? 'Auto sign-out' : f.replace(/_/g, ' '), f === 'late' || f === 'corrected' ? '' : 'warn')) },
         { label: '', sort: false, render: (x) => h('button', { class: 'btn btn-sm', onclick: () => showEvents(x) }, 'Details') }],
       rows: r.history, pageSize: 20, empty: ui.empty('No attendance yet', 'Your sessions appear here after you check in.') });
-    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Sessions', t.sessions || 0), ui.stat('Present', t.present || 0, null, 'good'), ui.stat('Absent', t.absent || 0), ui.stat('Verified time', fmt.mins(t.verifiedMinutes || 0)), ui.stat('Exit not scanned', t.unverifiedExits || 0, 'Counted only up to your last verified moment', t.unverifiedExits ? 'warn' : '')), tbl.el);
+    return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Sessions', t.sessions || 0), ui.stat('Present', t.present || 0, null, 'good'), ui.stat('Absent', t.absent || 0), ui.stat('Verified time', fmt.mins(t.verifiedMinutes || 0)), ui.stat('Auto sign-outs', t.autoSignOuts || 0, 'Open-lab time counted up to closing'), ui.stat('Exit not scanned', t.unverifiedExits || 0, 'Counted only up to your last verified moment', t.unverifiedExits ? 'warn' : '')), tbl.el);
   });
   function showEvents(x) {
     const body = h('div', null, ui.skeleton(3)); LF.modal(x.title + ' · ' + x.date, body);
     api('attend.events', { sessionId: x.sessionId }).then((r) => {
-      clear(body).append(r.events.length ? h('ol', { style: { display: 'grid', gap: '8px', paddingLeft: '18px' } }, r.events.map((e) => h('li', null, h('strong', null, ({ IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed', WORK: 'Project or system changed', CORR_IN: 'Entry added by faculty', CORR_OUT: 'Exit added by faculty', VOID: 'Earlier record cancelled', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed' })[e.type] || e.type), ' at ' + fmt.dt(e.at), e.source === 'manual' ? h('div', { class: 'hint' }, 'Manual entry (' + e.approvalStatus + '): ' + e.reason) : null))) : ui.empty('No records'));
+      clear(body).append(r.events.length ? h('ol', { style: { display: 'grid', gap: '8px', paddingLeft: '18px' } }, r.events.map((e) => h('li', null, h('strong', null, (e.type === 'OUT' && e.method === 'auto' ? 'Automatically signed out at closing' : ({ IN: 'Checked in', OUT: 'Checked out', RESCAN: 'Presence confirmed', WORK: 'Project or system changed', CORR_IN: 'Entry added by faculty', CORR_OUT: 'Exit added by faculty', VOID: 'Earlier record cancelled', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed' })[e.type] || e.type)), ' at ' + fmt.dt(e.at), e.source === 'manual' ? h('div', { class: 'hint' }, 'Manual entry (' + e.approvalStatus + '): ' + e.reason) : null))) : ui.empty('No records'));
     }).catch((e) => clear(body).append(ui.errorBox(e)));
   }
 } });

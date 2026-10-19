@@ -24,7 +24,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 - **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 projects, C2 daily open lab and C3 project/system selection are implemented; see docs/projects.md, docs/openlab.md, docs/work-selection.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
-- Contact point between streams: A4 moves one read inside `Attend.rebuildSummary`, which C4 also relies on. Tell each other before touching it.
+- A4 moves one read inside `Attend.rebuildSummary`. Automatic open-lab closure already calls it under an outer script lock; preserve that recovery path.
 
 ### Timeline
 
@@ -84,7 +84,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Files: `BackupService.gs` (`Backup.archiveYear`), `Setup.gs` (extract `Setup.ensureSchema(ss, tables)` from `Setup.initialise`), `AttendanceService.gs` (`Attend.rebuildSummary`, `Attend.correct`, `Attend.decideCorrection`), `AdminService.gs` (reconcileSession), `ReportService.gs`, `TriggerService.gs`, `Code.gs` (`system.archive`), `ScriptsAdmin.html`, `test/harness.js` (`deleteRows` on FakeSheet).
   - Archive spreadsheet per academic year, `LABFLOW Archive 2025-26`. Keep its ids in one script property (JSON map).
   - The move runs under `Locks.with`: copy, verify the counts, then delete from the live sheet, in chunks that stop at the job deadline and resume next run.
-    - Archive whole sessions only, and skip any session with a pending correction.
+    - Archive whole sessions only, and skip any session with a pending correction or a pending `JobRuns` `openlabClose` journal; retain those journals until closure recovery completes.
     - AssetEvents plan and complete rows move together.
   - Move the existing-summary read in `Attend.rebuildSummary` inside the lock. Today it reads `__row` outside the lock and writes inside it; deleting rows in between would overwrite the wrong row.
   - Set `Sessions.archivedAt`. `Attend.correct`, `Attend.decideCorrection` and `system.reconcileSession` refuse it with `ARCHIVED`.
@@ -139,11 +139,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [ ] **C4 Automatic sign-out** (R4)
-  - Files: `SessionService.gs` (`Sessions._closeInternal` for `openlab` only), `AttendanceService.gs` (`Attend._compute` credits an `OUT` with `method: 'auto'` up to the closing time and adds an `auto_out` flag to the summary), `FlagService.gs` (auto sign-outs count toward `never_scans_out`).
-  - Classes are unchanged ("exit not scanned").
-  - Done when: a student still inside at 19:00 gets an auto `OUT`; their visit counts to 19:00 with the `auto_out` flag; a class student who forgets still shows "exit not scanned".
-  - Tests: `test/attendance.test.js`, `test/jobs.test.js`.
 - [ ] **C5 Intel Unnati AI Lab data** (R8)
   - Files: `dev/world.js` (seed), `dev/scenarios.js` (if a scenario names the lab), `test/dev-world.test.js`.
   - Placeholders now: code `UNNATI`, name "Intel Unnati AI Lab", about 30 GPU workstations (category marked `workstation`), 2 3D printers, 2 drones, dev boards, open-lab hours, a few projects. Mark placeholder values clearly.

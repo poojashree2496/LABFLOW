@@ -6,7 +6,7 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Current state (2026-10-19)
 
-- Latest local checks: **219 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **84 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, and work-selection **23** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
+- Latest local checks: **241 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **84 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, and automatic sign-out **15** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
 - Never run against a live Google account.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
@@ -41,6 +41,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 - Rescans, spot checks, exit scans, "exit not scanned" handling; corrections, voids, admin approval of old corrections.
 - Entry reasons with timetable prefill. Self-work sessions behind workstation bookings. Research visits open on arrival. Timetabled classes open by themselves.
 - Flags for review: impossible GPS accuracy, identical readings, impossible travel between labs, replayed or stale codes, two students on one phone, desktop device registration, frequent manual check-ins, repeated missing exits.
+- Daily opt-in open labs, pending-project/system selection, mid-visit work changes and automatic sign-out at closing with resumable recovery and repeated missed-exit flags.
 - Live roster and live occupancy on every dashboard; student history including open sessions.
 
 **People and events**
@@ -83,6 +84,7 @@ None yet. Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | What changed | What ran |
 |---|---|---|
+| 2026-10-19 | C4 complete: automatic open-lab exits at scheduled closing (or actual early manual close), credited time and auto sign-out history badges/totals/details, combined repeated missed-exit flags and workstation release. Pending close journals recover partial writes even after the session is closed; classes retain existing exit policy. Archive coordination documented without changing `Attend.rebuildSummary`. | `npm run check`: lint and 241 backend tests passed (22 new closing cases). `npm run sim`: 27/27. Isolated Brave: general 84/84, open-lab 15/15, work-selection 23/23 and new `npm run e2e:autoclose` 15/15. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | C3 complete: pending-project and workstation pickers at open-lab kiosk entry, exact booked-system requirements, append-only versioned/idempotent WORK changes while inside, current work on Today, device-QR booked-system assignment followed by project selection after entry, and workstation category configuration. Rechecks busy systems and project eligibility under the write lock; only selected workstation bookings count as used. Automatic sign-out remains C4; live board remains B4. | `npm run check`: lint and 219 backend tests passed (19 new work-selection cases). `npm run sim`: 27/27. Isolated Brave: general 84/84, open-lab 15/15, new `npm run e2e:work` 23/23 including interrupted entry/work confirmations. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | C2 screens complete: lab editor opt-in and availability badge, explicit walk-in entry reason and Today guidance, updated scanner text, and daily open-lab integration notes. Automatic sign-out and project/system selection remain C4/C3. | `npm run check`: lint and 200 backend tests passed (16 open-lab cases). `npm run sim`: 27/27 in the backend slice. Isolated Brave: general suite 84/84; new `npm run e2e:openlab` 15/15 including real server entry/exit and closing-time refusal using the shared Test Lab clock. Phone screenshot visually inspected; `git diff --check`: passed. |
 | 2026-10-19 | Isolated open-lab auto-opening failures so regular timetable sessions still open; reports the failure count and logs its cause. | `npm run check`: lint and 200 backend tests passed, including a simulated open-lab failure during the session tick. |

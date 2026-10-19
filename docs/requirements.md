@@ -40,7 +40,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R1 | Partial | Live head count per lab and session (`Occupancy.lab`, LabService.gs ~63) | Each student's system and project | C3, B4 |
 | R2 | Partial | `labs.occupancy` is open to every signed-in user (Code.gs ~61) | A board listing the students inside | B4 |
 | R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
-| R4 | Partial | Exit scan exists; a missed exit becomes "exit not scanned" and repeat offenders get a `never_scans_out` flag (FlagService.gs ~99) | Automatic sign-out at closing | C4 |
+| R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
 | R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
 | R7 | Missing | A booking stores only `purpose` | Projects with timeline and outcome | C1, C3 |

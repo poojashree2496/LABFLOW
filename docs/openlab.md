@@ -1,6 +1,6 @@
 # Daily open lab
 
-Task C2 adds walk-in lab sessions to the [v2 requirements](requirements.md). Projects are implemented separately in [Projects](projects.md); [project/system selection](work-selection.md) is implemented as C3, and automatic sign-out remains C4.
+Task C2 adds walk-in lab sessions to the [v2 requirements](requirements.md). Projects are implemented separately in [Projects](projects.md); [project/system selection](work-selection.md) is implemented as C3, and automatic sign-out is implemented as C4.
 
 ## Enable it
 
@@ -21,12 +21,22 @@ Regular classes remain first in eligible check-in choices. Open lab and approved
 - Closed and cancelled daily sessions are never recreated or reopened on an arrival read.
 - An open-lab auto-opening failure is logged and counted without preventing regular timetable classes from opening.
 
-Until C4 is implemented, a missed exit follows the existing unverified-exit handling; enabling open lab does not yet add an automatic OUT event or credit time through closing. Closing/sign-out integration is therefore still required before the complete extra-hours workflow is ready.
+## Automatic sign-out
+
+At the scheduled end, every visitor still inside receives an append-only `OUT` event with `method: 'auto'` and `source: 'system'`. Attendance credits time up to closing and includes `auto_out`; history labels it **Auto sign-out**, counts automatic departures separately and explains the event in Details. A normal scanned departure keeps its original time and has no auto flag. An early manual close signs visitors out at that actual closing time.
+
+The session tick closes open labs without the class grace period. Student/faculty session lists, check-in choices and student history also recover overdue closures. Both scan modes refuse new work/attendance writes once closure starts. A delayed trigger records departure at the scheduled end, while `createdAt` retains the actual write time. Google trigger timing still needs deployment verification; an event need not be physically written at the exact closing second.
+
+A deterministic `JobRuns` record with `job: 'openlabClose'` persists the closing time, actor and reason before any exits are appended. Its status stays `pending` until exits, session state, close audit, summaries and flags are complete. Recovery re-derives who is still inside and resumes even if the session row is already closed. Repeated runs do not duplicate exits or the close audit. This path calls `Attend.rebuildSummary` under an outer script lock; its implementation remains unchanged for A4. The archive must retain pending close journals and their sessions until recovery completes.
+
+Three missed exits within 30 days, combining automatic open-lab departures and unverified class exits, raise the existing monthly-deduplicated `never_scans_out` flag. Classes retain their existing missed-exit credit and grace rules; they receive no automatic OUT.
 
 ## Reporting and checks
 
 Attendance records carry `entryReason: 'openlab'`. Daily and ERP reports retain the session type, and the monthly audit has a separate Open lab bucket rather than mixing these visits into research/self-work.
 
 - `npm run check`: 16 open-lab backend cases, including both QR modes, exact hours, class coexistence, delayed triggers, configuration changes, nightly idempotency and report separation.
+- Closing regression cases in `test/attendance.test.js` and `test/jobs.test.js` cover exact/delayed deadlines, early manual closure, short visits, scanned departures, work changes and workstation release, repeated missed exits, both scan gates and recovery before/after durable writes.
+- `npm run e2e:autoclose`: 15 browser checks for QR/GPS entry, a delayed session tick, credited minutes, history badge/totals/details, phone layout and retry idempotency.
 - `npm run e2e:openlab`: 15 browser checks for lab configuration, inline validation, phone layout, walk-in QR/GPS entry, departure, closing-time refusal and disabling walk-ins.
 - Browser checks use the Test Lab's shared clock and simulated Google services/location. Real campus GPS, Workspace identity and trigger timing remain deployment checks.
