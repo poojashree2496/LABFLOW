@@ -289,14 +289,17 @@ var Sessions = {
 
   /** Trigger: open timetabled class sessions at their start time (teachers do nothing at the start of class). */
   autoOpenDue: function () {
-    var now = U.now(), openLabs = Sessions._openLabsDue(U.local(now).date), opened = openLabs;
-    if (!Settings.get('autoOpenSessions')) return { opened: opened, openLabsOpened: openLabs, disabled: true };
+    var now = U.now(), openLabs = 0, openLabsFailed = 0;
+    try { openLabs = Sessions._openLabsDue(U.local(now).date); }
+    catch (e) { openLabsFailed++; Syslog.error('sessions', 'OPEN_LAB_AUTO_OPEN_FAILED', String(e && e.message)); }
+    var opened = openLabs;
+    if (!Settings.get('autoOpenSessions')) return { opened: opened, openLabsOpened: openLabs, openLabsFailed: openLabsFailed, disabled: true };
     Sessions.materialize(U.local(now).date);
     Db.where('Sessions', function (s) { return s.type === 'class' && s.status === 'scheduled' && s.scheduledStart - 5 * 60000 <= now && now < s.scheduledEnd; }).forEach(function (s) {
       try { if (Sessions._systemOpen(s, 'timetable').status === 'open') opened++; }
       catch (e) { Syslog.error('sessions', 'AUTO_OPEN_FAILED', String(e && e.message), { sessionId: s.sessionId }); }
     });
-    return { opened: opened, openLabsOpened: openLabs };
+    return { opened: opened, openLabsOpened: openLabs, openLabsFailed: openLabsFailed };
   },
 
   /** An approved research visit opens when its student arrives inside the visit window. */

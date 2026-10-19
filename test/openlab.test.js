@@ -171,3 +171,14 @@ test('open lab: monthly audit separates walk-in hours from research and class us
   assert.ok(row); assert.equal(row[3], 1); assert.equal(row[5], 1);
   assert.equal(report.sections[0].rows.some((r) => r[0] === 'Research and self-work'), false);
 });
+
+test('open lab: a failing open-lab trigger step does not prevent regular timetable opening', () => {
+  const w = world(); enable(w);
+  const cls = w.session();
+  w.e.run("Sessions._openLabsDue = function(){throw new Error('open-lab failure');};");
+  const r = w.eval('Jobs.tickSessions()');
+  assert.equal(r.detail.autoOpen.openLabsFailed, 1);
+  assert.equal(r.detail.autoOpen.opened, 1);
+  assert.equal(w.ok(w.faculty, 'sessions.get', { sessionId: cls.sessionId }).session.status, 'open');
+  assert.ok(w.eval("Db.readAll('SystemLog')").some((r) => r.code === 'OPEN_LAB_AUTO_OPEN_FAILED'));
+});
