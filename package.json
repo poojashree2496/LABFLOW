@@ -14,6 +14,7 @@
     "e2e:issue": "node test/e2e/issue.e2e.js",
     "e2e:projects": "node test/e2e/projects.e2e.js",
     "e2e:openlab": "node test/e2e/openlab.e2e.js",
+    "e2e:work": "node test/e2e/work.e2e.js",
     "dev": "node dev/server.js",
     "check": "npm run lint && npm test"
   },

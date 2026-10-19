@@ -5,7 +5,7 @@ Project management implements task C1 of the [v2 requirements](requirements.md).
 ## Workflow
 
 1. A verified student creates an individual project or, as an active group leader, a group project. Choose an active lab, an active faculty supervisor, a description and a start/end date. A group assigned to a lab must use that lab.
-2. The project starts as `pending`. Its supervisor is notified. `Projects.usableBy(studentId, projectId)` permits pending and active projects owned by that student or shared through their active group. The actual project picker at check-in remains task C3.
+2. The project starts as `pending`. Its supervisor is notified. `Projects.usableBy(studentId, projectId)` permits pending and active projects owned by that student or shared through their active group. The kiosk check-in picker accepts these projects; device-QR users choose a project with Change system / project after entry. See [Project and system selection](work-selection.md).
 3. The named supervisor, coordinator or super admin approves or rejects it. The owner receives the decision and any note as a notification.
 4. After approval, the owner or a current group leader submits the outcome and an optional HTTP(S) result link. The project remains `active` while the supervisor reviews it. The student may revise it during this stage.
 5. Only the named supervisor accepts the submitted outcome, setting the project to `completed`. Completed outcomes cannot be edited.

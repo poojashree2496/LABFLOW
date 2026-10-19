@@ -165,7 +165,7 @@ test('pipelines are data: every step is traced in order and the locked steps com
   assert.equal(traces[0].ok, true); assert.equal(traces[0].pipeline, 'B.scan');
   const firstLocked = steps.findIndex((x) => x.locked);
   assert.ok(steps.slice(firstLocked).every((x) => x.locked), 'no unlocked step after a locked one');
-  assert.deepEqual(steps.slice(firstLocked).map((x) => x.id), ['replay', 'revocation_recheck', 'authorization_recheck', 'session_open', 'enrolment', 'attendance_state', 'record']);
+  assert.deepEqual(steps.slice(firstLocked).map((x) => x.id), ['replay', 'revocation_recheck', 'authorization_recheck', 'session_open', 'enrolment', 'attendance_state', 'work', 'record']);
   // a refusal names the step that decided it
   w.scan(await w.sign('a1.x.y.z.q.i.n.1.' + 'A'.repeat(27), w.devices[s.studentId]));
   const last = traces[traces.length - 1];

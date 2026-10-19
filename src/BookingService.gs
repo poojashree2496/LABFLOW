@@ -211,8 +211,9 @@ var Booking = {
     });
   },
   /** A check-in by the booking's student during the slot marks it used (utilisation counts used slots, FR-25). */
-  markUsed: function (studentId, labId, now) {
+  markUsed: function (studentId, labId, now, assetId) {
     Booking.activeWorkstationBookings(studentId, labId, now, 15 * 60000).forEach(function (r) {
+      if (Work.isSystem(Db.get('Assets', r.resourceId)) && r.resourceId !== assetId) return;
       if (r.usedAt) return;
       Db.update('Reservations', r.reservationId, { usedAt: now });
       Audit.log({ actor: 'system', role: 'system', action: 'booking.used', entityType: 'Reservation', entityId: r.reservationId, detail: { studentId: studentId } });

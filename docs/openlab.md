@@ -1,12 +1,12 @@
 # Daily open lab
 
-Task C2 adds walk-in lab sessions to the [v2 requirements](requirements.md). Projects are implemented separately in [Projects](projects.md); associating a project and system with a visit remains C3, and automatic sign-out remains C4.
+Task C2 adds walk-in lab sessions to the [v2 requirements](requirements.md). Projects are implemented separately in [Projects](projects.md); [project/system selection](work-selection.md) is implemented as C3, and automatic sign-out remains C4.
 
 ## Enable it
 
 As super admin, open Labs, edit an active lab, set its opening and closing times, and select **Allow open-lab walk-ins**. Opening must be before closing on the same day. Existing labs remain opted out until this flag is enabled.
 
-A verified student sees Open lab in Today during opening hours. In kiosk QR mode, scan the lab screen and choose **Walk-in open lab**. The existing GPS and identity checks still apply. A course roster, research approval and advance booking are not required. Device-QR mode also works through the existing kiosk/coordinator scanner path and requires a registered device as before.
+A verified student sees Open lab in Today during opening hours. In kiosk QR mode, scan the lab screen and choose **Walk-in open lab**, a pending/active project, and a system or own laptop. The existing GPS and identity checks still apply. A course roster, research approval and advance booking are not required. Device-QR mode also works through the existing kiosk/coordinator scanner path and requires a registered device as before.
 
 Regular classes remain first in eligible check-in choices. Open lab and approved research visits can run alongside a regular class; the class/event conflict rules continue to prevent overlapping exclusive sessions.
 

@@ -483,11 +483,13 @@ LF.register({ role: 'staff', id: 'inventory', label: 'Inventory', icon: 'box', r
     const r = await api('categories.list');
     return ui.table({ caption: 'Categories', rows: r.categories, search: false, empty: ui.empty('No categories', 'Create categories first (for example "ESP32 board" as single items, "Jumper wires" as counted stock).'),
       toolbar: ui.button('Add category', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => catForm(null) }),
-      columns: [{ key: 'name', label: 'Category' }, { key: 'trackingMode', label: 'Tracked as', render: (x) => x.trackingMode === 'individual' ? 'Single items (each has a tag)' : 'Counted stock' }, { key: 'notes', label: 'Notes' }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => catForm(x) }) }] }).el;
+      columns: [{ key: 'name', label: 'Category' }, { key: 'trackingMode', label: 'Tracked as', render: (x) => x.trackingMode === 'individual' ? 'Single items (each has a tag)' : 'Counted stock' }, { label: 'Workstations', text: (x) => x.workstation ? 'Yes' : 'No' }, { key: 'notes', label: 'Notes' }, { label: '', sort: false, render: (x) => ui.button('Edit', { size: 'sm', onClick: () => catForm(x) }) }] }).el;
   }
   function catForm(c) {
-    LF.ui.formModal({ title: c ? 'Edit category' : 'Add category', fields: [{ name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 60 }, { name: 'trackingMode', label: 'Tracked as', type: 'select', value: c ? c.trackingMode : 'individual', options: [{ value: 'individual', label: 'Single items (each has its own tag)' }, { value: 'quantity', label: 'Counted stock (consumables, cables)' }] }, { name: 'notes', label: 'Notes', maxlength: 200, value: c ? c.notes : '' }], submitLabel: 'Save',
-      onSubmit: async (v) => { await api('categories.upsert', { categoryId: c ? c.categoryId : undefined, name: v.name, trackingMode: v.trackingMode, notes: v.notes }); LF.toast('Saved', 'good'); LF.go('inventory'); } });
+    LF.ui.formModal({ title: c ? 'Edit category' : 'Add category', fields: [{ name: 'name', label: 'Name', required: true, value: c ? c.name : '', maxlength: 60 }, { name: 'trackingMode', label: 'Tracked as', type: 'select', value: c ? c.trackingMode : 'individual', options: [{ value: 'individual', label: 'Single items (each has its own tag)' }, { value: 'quantity', label: 'Counted stock (consumables, cables)' }] },
+      { name: 'workstation', label: 'Use as selectable lab systems', type: 'checkbox', value: !!(c && c.workstation), hint: 'Individually tracked computers in this category can be selected at check-in.' },
+      { name: 'notes', label: 'Notes', maxlength: 200, value: c ? c.notes : '' }], submitLabel: 'Save',
+      onSubmit: async (v) => { await api('categories.upsert', { categoryId: c ? c.categoryId : undefined, name: v.name, trackingMode: v.trackingMode, workstation: v.workstation, notes: v.notes }); LF.toast('Saved', 'good'); LF.go('inventory'); } });
   }
   async function kitsView() {
     const r = await api('kits.list');

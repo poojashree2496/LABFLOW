@@ -120,7 +120,7 @@ var Checkin = {
    */
   options: function (student, lab, now) {
     Sessions._openLabsDue(U.local(now).date);
-    var sid = student.studentId;
+    var sid = student.studentId, workChoices = Work.choices(sid, lab.labId, now);
     var here = Db.where('Sessions', function (s) {
       return s.labId === lab.labId && (s.status === 'open' || (s.status === 'closed' && s.closedAt && now <= s.closedAt + Settings.get('exitGraceMinutes') * 60000) ||
         (s.type === 'research' && s.status === 'scheduled' && now >= s.scheduledStart - Sessions._OPEN_EARLY_MS && now <= s.scheduledEnd));
@@ -133,7 +133,7 @@ var Checkin = {
       if (here[i].status === 'open') {
         var actions = ['out'];
         if (st.rescan && !st.rescan.done) actions.unshift('rescan');
-        return { inside: inside, actions: actions, candidates: [] };
+        return { inside: inside, actions: actions, candidates: [], workChoices: workChoices };
       }
       graceExit = inside; // still "inside" a session that has just closed: they can scan out, or check in to the next one
     }
@@ -143,18 +143,18 @@ var Checkin = {
       if (s.type === 'openlab' && !Sessions.openLabAvailable(s, now)) return;
       var eligible = Roster.isEligible(s, sid);
       if (s.type === 'research' && !eligible) return; // someone else's research visit
-      cands.push({ sessionId: s.sessionId, title: s.title, reason: Attend.reasonOf(s), eligible: eligible, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status });
+      cands.push({ sessionId: s.sessionId, title: s.title, reason: Attend.reasonOf(s), eligible: eligible, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status, assetId: Work.reservedSystem(s) });
     });
     Booking.activeWorkstationBookings(sid, lab.labId, now, Checkin.BOOKING_EARLY_MS).forEach(function (r) {
       if (cands.some(function (x) { return x.reservationId === r.reservationId; })) return;
       if (Db.getBy('Sessions', 'slotKey', 'rsv|' + r.reservationId)) return; // its self-work session is already listed
-      cands.push({ sessionId: null, reservationId: r.reservationId, title: 'Self-work: ' + Booking._resourceName(r), reason: 'research', eligible: true, scheduledStart: r.startAt, scheduledEnd: r.endAt, status: 'booking' });
+      cands.push({ sessionId: null, reservationId: r.reservationId, title: 'Self-work: ' + Booking._resourceName(r), reason: 'research', eligible: true, scheduledStart: r.startAt, scheduledEnd: r.endAt, status: 'booking', assetId: Work.isSystem(Db.get('Assets', r.resourceId)) ? r.resourceId : '' });
     });
     var order = { 'class': 0, event: 1, research: 2, openlab: 3 };
     cands.sort(function (a, b) { return (b.eligible - a.eligible) || (order[a.reason] - order[b.reason]) || (a.scheduledStart - b.scheduledStart); });
     var pre = cands.filter(function (x) { return x.eligible; })[0];
     var acts = graceExit ? (pre ? ['in', 'out'] : ['out']) : ['in'];
-    return { inside: graceExit, actions: acts, candidates: cands, prefill: pre ? (pre.sessionId || pre.reservationId) : null };
+    return { inside: graceExit, actions: acts, candidates: cands, prefill: pre ? (pre.sessionId || pre.reservationId) : null, workChoices: workChoices };
   },
 
   // ---- submit: the Version A verification pipeline ------------------------------------------------------------
@@ -180,6 +180,9 @@ var Checkin = {
       if (!Auth.rateLimit('acheck|' + c.studentId, 10, 60)) fail('RATE_LIMITED', 'Too many attempts. Wait a moment.');
     } },
     { id: 'target', label: 'Session chosen and entry reason matches it (FR-13)', run: function (c) { Checkin._resolveTarget(c); } },
+    { id: 'work', label: 'Project and workstation choices are valid', run: function (c) {
+      if (c.purpose === 'in') Work.validate(c.studentId, c.session, c.projectId, c.assetId, c.session.type === 'openlab');
+    } },
     { id: 'geo_reading', label: 'Location reading received (or policy allows none)', run: function (c) {
       var g = c.geo;
       if (!g) {
@@ -227,6 +230,7 @@ var Checkin = {
       c.state = Attend._stateGate(c.session, c.studentId, c.purpose, c.now, Attend._effective(Attend._eventsFor(c.session)));
     } },
     { id: 'record', locked: true, label: 'Append the event and mark the code used', run: function (c) {
+      if (c.purpose === 'in') Work.validate(c.studentId, c.session, c.projectId, c.assetId, c.session.type === 'openlab');
       c.method = 'kiosk'; c.scannerRole = 'kiosk'; c.scannedBy = c.kiosk.authorizedEmail;
       Attend._record(c);
     } }
@@ -267,6 +271,7 @@ var Checkin = {
       action: V.enumOf(p.action, 'Action', ['in', 'out', 'rescan']),
       sessionId: p.sessionId ? V.id(p.sessionId, 'Session', 'session') : '',
       reservationId: p.reservationId ? V.id(p.reservationId, 'Booking', 'reservation') : '',
+      projectId: p.projectId ? V.id(p.projectId, 'Project', 'project') : '', assetId: p.assetId ? V.id(p.assetId, 'System', 'asset') : '',
       reason: V.enumOf(p.reason, 'Reason', Cfg.ENTRY_REASONS, { optional: true })
     };
     try {

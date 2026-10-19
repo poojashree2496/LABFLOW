@@ -21,7 +21,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 project management and C2 daily open-lab sessions are implemented; see docs/projects.md, docs/openlab.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 projects, C2 daily open lab and C3 project/system selection are implemented; see docs/projects.md, docs/openlab.md, docs/work-selection.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
 - Contact point between streams: A4 moves one read inside `Attend.rebuildSummary`, which C4 also relies on. Tell each other before touching it.
@@ -121,10 +121,11 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
   - Tests: `test/access.test.js` or a new `test/hod.test.js`.
 - [ ] **B4 Live board and systems** (R1, R2, R9)
-  - Files: `LabService.gs` (`labs.live`, `systems.status`), `AssetService.gs` (`Categories.workstation` editing), `Scripts.html` or `ScriptsStaff.html` (a Live view, auto-refresh every `occupancyRefreshSeconds`), registered for faculty, staff, admin and hod.
+  - Files: `LabService.gs` (`labs.live`, `systems.status`), `Scripts.html` or `ScriptsStaff.html` (a Live view, auto-refresh every `occupancyRefreshSeconds`), registered for faculty, staff, admin and hod.
   - `labs.live`: for each lab in scope, each student inside, with name, register number, session, system, project and since-when.
     - Build it from `Attend.studentState` and the latest IN or WORK event carrying `assetId` and `projectId`. `Jobs.overstay` already loops over the students inside.
     - Do not put names into the cached `labs.occupancy` payload; every user can read that one.
+  - C3 already implements the workstation category flag/editor and `Work.current`/`Work.occupants` helpers; reuse these for effective work assignments and availability.
   - `systems.status`: each workstation is free, busy (someone inside on it) or booked (a held booking now). Students get free/busy only.
   - Done when: two students check in on two systems; the board shows both with their projects; one checks out and disappears.
   - Tests: `test/checkin.test.js`.
@@ -138,11 +139,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-C Extra-hours check-in and projects (@?)
 
-- [ ] **C3 Check-in with project and system** (R1, R7)
-  - Files: `CheckinService.gs` (`Checkin.options` returns the student's usable projects and the free systems; a new step after `target` in `Checkin.STEPS_A`, re-checked inside the lock), `AttendanceService.gs` (`Attend._record` writes `projectId` and `assetId`; new `Attend.setWork` writes a `WORK` event; `Attend._compute` ignores `WORK`), `ScriptsStudent.html` (project and system pickers in `LF.kioskCheckin`; a "Change system / project" button while inside, which covers Version B).
-  - A booked system is preselected and required. A system that someone inside is using cannot be picked. "Own laptop" is allowed.
-  - Done when: a check-in stores the project and system; a busy system is refused; `attend.setWork` switches the system mid-visit; attendance minutes are unchanged by WORK events.
-  - Tests: `test/checkin.test.js`, `test/scanning.test.js` (Version B).
 - [ ] **C4 Automatic sign-out** (R4)
   - Files: `SessionService.gs` (`Sessions._closeInternal` for `openlab` only), `AttendanceService.gs` (`Attend._compute` credits an `OUT` with `method: 'auto'` up to the closing time and adds an `auto_out` flag to the summary), `FlagService.gs` (auto sign-outs count toward `never_scans_out`).
   - Classes are unchanged ("exit not scanned").

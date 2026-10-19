@@ -45,7 +45,7 @@ function createProject(labs, faculty, groups, reload) {
   if (!labs.length || !faculty.length) { LF.toast('An active lab and faculty supervisor must be set up first.', 'bad'); return; }
   editor({ key: 'create', title: 'Create project', action: 'projects.create', submitLabel: 'Create project', success: 'Project sent for approval.', reload,
     base: { projectId: 'PRJ-' + LF.util.uuid().replace(/-/g, '').slice(0, 12).toUpperCase() },
-    intro: 'Choose a supervisor and timeline. Pending projects will be eligible for open-lab check-in when that flow is available. Submit your outcome after approval.',
+    intro: 'Choose a supervisor and timeline. Pending projects can be chosen for open-lab check-in. Submit your outcome after approval.',
     fields: [
       { name: 'title', label: 'Project title', required: true, maxlength: 120 },
       { name: 'description', label: 'Description', type: 'textarea', rows: 3, required: true },

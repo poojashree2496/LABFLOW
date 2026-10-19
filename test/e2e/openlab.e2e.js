@@ -24,6 +24,8 @@ const { start } = require('../../dev/server');
     dev.lab.autoJobs = false; // deliberately test arrival opening and the entry gate with delayed triggers
     w.ok(w.admin, 'students.import', { rows: [{ rollNo: 'SOPEN001', name: 'Browser Walk-in', email }] });
     const profile = w.ok(email, 'onboard', { rollNo: 'SOPEN001', name: 'Browser Walk-in', consent: true, mobile: '9876543222' }).student;
+    w.ok(email, 'projects.create', { title: 'Walk-in project', description: 'Open-lab browser work', labId: w.lab.labId,
+      supervisorFacultyId: w.facultyId, startDate: w.today, endDate: '2026-12-01' });
     browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: 'chrome' });
     student = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     admin = await browser.newPage({ viewport: { width: 1280, height: 820 } });

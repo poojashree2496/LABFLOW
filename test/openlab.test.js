@@ -6,6 +6,7 @@ function enable(w, extra = {}) {
   w.lab = w.ok(w.admin, 'labs.upsert', { ...w.lab, openLab: true, ...extra }).lab;
   return w.lab;
 }
+const project = (w, s = w.students[0]) => w.ok(s.email, 'projects.create', { title: 'Open-lab work', description: 'Work during extra hours', labId: w.lab.labId, supervisorFacultyId: w.facultyId, startDate: w.today, endDate: '2026-12-01' }).project.projectId;
 const setTime = (w, time, date = w.today) => w.e.setTime(w.eval(`U.fromLocal(${JSON.stringify(date)}, ${JSON.stringify(time)})`));
 const sessions = (w) => w.eval("Db.readAll('Sessions').filter(function(s){return s.type==='openlab';})");
 const mine = (w, student = w.students[0]) => w.ok(student.email, 'sessions.mine').sessions.filter((s) => s.type === 'openlab');
@@ -62,7 +63,7 @@ test('open lab: student and kiosk arrival screens recover a delayed opening trig
 test('open lab: a verified walk-in needs neither a booking nor a course roster and records openlab reason', () => {
   const w = world(); enable(w); setTime(w, '15:00');
   w.e.run("Db.readAll('Rosters').forEach(function(r){Db.update('Rosters',r.rosterId,{status:'removed'});}); Roster._bump();");
-  const [s] = w.students, r = w.checkin(s, { reason: 'openlab' });
+  const [s] = w.students, r = w.checkin(s, { reason: 'openlab', projectId: project(w, s) });
   assert.equal(r.ok, true, JSON.stringify(r));
   const ev = w.eval("Db.readAll('AttendanceEvents')[0]");
   assert.equal(ev.entryReason, 'openlab'); assert.equal(ev.geofence, 'pass');
@@ -105,7 +106,7 @@ test('open lab: new entries stop at closing even when the session-close trigger 
   const w = world(), s = open(w); setTime(w, '18:59');
   const op = w.ok(w.students[0].email, 'checkin.open', { code: w.kioskCode() });
   setTime(w, '19:00');
-  assert.equal(w.err(w.students[0].email, 'checkin.submit', { pass: op.pass, action: 'in', sessionId: s.sessionId, reason: 'openlab', geo: w.at(1) }).code, 'OUT_OF_WINDOW');
+  assert.equal(w.err(w.students[0].email, 'checkin.submit', { pass: op.pass, action: 'in', sessionId: s.sessionId, reason: 'openlab', projectId: project(w), geo: w.at(1) }).code, 'OUT_OF_WINDOW');
   assert.equal(mine(w).length, 0);
   const after = w.ok(w.students[1].email, 'checkin.open', { code: w.kioskCode() });
   assert.equal(after.candidates.filter((c) => c.reason === 'openlab').length, 0);
@@ -114,10 +115,10 @@ test('open lab: new entries stop at closing even when the session-close trigger 
 
 test('open lab: disabling it after issuing a pass prevents entry but still permits an existing visitor to exit', () => {
   const w = world(), s = open(w), [a, b] = w.students;
-  assert.equal(w.checkin(a, { sessionId: s.sessionId, reason: 'openlab' }).ok, true);
+  assert.equal(w.checkin(a, { sessionId: s.sessionId, reason: 'openlab', projectId: project(w, a) }).ok, true);
   const op = w.ok(b.email, 'checkin.open', { code: w.kioskCode() });
   enable(w, { openLab: false });
-  assert.equal(w.err(b.email, 'checkin.submit', { pass: op.pass, action: 'in', sessionId: s.sessionId, geo: w.at(1) }).code, 'OUT_OF_WINDOW');
+  assert.equal(w.err(b.email, 'checkin.submit', { pass: op.pass, action: 'in', sessionId: s.sessionId, projectId: project(w, b), geo: w.at(1) }).code, 'OUT_OF_WINDOW');
   w.advance(150000); assert.equal(w.checkin(a, { action: 'out' }).ok, true);
 });
 
@@ -169,7 +170,7 @@ test('open lab: hour edits update future scheduled sessions without rewriting an
 
 test('open lab: monthly audit separates walk-in hours from research and class usage', () => {
   const w = world(), s = open(w);
-  assert.equal(w.checkin(w.students[0], { sessionId: s.sessionId, reason: 'openlab' }).ok, true);
+  assert.equal(w.checkin(w.students[0], { sessionId: s.sessionId, reason: 'openlab', projectId: project(w) }).ok, true);
   w.advance(3600000); assert.equal(w.checkin(w.students[0], { action: 'out' }).ok, true);
   w.ok(w.admin, 'sessions.close', { sessionId: s.sessionId });
   const report = w.ok(w.admin, 'reports.run', { type: 'monthlyAudit', month: '2026-10' });

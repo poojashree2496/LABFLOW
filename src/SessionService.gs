@@ -118,7 +118,11 @@ var Sessions = {
     var rows = Db.where('Sessions', function (s) { return s.date === date && (s.status === 'scheduled' || s.status === 'open' || s.status === 'closed'); })
       .filter(function (s) { return Roster.isEligible(s, sid) && (s.type !== 'openlab' || (s.status === 'open' && Sessions.openLabAvailable(s, U.now()))); })
       .sort(function (a, b) { return (a.type === 'openlab') - (b.type === 'openlab') || a.scheduledStart - b.scheduledStart; });
-    return { date: date, sessions: rows.map(function (s) { var o = Sessions.pub(s, ref); o.mine = Attend.studentState(s, sid); return o; }) };
+    return { date: date, sessions: rows.map(function (s) {
+      var o = Sessions.pub(s, ref); o.mine = Attend.studentState(s, sid);
+      if (s.status === 'open' && o.mine.state === 'in') o.workChoices = Work.choices(sid, s.labId, U.now(), s.sessionId);
+      return o;
+    }) };
   },
 
   get: function (ctx, p) {

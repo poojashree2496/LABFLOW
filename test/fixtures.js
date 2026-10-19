@@ -117,7 +117,7 @@ function world(opts = {}) {
     const action = opts.action || op.data.actions[0];
     const target = opts.sessionId || (action === 'in' && !opts.reservationId ? op.data.prefill : undefined);
     const geo = opts.geo === null ? undefined : (opts.geo || w.at(3, 12));
-    return w.call(student.email, 'checkin.submit', { pass: op.data.pass, action, sessionId: target && target.startsWith('SES-') ? target : undefined, reservationId: opts.reservationId, reason: opts.reason, geo });
+    return w.call(student.email, 'checkin.submit', { pass: op.data.pass, action, sessionId: target && target.startsWith('SES-') ? target : undefined, reservationId: opts.reservationId, reason: opts.reason, geo, projectId: opts.projectId, assetId: opts.assetId });
   };
   return w;
 }

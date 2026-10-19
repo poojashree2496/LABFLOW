@@ -30,9 +30,15 @@ var Assets = {
       var c;
       if (p.categoryId) {
         var cur = Db.mustGet('Categories', V.id(p.categoryId, 'Category', 'category'), 'Category');
+        rec.workstation = p.workstation === undefined ? cur.workstation : V.bool(p.workstation);
+        if (rec.workstation && rec.trackingMode !== 'individual') fail('BAD_INPUT', 'Workstations must be individually tracked.');
         if (cur.trackingMode !== rec.trackingMode && Db.whereEq('Assets', { categoryId: cur.categoryId }).length) fail('INVALID_STATE', 'Tracking mode cannot change once assets exist in the category.');
         c = Db.update('Categories', cur.categoryId, rec);
-      } else c = Db.insert('Categories', Object.assign({ categoryId: U.id('category') }, rec));
+      } else {
+        rec.workstation = V.bool(p.workstation);
+        if (rec.workstation && rec.trackingMode !== 'individual') fail('BAD_INPUT', 'Workstations must be individually tracked.');
+        c = Db.insert('Categories', Object.assign({ categoryId: U.id('category') }, rec));
+      }
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: p.categoryId ? 'category.update' : 'category.create', entityType: 'Category', entityId: c.categoryId, detail: rec });
       return { category: c };
     });

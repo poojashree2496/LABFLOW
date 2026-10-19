@@ -13,6 +13,8 @@ Written to be read critically. Each section says what is enforced, what is only 
 
 The [critical workflow audit](docs/workflow-audit.md) adds fresh student/account, scanner, lab and code-freshness checks inside the attendance write lock. Device rejection and revocation hold the lock across their state checks and updates. Equipment fulfilment is validated before writes, and interrupted returns persist a recovery plan before changing counters. These paths are tested with deterministic write failures and interleavings on fakes; real Workspace concurrency and throughput remain unverified.
 
+Project/system assignments are checked against the authenticated student, active group membership, project status and lab. Workstation claims and booking checks run under the attendance write lock, with a second check after GPS acquisition. Mid-visit WORK events are append-only, bound to an entry and expected version, and use client event ids for safe retries. They never verify attendance or reset the exit gap. System choices expose availability without other occupants' identities. These are reported assignments rather than computer/device identity.
+
 ## 2. Attendance: device-bound reverse QR
 
 Design: the phone proves possession of a registered key by signing a fresh server challenge; the kiosk only relays. The QR is `token~signature`, the token is an HMAC-protected, stateless blob bound to student, credential, session, lab and challenge.
