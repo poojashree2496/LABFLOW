@@ -18,7 +18,7 @@ const nodeCrypto = require('crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 // Load order mirrors .clasp.json filePushOrder.
-const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs', 'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'CheckinService.gs', 'FlagService.gs', 'EventService.gs', 'AssetService.gs', 'BookingService.gs', 'ProjectService.gs', 'ReportService.gs', 'AdminService.gs', 'BackupService.gs', 'TriggerService.gs', 'Code.gs'];
+const LOAD_ORDER = ['Config.gs', 'Util.gs', 'Db.gs', 'AuditService.gs', 'Vendor_P256.gs', 'Vendor_AES.gs', 'Setup.gs', 'AuthService.gs', 'NotificationService.gs', 'DeviceCredentialService.gs', 'UserService.gs', 'LabService.gs', 'SessionService.gs', 'AttendanceService.gs', 'CheckinService.gs', 'FlagService.gs', 'EventService.gs', 'AssetService.gs', 'BookingService.gs', 'ProjectService.gs', 'ReportService.gs', 'AdminService.gs', 'BackupService.gs', 'TriggerService.gs', 'Code.gs'];
 
 function signed(buf) { return Array.from(buf, (b) => (b > 127 ? b - 256 : b)); }
 function toBuf(x) { return Buffer.isBuffer(x) ? x : Buffer.from(x.map ? x.map((b) => b & 255) : x); }
@@ -151,11 +151,30 @@ function createEnv(opts = {}) {
     ContentService: { MimeType: { JSON: 'JSON' }, createTextOutput: (t) => { const o = { text: t, getContent: () => t, setMimeType: (m) => { o.mime = m; return o; } }; return o; } },
     HtmlService: { XFrameOptionsMode: { DEFAULT: 'DEFAULT' }, createHtmlOutputFromFile: (n) => ({ getContent: () => '<!-- ' + n + ' -->' }),
       createTemplateFromFile: (n) => ({ evaluate: () => { const o = { setTitle: () => o, addMetaTag: () => o, setXFrameOptionsMode: () => o, template: n }; return o; } }) },
-    DriveApp: {
-      createFolder: (n) => { const f = { id: 'fld-' + n, files: [], getId: () => 'fld-' + n, createFile: (name, body) => { const file = { name, body, getUrl: () => 'https://drive/' + name }; f.files.push(file); return file; } }; folders[f.id] = f; return f; },
-      getFolderById: (id) => { if (!folders[id]) throw new Error('no folder'); return folders[id]; },
-      getFileById: (id) => ({ setTrashed: () => { trashed.push(id); }, getAs: () => ({ getBytes: () => signed(Buffer.from('%PDF-fake')) }) }),
-    },
+    // Drive: folders hold files; files can be copied, trashed and listed. Like the real service, getFiles() never returns
+    // trashed files, and getFileById() knows the database spreadsheet. Unknown ids still get a throwaway file (Docs temp files).
+    DriveApp: (() => {
+      const files = {}; let seq = 0;
+      const mk = (id, name, parent, extra) => {
+        const f = Object.assign({ id, name, parent, trashed: false, created: clock() }, extra || {});
+        f.getId = () => id; f.getName = () => f.name; f.getUrl = () => 'https://drive/' + f.name;
+        f.getDateCreated = () => new Date(f.created);
+        f.setTrashed = (v) => { f.trashed = v !== false; trashed.push(id); return f; };
+        f.makeCopy = (n, folder) => { const c = mk('file-' + (++seq), n, folder || parent, { copyOf: id }); if (folder) folder.files.push(c); return c; };
+        f.getAs = () => ({ getBytes: () => signed(Buffer.from('%PDF-fake')) });
+        files[id] = f; return f;
+      };
+      return {
+        createFolder: (n) => {
+          const f = { id: 'fld-' + n, name: n, files: [], getId: () => 'fld-' + n, getUrl: () => 'https://drive/folders/' + n,
+            createFile: (name, body) => { const file = mk('file-' + (++seq), name, f, { body }); f.files.push(file); return file; },
+            getFiles: () => { const list = f.files.filter((x) => !x.trashed); let i = 0; return { hasNext: () => i < list.length, next: () => list[i++] }; } };
+          folders[f.id] = f; return f;
+        },
+        getFolderById: (id) => { if (!folders[id]) throw new Error('no folder'); return folders[id]; },
+        getFileById: (id) => files[id] || mk(id, spreadsheets[id] ? 'LABFLOW database' : id, null),
+      };
+    })(),
     DocumentApp: { ParagraphHeading: { HEADING1: 'H1', HEADING2: 'H2' },
       create: () => { const doc = { getId: () => 'doc-1', getBody: () => { const b = { setMarginTop: () => b, setMarginBottom: () => b, setMarginLeft: () => b, setMarginRight: () => b, appendParagraph: (t) => { docs.push(t); return { setHeading() {} }; },
         appendTable: (d) => { docs.push('table:' + d.length); return { setFontSize() {}, getRow: () => ({ editAsText: () => ({ setBold() {} }) }) }; } }; return b; }, saveAndClose: () => {} }; return doc; } },

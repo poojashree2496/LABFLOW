@@ -102,7 +102,7 @@ LF.register({ role: 'admin', id: 'users', label: 'People', icon: 'users', render
   function userForm(u, reload) {
     const roles = ['student', 'faculty', 'staff', 'admin', 'hod'].map((r) => ui.field({ name: r, label: LF.roleLabel(r), type: 'checkbox', value: u ? u.roles.includes(r) : r === 'faculty' }));
     const email = ui.field({ name: 'email', label: 'University email', type: 'email', required: true, value: u ? u.email : '', readOnly: !!u, hint: 'Must be @karunya.edu or @karunya.edu.in' }), name = ui.field({ name: 'displayName', label: 'Name', required: true, value: u ? u.displayName : '', maxlength: 80 });
-    const dept = ui.field({ name: 'department', label: 'Department', value: u ? u.department : 'CSE' }), code = ui.field({ name: 'employeeCode', label: 'Employee code', maxlength: 30 });
+    const dept = ui.field({ name: 'department', label: 'Department', value: u ? u.department : 'CSE', hint: 'Sets which labs an HOD sees.' }), code = ui.field({ name: 'employeeCode', label: 'Employee code', maxlength: 30 });
     const msg = h('div', { class: 'err', role: 'alert', hidden: true }); let m;
     m = LF.modal(u ? 'Edit ' + u.email : 'Add person', h('div', { style: { display: 'grid', gap: '12px' } }, email.el, name.el, h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px' } }, h('legend', { class: 't-label' }, 'Roles'), ...roles.map((r) => r.el)), dept.el, code.el, msg,
       h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), ui.button('Save', { kind: 'primary', onClick: async () => {
@@ -297,7 +297,20 @@ LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', 
     const s = await api('system.status');
     return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Triggers', s.triggers.ok ? 'OK' : 'Problem', s.triggers.summary, s.triggers.ok ? 'good' : 'bad'), ui.stat('Email today', s.mail.remainingToday === null ? 'n/a' : s.mail.remainingToday, s.mail.queued + ' queued · transport: ' + s.emailTransport), ui.stat('Time zone', s.timeZone, fmt.dt(s.serverNow)), ui.stat('Allowed domains', s.allowedDomains.length, s.allowedDomains.join(', '))),
       h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Background jobs'), s.latestJobs.length ? ui.table({ caption: 'Jobs', search: false, rows: s.latestJobs, columns: [{ key: 'job', label: 'Job' }, { key: 'at', label: 'Last run', render: (x) => fmt.dt(x.at) }, { key: 'status', label: 'Result', render: (x) => ui.badge(x.status, x.status === 'ok' ? 'good' : 'bad') }, { key: 'detail', label: 'Detail' }] }).el : ui.empty('No job has run yet', 'Install triggers from the Apps Script editor (see README).')),
-      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')));
+      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')), backupsPanel());
+  }
+  /** Backups (A3): the nightly Drive copies, what rotation keeps, and a Back up now button. */
+  function backupsPanel() {
+    const box = h('section', { class: 'card', style: { display: 'grid', gap: '10px' } });
+    const load = () => ui.loadInto(box, async () => {
+      const r = await api('system.backups'), link = (u, text) => /^https:\/\//.test(u || '') ? h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, text) : null;
+      return h('div', { style: { display: 'grid', gap: '10px' } }, h('h2', { class: 't-h2' }, 'Backups'),
+        h('p', { class: 'hint', style: { margin: 0 } }, 'A copy of the whole database is saved to Drive every night. The last ' + r.retention.dailyDays + ' days are kept, plus the first copy of each of the last ' + r.retention.monthlyMonths + ' months. The phone-number key is not inside the copy, so keep a separate note of it (see SECURITY.md).'),
+        h('div', { class: 'toolbar' }, ui.button('Back up now', { kind: 'primary', icon: 'shield', onClick: async () => { await api('system.backup'); LF.toast('Backup made', 'good'); load(); } }), link(r.folderUrl, 'Open the backup folder')),
+        r.backups.length ? ui.table({ caption: 'Backups', search: false, pageSize: 10, rows: r.backups, columns: [{ key: 'name', label: 'Copy' }, { key: 'createdAt', label: 'Made', render: (x) => fmt.dt(x.createdAt) }, { key: 'keeps', label: 'Kept as', render: (x) => x.keeps || '-' }, { label: '', sort: false, render: (x) => link(x.url, 'Open') }] }).el : ui.empty('No backup yet', 'The first one is made tonight, or press Back up now.'));
+    });
+    load();
+    return box;
   }
   function toolsView() {
     const out = h('div', { role: 'status' }), sid = ui.field({ name: 'sid', label: 'Session id', placeholder: 'SES-...', maxlength: 40 });

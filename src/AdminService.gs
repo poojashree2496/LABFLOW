@@ -148,9 +148,12 @@ var Dash = {
         openFlags:Db.where('Flags',function(f){return allowed(f.labId)&&f.status==='open';}).length,
         activeLoans:loans.length,overdueLoans:loans.filter(function(l){return l.dueAt<now;}).length,damaged:stock.damaged,missing:stock.missing,
         pendingCorrections:Attend.pendingCorrections().corrections.filter(function(e){return !!ids[e.sessionId];}).length};
+      var occupancy = labs.map(function(l){return Occupancy.lab(l.labId);});
       return {department:Auth.department(ctx),labIds:labs.map(function(l){return l.labId;}),labCount:labs.length,users:roles,
+        labs:labs.map(function(l){return {labId:l.labId,code:l.code,name:l.name,type:l.type,building:l.building,room:l.room,capacity:l.capacity,department:l.department || '',openLab:l.openLab};}),
+        readOnly:!ctx.has('admin') && !ctx.has('staff'),inside:occupancy.reduce(function(n,o){return n+o.inside;},0),
         openSessions:sessions.filter(function(s){return s.status==='open';}).length,stock:stock,queues:queues,
-        occupancy:labs.map(function(l){return Occupancy.lab(l.labId);}),attendanceByDay:Object.keys(perDay).sort().map(function(d){return {date:d,sessions:perDay[d].sessions,present:perDay[d].present};}),serverNow:now};
+        occupancy:occupancy,attendanceByDay:Object.keys(perDay).sort().map(function(d){return {date:d,sessions:perDay[d].sessions,present:perDay[d].present};}),serverNow:now};
     });
   },
   student: function (ctx) {

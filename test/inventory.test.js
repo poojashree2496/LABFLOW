@@ -369,7 +369,8 @@ test('waitlist: a taken slot can be waited for; cancelling promotes the first in
   const first = book(w, a, Object.assign({ quantity: 3 }, slot)); assert.equal(first.ok, true);
   const hold = first.data.reservation.reservationId;
   assert.equal(book(w, b, Object.assign({ quantity: 2 }, slot)).error.code, 'NOT_AVAILABLE', 'without asking to wait, the request is refused as before');
-  const wb = book(w, b, Object.assign({ quantity: 2, waitlist: true }, slot)); const wc = book(w, c, Object.assign({ quantity: 2, waitlist: true }, slot));
+  const wb = book(w, b, Object.assign({ quantity: 2, waitlist: true }, slot)); w.advance(1000); // the queue is by time; two requests in the same millisecond have no order
+  const wc = book(w, c, Object.assign({ quantity: 2, waitlist: true }, slot));
   assert.equal(wb.data.waitlisted, true); assert.equal(wb.data.reservation.status, 'waitlisted'); assert.equal(wb.data.reservation.waitlistPosition, 1);
   assert.equal(wc.data.reservation.waitlistPosition, 2);
   assert.equal(w.ok(b.email, 'booking.check', { labId: w.lab.labId, resourceType: 'category', resourceId: s.arduino.categoryId, startAt: slot.startAt, endAt: slot.endAt }).categories[0].free, 0, 'a waitlisted request holds no stock');

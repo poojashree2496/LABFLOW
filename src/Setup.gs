@@ -52,6 +52,7 @@ var Setup = {
     if (blank && ss.getSheets().length > 1) { try { ss.deleteSheet(blank); } catch (e) {} }
 
     if (!props.getProperty(Cfg.PROP.HMAC)) props.setProperty(Cfg.PROP.HMAC, Setup._newSecret());
+    if (!props.getProperty(Cfg.PROP.PII_KEY)) props.setProperty(Cfg.PROP.PII_KEY, Setup._newSecret()); // encryption key for personal data (A2); never overwritten, because that would make stored values unreadable
     if (opts.adminEmail) Setup.setBootstrapAdmin(opts.adminEmail);
     Db.resetHandles();
     var out = { spreadsheetId: ss.getId(), url: ss.getUrl(), created: created, verified: checked, extended: extended };
@@ -145,6 +146,15 @@ var Setup = {
     });
     check('LockService acquire/release', function () { var t = Date.now(); Locks.with(function () {}); return (Date.now() - t) + ' ms'; });
     check('CacheService round-trip', function () { var c = CacheService.getScriptCache(); c.put('st', 'x', 10); if (c.get('st') !== 'x') throw new Error('cache miss'); });
+    check('Personal-data encryption (AES-256-GCM) round trip and tamper check', function () {
+      if (!PropertiesService.getScriptProperties().getProperty(Cfg.PROP.PII_KEY)) throw new Error('PII_KEY missing - run Setup.initialise()');
+      var t = Date.now(), s = Crypt.seal('9876543210', 'selftest');
+      if (Crypt.open(s, 'selftest') !== '9876543210') throw new Error('round trip failed');
+      var parts = s.split(':'), bad = parts[0] + ':' + parts[1] + ':' + parts[2] + ':' + (parts[3].charAt(0) === 'A' ? 'B' : 'A') + parts[3].slice(1), refused = false;
+      try { Crypt.open(bad, 'selftest'); } catch (e) { refused = e && e.code === 'INTEGRITY'; }
+      if (!refused) throw new Error('a changed value was accepted');
+      return 'seal + open + tamper check ' + (Date.now() - t) + ' ms';
+    });
     check('QR secret present', function () { if (!PropertiesService.getScriptProperties().getProperty(Cfg.PROP.HMAC)) throw new Error('missing - run Setup.initialise()'); });
     check('Google sign-in client ID', function () { var id = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.GOOGLE_CLIENT_ID); return id || 'NOT SET - the hosted app cannot sign anyone in until you run setupGoogleSignIn(clientId)'; });
     check('App URL for links and QR codes', function () { return Setup.webAppUrl() || '(none)'; });

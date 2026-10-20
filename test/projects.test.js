@@ -134,8 +134,8 @@ test('projects: stale outcome acceptance fails; retries neither complete twice n
 
 test('projects: HOD reads require the shared department scope and never allow writes', () => {
   const w = world(), p = create(w), q = create(w, { labId: w.lab2.labId });
-  assert.equal(w.ok(w.hod, 'projects.list').projects.length, 2, 'unassigned labs are shared');
-  w.e.run(`Auth.labScope = function(ctx) { return [${JSON.stringify(w.lab.labId)}]; }`);
+  w.ok(w.admin, 'users.upsert', { email: w.hod, displayName: 'Dr HOD', roles: ['hod'], department: 'CSE' });
+  w.e.run(`Db.update('Labs', ${JSON.stringify(w.lab.labId)}, { department: 'CSE' }); Db.update('Labs', ${JSON.stringify(w.lab2.labId)}, { department: 'ECE' });`);
   assert.deepEqual(w.ok(w.hod, 'projects.list').projects.map((p) => p.projectId), [p.projectId]);
   assert.equal(w.ok(w.hod, 'projects.get', { projectId: p.projectId }).project.projectId, p.projectId);
   assert.equal(w.err(w.hod, 'projects.get', { projectId: q.projectId }).code, 'FORBIDDEN');

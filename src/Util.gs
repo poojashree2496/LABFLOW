@@ -148,11 +148,59 @@ var U = {
  * observer (__pipelineObserver, defined only by the dev server) receives the trace. Production code never reads any
  * per-step switch: every step in the list always runs.
  */
-/** Encryption at rest for personal data such as phone numbers (task A2). */
+/**
+ * Encryption at rest for personal data such as phone numbers (A2).
+ *
+ * AES-256-GCM, a vetted authenticated cipher (the audited @noble/ciphers bundle in Vendor_AES.gs), not a homemade scheme.
+ * The key is HMAC-SHA256(PII_KEY, 'enc'), where PII_KEY is a script property that is created by Setup.initialise and is never
+ * written to a sheet. Every value gets a fresh random 96-bit nonce (a hash of two random UUIDs). The field name is bound in as
+ * additional authenticated data, so a sealed value copied into another column does not open.
+ * Stored form: `enc1:<b64u nonce>:<b64u ciphertext>:<b64u tag>`. Opening verifies the tag first; a changed character fails.
+ */
 var Crypt = {
-  seal: function () { notBuilt_('A2'); },
-  open: function () { notBuilt_('A2'); },
-  mask: function () { notBuilt_('A2'); }
+  PREFIX: 'enc1:',
+  _bytes: function (signed) { var o = new Uint8Array(signed.length); for (var i = 0; i < signed.length; i++) o[i] = signed[i] & 255; return o; },
+  _signed: function (u8) { var o = []; for (var i = 0; i < u8.length; i++) o.push(u8[i] > 127 ? u8[i] - 256 : u8[i]); return o; },
+  _utf8: function (s) { var bin = unescape(encodeURIComponent(String(s))), o = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i); return o; },
+  _text: function (u8) { var bin = ''; for (var i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]); return decodeURIComponent(escape(bin)); },
+  _b64: function (u8) { return Utilities.base64EncodeWebSafe(Crypt._signed(u8)).replace(/=+$/, ''); },
+  _unb64: function (s) { return Crypt._bytes(Utilities.base64DecodeWebSafe(s + '===='.slice(s.length % 4 || 4))); },
+  _key: function () {
+    var secret = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.PII_KEY);
+    if (!secret) fail('NOT_CONFIGURED', 'The encryption key is not set. The script owner must run setupInitialise.');
+    return Crypt._bytes(Utilities.computeHmacSha256Signature('enc', secret));
+  },
+  isSealed: function (v) { return typeof v === 'string' && v.indexOf(Crypt.PREFIX) === 0 && v.split(':').length === 4; },
+  /** Encrypt text. `field` names what it is stored in (for example 'Users.mobile'); open() must be given the same name. */
+  seal: function (plain, field) {
+    var nonce = Crypt._bytes(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + Utilities.getUuid())).slice(0, 12);
+    var out = NobleAES.seal(Crypt._key(), nonce, Crypt._utf8(plain), Crypt._utf8(field || ''));
+    return Crypt.PREFIX + Crypt._b64(nonce) + ':' + Crypt._b64(out.slice(0, out.length - 16)) + ':' + Crypt._b64(out.slice(out.length - 16));
+  },
+  /** Decrypt a sealed value. A value that was changed, or sealed for a different field, fails with INTEGRITY. */
+  open: function (sealed, field) {
+    if (!Crypt.isSealed(sealed)) fail('INTEGRITY', 'The stored value is not in the expected format.');
+    var parts = sealed.split(':');
+    try {
+      var nonce = Crypt._unb64(parts[1]), ct = Crypt._unb64(parts[2]), tag = Crypt._unb64(parts[3]), joined = new Uint8Array(ct.length + tag.length);
+      // Base64 can spell the same bytes in more than one way (spare bits in the last character). Only the canonical spelling opens,
+      // so changing any character of a stored value fails, not just those that change the bytes.
+      if (Crypt._b64(nonce) !== parts[1] || Crypt._b64(ct) !== parts[2] || Crypt._b64(tag) !== parts[3] || nonce.length !== 12 || tag.length !== 16) throw new Error('format');
+      joined.set(ct, 0); joined.set(tag, ct.length);
+      return Crypt._text(NobleAES.open(Crypt._key(), nonce, joined, Crypt._utf8(field || '')));
+    } catch (e) {
+      if (e && e.code === 'NOT_CONFIGURED') throw e;
+      fail('INTEGRITY', 'The stored value failed its integrity check.');
+    }
+  },
+  /** A sealed or plain value, as plain text. Values stored before A2 are plain until the migration seals them. */
+  reveal: function (stored, field) { return !stored ? '' : (Crypt.isSealed(stored) ? Crypt.open(stored, field) : String(stored)); },
+  /** What other people see instead of the number: six dots and the last four digits. */
+  mask: function (plain) {
+    var s = String(plain === undefined || plain === null ? '' : plain);
+    if (!s) return '';
+    return s.length <= 4 ? '\u2022\u2022\u2022\u2022' : '\u2022\u2022\u2022\u2022\u2022\u2022' + s.slice(-4);
+  }
 };
 
 var Pipeline = {

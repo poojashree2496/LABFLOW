@@ -291,6 +291,8 @@ function ownerOnly_() {
 }
 function setupInitialise() { ownerOnly_(); return Setup.initialise({}); }
 function setupSelfTest() { ownerOnly_(); return Setup.selfTest(); }
+/** One-off migration (A2): seal every phone number still stored as plain text. Safe to run again. */
+function setupEncryptMobiles() { ownerOnly_(); var r = Users.encryptMobiles(); Audit.tryLog({ actor: 'script-owner', role: 'owner', action: 'pii.encrypt', entityType: 'Users', result: 'ok', detail: r }); console.log(JSON.stringify(r)); return r; }
 function setupInstallTriggers() { ownerOnly_(); return Triggers.install(); }
 function setupBootstrapAdmin(email) { ownerOnly_(); return Setup.setBootstrapAdmin(email); }
 function setupGoogleSignIn(clientId) { ownerOnly_(); return Setup.setGoogleSignIn(clientId); }

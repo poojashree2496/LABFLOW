@@ -338,6 +338,7 @@ var Loans = {
   _view: function (l, withItems) {
     var o = { loanId: l.loanId, labId: l.labId, borrowerType: l.borrowerType, borrowerId: l.borrowerId, borrowerName: Loans._borrowerName(l), kitId: l.kitId, reservationId: l.reservationId, status: l.status,
       overdue: Loans._isOverdue(l), issuedAt: l.issuedAt, dueAt: l.dueAt, returnedAt: l.returnedAt, notes: l.notes };
+    if (withItems && l.borrowerType === 'student') o.borrowerMobile = Users.maskedMobileForStudent(l.borrowerId); // masked; Reveal on the desk goes through users.revealMobile (A2)
     if (withItems) {
       var assets = {};
       o.items = Db.whereEq('LoanItems', { loanId: l.loanId }).map(function (i) {

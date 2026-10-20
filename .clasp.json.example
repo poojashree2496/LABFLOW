@@ -2,7 +2,7 @@
   "scriptId": "PASTE_YOUR_SCRIPT_ID_HERE",
   "rootDir": "src",
   "filePushOrder": [
-    "src/Config.gs", "src/Util.gs", "src/Db.gs", "src/AuditService.gs", "src/Vendor_P256.gs", "src/Setup.gs",
+    "src/Config.gs", "src/Util.gs", "src/Db.gs", "src/AuditService.gs", "src/Vendor_P256.gs", "src/Vendor_AES.gs", "src/Setup.gs",
     "src/AuthService.gs", "src/NotificationService.gs", "src/DeviceCredentialService.gs", "src/UserService.gs", "src/LabService.gs", "src/SessionService.gs",
     "src/AttendanceService.gs", "src/CheckinService.gs", "src/FlagService.gs", "src/EventService.gs", "src/AssetService.gs", "src/BookingService.gs", "src/ProjectService.gs",
     "src/ReportService.gs", "src/AdminService.gs", "src/BackupService.gs", "src/TriggerService.gs", "src/Code.gs"

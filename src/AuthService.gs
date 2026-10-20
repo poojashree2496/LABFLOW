@@ -101,8 +101,10 @@ var Auth = {
   HOD_ACTIONS: ('me profile.update notifications.list notifications.read dash.hod dash.admin dash.staff activity.feed labs.list labs.occupancy labs.live systems.status sessions.day sessions.get attend.roster attend.studentEvents flags.list events.list events.mine events.guests classreps.list students.list courses.list timetable.list facultycourses.list roster.list assets.list assets.history loans.list loans.get booking.list booking.check equipment.list audit.list users.list kiosks.list reports.run reports.csv reports.pdf categories.list catalog.list kits.list groups.list directory.faculty projects.get projects.list').split(' '),
   department: function (ctx) { var user = ctx && ctx.user && Db.get('Users', ctx.user.userId); return String(user && user.department || '').trim().toUpperCase(); },
   labScope: function (ctx) {
-    var scoped = Auth.scopedHod(ctx), dept = scoped ? Auth.department(ctx) : '';
-    return Db.where('Labs', function (l) { var d = String(l.department || '').trim().toUpperCase(); return !scoped || !d || (!!dept && d === dept); }).map(function (l) { return l.labId; });
+    if (ctx && (ctx.has('admin') || ctx.has('staff'))) return Db.readAll('Labs').map(function (l) { return l.labId; });
+    if (!Auth.scopedHod(ctx)) return [];
+    var dept = Auth.department(ctx);
+    return Db.where('Labs', function (l) { var d = String(l.department || '').trim().toUpperCase(); return !d || (!!dept && d === dept); }).map(function (l) { return l.labId; });
   },
   labFilter: function (ctx) { var scope = Auth.scopedHod(ctx) ? Auth.labScope(ctx) : null; return function (id) { return !scope || scope.indexOf(id) >= 0; }; },
   assertLab: function (ctx, id) { if (!Auth.labFilter(ctx)(id)) fail('FORBIDDEN', 'This lab is outside your department scope.'); },

@@ -6,7 +6,7 @@ Legend: `[ ]` not started, `[~]` in progress, `[!]` blocked (say why). Order ins
 
 Implementation deadline: 23 Oct 2026, 5:00 PM.
 
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 ---
 
@@ -52,27 +52,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-A Data, security and queue (@?)
 
-- [ ] **A2 Phone encryption** (R15)
-  - Files: `Util.gs` (`Crypt`), `Setup.gs` (`PII_KEY` in `Setup.initialise`, `Setup.selfTest` round trip), `UserService.gs` (`Users.me`, `Users.updateProfile`, `Users.onboard`), `Code.gs` (`setupEncryptMobiles` global, protected by `ownerOnly_`), `TriggerService.gs` (nightly sweep step), `ScriptsStaff.html` (loan desk reveal), `test/harness.js`.
-  - `Crypt.seal`: random IV (hash of `Utilities.getUuid()`); keystream block i = HMAC(encKey, IV || i); tag = HMAC(macKey, `enc1|IV|ct`) cut to 16 bytes.
-    - Keys come from HMAC(`PII_KEY`, `'enc'`) and HMAC(`PII_KEY`, `'mac'`).
-    - Stored form: `enc1:<b64u iv>:<b64u ct>:<b64u tag>`.
-    - `Crypt.open` checks the tag with `U.safeEq` before decrypting.
-  - `Users.me` returns the user's own number in full; every other output gives `Crypt.mask` (`••••••1021`). `profileIncomplete` still works.
-  - `users.revealMobile`: staff or admin, one user per call. Rate-limit it, and `Audit.log` action `pii.reveal`.
-  - Loan desk: show the borrower's masked number, with a Reveal button.
-  - Migration and nightly sweep: encrypt any value without the `enc1:` prefix. Running it twice changes nothing.
-  - Harness: `computeHmacSha256Signature` must accept byte arrays (it passes them straight to Node now).
-  - Done when: the sheet never holds a plain number; tampering with one character of a sealed value fails to open; the reveal is audited.
-  - Tests: new `test/crypt.test.js`, and update `test/platform.test.js` mobile expectations.
-- [ ] **A3 Nightly backup** (R14)
-  - Files: `BackupService.gs` (`Backup.nightly`, `Backup.list`, `Backup.now`), `TriggerService.gs` (`Jobs.nightly` step), `Code.gs` (`system.backup`, `system.backups`), `ScriptsAdmin.html` (backup panel in Audit & system > System health), `test/harness.js` DriveApp fake.
-  - Copy the spreadsheet with `DriveApp.getFileById(id).makeCopy(name, folder)` into `Setup.folder(<new PROP key>, 'LABFLOW Backups')`. Name it `LABFLOW backup YYYY-MM-DD`.
-  - Rotation: keep 30 daily copies and the first copy of each month for 12 months; `setTrashed(true)` the rest.
-  - `Audit.log` each manual backup. Write a JobRuns row for the nightly one.
-  - Fakes needed: `makeCopy`, `folder.getFiles()` iterator, `getName`, `getDateCreated`, `setTrashed`.
-  - Done when: 45 simulated nights leave 30 daily copies plus the monthly ones; a manual backup appears in the list.
-  - Tests: `test/jobs.test.js`.
 - [ ] **A4 Yearly archive** (R14)
   - Files: `BackupService.gs` (`Backup.archiveYear`), `Setup.gs` (extract `Setup.ensureSchema(ss, tables)` from `Setup.initialise`), `AttendanceService.gs` (`Attend.rebuildSummary`, `Attend.correct`, `Attend.decideCorrection`), `AdminService.gs` (reconcileSession), `ReportService.gs`, `TriggerService.gs`, `Code.gs` (`system.archive`), `ScriptsAdmin.html`, `test/harness.js` (`deleteRows` on FakeSheet).
   - Archive spreadsheet per academic year, `LABFLOW Archive 2025-26`. Keep its ids in one script property (JSON map).
@@ -87,11 +66,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Tests: new `test/archive.test.js`.
 ### WS-B Roles, dashboards, live board and reports (@?)
 
-- [ ] **B2 Coordinator manages students** (R16)
-  - Files: `Code.gs` (`students.import`, `roster.import`, `roster.remove` -> staff + admin), `UserService.gs` (`Users.importStudents` audit role `ctx.roles[0]`; new `Users.setStudentStatus` for `students.status`), `LabService.gs` (`Roster.import` audit role), `ScriptsStaff.html` (reuse the admin import and roster views, the way `ScriptsAdmin.html` `reuse()` shares staff views).
-  - "Remove a student" means disable the profile (`status: 'disabled'`), never delete it. Disabled students cannot check in.
-  - Done when: a coordinator imports a CSV, adds a student to a course, and disables one; each action is audited with role `staff`.
-  - Tests: `test/api.test.js`.
 ### WS-C Extra-hours check-in and projects (@?)
 
 - [ ] **C5 Confirm Intel Unnati AI Lab data** (R8, real inputs expected 21 Oct)

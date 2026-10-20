@@ -42,7 +42,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
-| R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
+| R6 | Done | Time-slot bookings with clash checks and no-show release; a taken slot can be waited for (`waitlist: true`): first come first served, promoted to a normal request and the student told when stock frees (cancel, reject, no-show release), position shown, ends when the slot starts (BookingService.gs) | | |
 | R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | Deployment checks | Deployment |
 | R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
@@ -50,9 +50,9 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R11 | Done on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | Deployment checks | Deployment |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
-| R14 | Missing | Nothing | Nightly backup copies and a yearly archive spreadsheet | A3, A4 |
-| R15 | Partial | Role-checked RPC gateway, rate limits, hash-chained audit log | `Users.mobile` is plain text | A2 |
-| R16 | Partial | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time | Coordinator student-management (B2), deployment checks | B2, Deployment |
+| R14 | Partial | Nightly backup copies with rotation (30 daily + 12 monthly), manual backup and an admin panel (A3, built 21 Oct) | The yearly archive spreadsheet | A4 |
+| R15 | Done on local fakes | Role-checked RPC gateway, rate limits, hash-chained audit log. A2 done: `Users.mobile` is sealed with AES-256-GCM (`Crypt`), shown masked to everyone but its owner, revealed to a coordinator or super admin one student at a time with an audit entry | Run `setupEncryptMobiles` on the real sheet; deployment checks | Deployment |
+| R16 | Partial | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff` | Deployment checks | Deployment |
 | R17 | Done | Device-bound signed QR, two check-in modes, tamper-evident audit chain, Test Lab with attack scenarios | Keep it in the pitch | S2 |
 | R18 | Done on local fakes | `U.parseRoll`; join year and department filled on import and onboarding; batch filter on `students.list`; `V.rollNo` still accepts other formats | | A1 |
 
@@ -100,7 +100,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 - Rows are copied and verified before they are deleted from the live sheet, under the script lock.
 
 **Encryption**
-- `Users.mobile` is encrypted at rest: HMAC-SHA256 in counter mode for the keystream, plus an HMAC tag over the ciphertext (encrypt-then-MAC). The key is the script property `PII_KEY`; it is never in the sheet. Stored values start with `enc1:`.
+- `Users.mobile` is encrypted at rest with **AES-256-GCM**, a vetted authenticated cipher (the audited `@noble/ciphers` bundle in `Vendor_AES.gs`; no homemade cipher). The key is HMAC-SHA256(`PII_KEY`, `'enc'`), where `PII_KEY` is a script property created by `Setup.initialise`; it is never in the sheet and is never regenerated, because that would make stored values unreadable. Each value has a fresh random 96-bit nonce, and the field name (`Users.mobile`) is bound in as additional authenticated data. Stored form: `enc1:<nonce>:<ciphertext>:<tag>` (base64url). A value that was changed in any character, sealed for another field, or opened with another key fails with `INTEGRITY`.
 - Shown masked everywhere (`••••••1021`). A student sees their own number in full.
 - The coordinator and super admin can reveal one number at a time (rate-limited; every reveal is in the audit log). The loan desk shows the masked number with a reveal button.
 - Everyone still gives a number at first login (`requireMobile`).
@@ -171,7 +171,7 @@ New report types: `systemUsage` (staff, admin, hod) and `projects` (faculty, sta
 | Helper | File | Owner | Purpose |
 |---|---|---|---|
 | `U.parseRoll(roll)` | Util.gs | A1 | `{ joinYear, gradYear, dept, serial }` or `null` |
-| `Crypt.seal(text)` / `Crypt.open(sealed)` / `Crypt.mask(text)` | Util.gs | A2 | Encrypt, decrypt, mask |
+| `Crypt.seal(text, field)` / `Crypt.open(sealed, field)` / `Crypt.mask(text)` | Util.gs | A2 | Encrypt, decrypt, mask. `Crypt.reveal(stored, field)` reads a value that may still be plain (before the migration) |
 | `Projects.usableBy(studentId, projectId)` | ProjectService.gs | C1 | True if the student owns the project or is in its group, and it is pending or active |
 | `Auth.canView(ctx)` | AuthService.gs | B1 | admin, staff or hod. Use for reads only. |
 | `Auth.labScope(ctx)` | AuthService.gs | B3 | Lab ids this account may see (all labs, except for an HOD) |

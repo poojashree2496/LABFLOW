@@ -199,5 +199,5 @@ test('work: disabled students, HOD accounts and non-visitors cannot set work', (
   assert.equal(w.err(w.hod, 'attend.setWork', payload).code, 'FORBIDDEN');
   assert.equal(w.err(w.students[1].email, 'attend.setWork', { ...payload, projectId: w.projects[1].projectId }).code, 'NO_ENTRY');
   w.e.run(`Db.update('StudentProfiles','${w.students[0].studentId}',{status:'disabled'})`);
-  assert.equal(w.err(w.students[0].email, 'attend.setWork', payload).code, 'NOT_VERIFIED');
+  assert.equal(w.err(w.students[0].email, 'attend.setWork', payload).code, 'ACCOUNT_DISABLED', 'a disabled profile is refused at the door (B2)');
 });

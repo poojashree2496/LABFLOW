@@ -317,3 +317,94 @@ test('open-lab closure: work changes do not shorten credit and a workstation is 
   const effective = w.eval(`Attend._effective(Attend._eventsFor(Db.get('Sessions','${w.sid}')))`);
   assert.equal(w.eval(`Work.current(${JSON.stringify(effective[s.studentId])})`), null);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// A3: nightly backup copies of the spreadsheet, with rotation.
+const backups = (w) => w.ok(w.admin, 'system.backups').backups;
+const night = (w) => { const r = w.e.run('Backup.nightly()'); w.advance(86400000); return r; };
+
+test('backup: 45 simulated nights leave 30 daily copies plus the first copy of the older month', () => {
+  const w = world({ students: 0 });
+  for (let i = 0; i < 45; i++) night(w);
+  const list = backups(w);
+  assert.equal(list.length, 31);
+  assert.equal(list.filter((b) => b.keeps === 'daily').length, 30);
+  const monthly = list.filter((b) => b.keeps === 'monthly');
+  assert.equal(monthly.length, 1);
+  assert.equal(monthly[0].date, '2026-10-14', 'the first copy of October outlives the daily window');
+  assert.equal(w.e.trashed.length, 14, 'the 14 copies in between went to the bin');
+  assert.equal(list[0].date, '2026-11-27', 'newest first');
+  assert.equal(list.filter((b) => b.name === 'LABFLOW backup 2026-11-27').length, 1);
+});
+
+test('backup: the copy is of the live database, goes to a private Drive folder, and a second run the same day adds nothing', () => {
+  const w = world({ students: 0 });
+  const first = w.e.run('Backup.nightly()'), again = w.e.run('Backup.nightly()');
+  assert.equal(first.created, 'LABFLOW backup 2026-10-14');
+  assert.equal(again.created, null); assert.equal(again.alreadyDone, true);
+  const dbId = w.eval('PropertiesService.getScriptProperties().getProperty(Cfg.PROP.DB_ID)');
+  const folder = Object.values(w.e.folders).find((f) => f.name === 'LABFLOW Backups');
+  assert.equal(folder.files.length, 1);
+  assert.equal(folder.files[0].copyOf, dbId);
+});
+
+test('backup: rotation only touches our own backup files', () => {
+  const w = world({ students: 0 });
+  w.e.run('Backup.nightly()');
+  const folder = Object.values(w.e.folders).find((f) => f.name === 'LABFLOW Backups');
+  folder.createFile('notes.txt', 'keep me'); folder.createFile('LABFLOW backup old copy', 'keep me too');
+  w.advance(86400000);
+  for (let i = 0; i < 40; i++) night(w);
+  const names = folder.files.filter((f) => !f.trashed).map((f) => f.name);
+  assert.ok(names.includes('notes.txt') && names.includes('LABFLOW backup old copy'));
+});
+
+test('backup: the monthly rule keeps the first copy of each of the last 12 months and drops older ones', () => {
+  const w = world({ students: 0 });
+  const r = JSON.parse(w.e.run(`JSON.stringify((function () {
+    var es = [], d = '2025-08-01';
+    for (var i = 0; i < 447; i++, d = U.addDays(d, 1)) es.push({ id: 'f' + i, date: d, createdAt: i });
+    var plan = Backup._plan(es, '2026-10-21');
+    var kept = es.filter(function (e) { return plan.keep[e.id]; });
+    return { kept: kept.length, daily: kept.filter(function (e) { return plan.keep[e.id] === 'daily'; }).length,
+             monthly: kept.filter(function (e) { return plan.keep[e.id] === 'monthly'; }).map(function (e) { return e.date; }) };
+  })())`));
+  assert.equal(r.daily, 30);
+  assert.equal(r.monthly.length, 11, 'October is inside the daily window, so 11 more months are kept on their own');
+  assert.equal(r.monthly[0], '2025-11-01'); assert.equal(r.monthly[10], '2026-09-01');
+  assert.ok(!r.monthly.includes('2025-10-01') && !r.monthly.includes('2025-08-01'), 'older than 12 months goes');
+});
+
+test('backup: a manual backup is audited, listed, admin-only, and does not clash with the nightly copy', () => {
+  const w = world({ students: 0 });
+  const made = w.ok(w.admin, 'system.backup');
+  assert.match(made.created, /^LABFLOW backup 2026-10-14 \(manual \d{6}\)$/);
+  assert.equal(made.backups.length, 1); assert.equal(made.backups[0].manual, true);
+  assert.ok(w.eval("Db.readAll('AuditEvents')").some((a) => a.action === 'backup.manual' && a.actor === w.admin));
+  assert.equal(w.err(w.staff, 'system.backup').code, 'FORBIDDEN');
+  assert.equal(w.err(w.staff, 'system.backups').code, 'FORBIDDEN');
+  const nightlyToo = w.e.run('Backup.nightly()');
+  assert.equal(nightlyToo.created, 'LABFLOW backup 2026-10-14');
+  assert.equal(backups(w).length, 2);
+});
+
+test('backup: a failed copy keeps every older backup, tells the admin, and does not stop the rest of the nightly job', () => {
+  const w = world({ students: 0 });
+  for (let i = 0; i < 3; i++) night(w);
+  w.e.run("DriveApp.getFileById = function () { throw new Error('Drive is down'); };");
+  const r = JSON.parse(w.e.run('JSON.stringify(Jobs.nightly())'));
+  assert.equal(r.status, 'ok');
+  assert.match(r.detail.backup.error, /Drive is down/);
+  assert.ok(r.detail.auditCheckpoint !== undefined, 'later steps still ran');
+  assert.equal(backups(w).length, 3, 'nothing was rotated away');
+  assert.ok(w.eval("Db.readAll('Notifications')").some((n) => n.title === 'Nightly backup failed'));
+});
+
+test('backup: the nightly job runs the backup step last and the job log shows it', () => {
+  const w = world({ students: 0 });
+  const r = JSON.parse(w.e.run('JSON.stringify(Jobs.nightly())'));
+  assert.equal(r.status, 'ok', JSON.stringify(r));
+  assert.equal(r.detail.backup.created, 'LABFLOW backup 2026-10-14');
+  assert.equal(Object.keys(r.detail).pop(), 'backup');
+  assert.equal(backups(w).length, 1);
+});

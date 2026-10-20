@@ -109,7 +109,10 @@ var Flags = {
 
   // ---- review -----------------------------------------------------------------------------------------------
   _visible: function (ctx, f, sessions) {
-    if (Auth.canView(ctx)) return Auth.labFilter(ctx)(f.labId);
+    if (Auth.canView(ctx)) {
+      var session = f.sessionId ? sessions[f.sessionId] : null, allowed = Auth.labFilter(ctx);
+      return allowed(f.labId || (session || {}).labId) || !!(session && ctx.faculty && session.facultyId === ctx.faculty.facultyId);
+    }
     var s = f.sessionId ? sessions[f.sessionId] : null;
     return !!(s && ctx.faculty && s.facultyId === ctx.faculty.facultyId);
   },

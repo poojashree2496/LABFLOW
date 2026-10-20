@@ -30,7 +30,7 @@ var Users = {
       onboardingRequired: !ctx.user || (ctx.has('student') && !ctx.student),
       consentRequired: !ctx.kiosk && Users.consentRequired(ctx.user),
       profileIncomplete: !!ctx.user && s.requireMobile && !ctx.user.mobile,
-      mobile: ctx.user ? ctx.user.mobile || '' : '',
+      mobile: ctx.user ? Users._mobileOf(ctx.user) : '', // a user always gets their own number in full; nobody else's leaves the server unmasked (A2)
       derivedRollNo: !ctx.student ? Users.derivedRoll(ctx.email) : '',
       classRep: reps > 0, coordinating: coordinating,
       student: ctx.student ? Object.assign(Users._pubStudent(ctx.student), { credential: Creds.summaryFor(ctx.student.studentId) }) : null,
@@ -63,7 +63,7 @@ var Users = {
     V.obj(p);
     if (!ctx.user) fail('NOT_ONBOARDED', 'Complete onboarding first.');
     var patch = {}, detail = {};
-    if (p.mobile !== undefined) { patch.mobile = V.mobile(p.mobile); detail.mobile = 'updated'; }
+    if (p.mobile !== undefined) { patch.mobile = Crypt.seal(V.mobile(p.mobile), Users.MOBILE_FIELD); detail.mobile = 'updated'; }
     if (p.consent === true) { patch.consentAt = U.now(); patch.consentVersion = Cfg.CONSENT_VERSION; detail.consentVersion = Cfg.CONSENT_VERSION; }
     if (!Object.keys(patch).length) fail('BAD_INPUT', 'Nothing to change.');
     patch.updatedAt = U.now();
@@ -94,9 +94,9 @@ var Users = {
       var user = ctx.user;
       if (!user) {
         user = Db.insert('Users', { userId: U.id('user'), email: ctx.email, displayName: name, roles: 'student', status: 'active', createdAt: now, updatedAt: now,
-          mobile: mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION });
+          mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : '', consentAt: now, consentVersion: Cfg.CONSENT_VERSION });
       } else {
-        user = Db.update('Users', user.userId, { mobile: mobile || user.mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION, updatedAt: now });
+        user = Db.update('Users', user.userId, { mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : user.mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION, updatedAt: now });
       }
       var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
       var out;
@@ -152,7 +152,43 @@ var Users = {
   },
 
   /** Staff/admin/faculty student directory. Faculty only see students in their own courses. */
-  revealMobile: function () { notBuilt_('A2'); },
+  MOBILE_FIELD: 'Users.mobile',
+  /** The number a user has stored, in plain text. Only ever returned to that same user, or through revealMobile. */
+  _mobileOf: function (user) { return Crypt.reveal(user && user.mobile, Users.MOBILE_FIELD); },
+  /** The masked number shown to other people (last four digits). Empty when there is none. */
+  maskedMobileOf: function (user) { return user && user.mobile ? Crypt.mask(Users._mobileOf(user)) : ''; },
+  /** The masked number of a student, by student id, for desks that need to recognise who they are talking to. */
+  maskedMobileForStudent: function (studentId) {
+    var prof = studentId && Db.get('StudentProfiles', studentId), user = prof && prof.userId && Db.get('Users', prof.userId);
+    return user ? Users.maskedMobileOf(user) : '';
+  },
+  /**
+   * Show one person's full number to a coordinator or super admin (A2). One student per call, rate-limited by the route, and
+   * every reveal is written to the audit trail with who asked and why.
+   */
+  revealMobile: function (ctx, p) {
+    V.obj(p);
+    var studentId = V.id(p.studentId, 'Student', 'student'), reason = V.str(p.reason, 'Reason', { optional: true, max: 120, def: '' });
+    var prof = Db.mustGet('StudentProfiles', studentId, 'Student'), user = prof.userId ? Db.get('Users', prof.userId) : null;
+    Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'pii.reveal', entityType: 'StudentProfile', entityId: studentId, detail: { field: 'mobile', rollNo: prof.rollNo, reason: reason, hadNumber: !!(user && user.mobile) } });
+    return { studentId: studentId, name: prof.name, rollNo: prof.rollNo, mobile: user ? Users._mobileOf(user) : '' };
+  },
+  /**
+   * Seal every phone number that is still plain text (A2). Safe to run again: a value that already starts with `enc1:` is left alone,
+   * so a second run changes nothing. Runs from the owner-only setupEncryptMobiles and in the nightly job.
+   */
+  encryptMobiles: function () {
+    return Locks.with(function () {
+      var sealed = 0, already = 0, empty = 0;
+      Db.readAll('Users').forEach(function (u) {
+        if (!u.mobile) { empty++; return; }
+        if (Crypt.isSealed(u.mobile)) { already++; return; }
+        Db.update('Users', u.userId, { mobile: Crypt.seal(String(u.mobile), Users.MOBILE_FIELD) });
+        sealed++;
+      });
+      return { sealed: sealed, alreadySealed: already, noNumber: empty };
+    });
+  },
   /**
    * Disable or re-enable a student profile (B2). A profile is never deleted, so attendance, loans and reports stay intact.
    * A disabled student cannot check in, scan or book, and cannot be added to a roster. Enabling restores the state the profile

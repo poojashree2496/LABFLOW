@@ -168,6 +168,23 @@ function liveBoard(root) {
 LF.liveBoard = liveBoard;
 ['staff', 'faculty'].forEach((role) => LF.register({ role, id: 'board', label: 'Live board', icon: 'users', render(root) { return liveBoard(root); } }));
 
+/* A borrower's phone number is shown masked (last four digits). Reveal asks the server for the full number: one student at a time,
+   rate-limited and written to the audit trail with the reason (A2). The full number goes away again after a minute. */
+function mobileRow(loan) {
+  if (!loan.borrowerMobile) return null;
+  const shown = h('span', { class: 't-data' }, 'Mobile ' + loan.borrowerMobile), msg = h('span', { class: 'hint', role: 'status' });
+  let timer = null;
+  const btn = ui.button('Reveal', { size: 'sm', onClick: async () => {
+    clear(msg);
+    try {
+      const r = await api('users.revealMobile', { studentId: loan.borrowerId, reason: 'Loan desk: ' + loan.loanId });
+      shown.textContent = 'Mobile ' + (r.mobile || 'not on file'); msg.textContent = 'Shown for one minute. This was recorded.';
+      clearTimeout(timer); timer = setTimeout(() => { shown.textContent = 'Mobile ' + loan.borrowerMobile; clear(msg); }, 60000);
+    } catch (e) { msg.textContent = LF.errMsg(e); }
+  } });
+  return h('div', { class: 'toolbar', style: { gap: '8px' } }, shown, btn, msg);
+}
+
 /* ------------------------------------------------------------------ Issue / Return */
 LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', render(root) {
   const wanted = LF.sel && LF.sel.loanId; if (LF.sel) LF.sel.loanId = null;
@@ -475,7 +492,7 @@ LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', 
           }
         } });
         updateSummary();
-        return h('section', { class: 'card', 'aria-label': 'Return items' }, h('h2', { class: 't-h2' }, loan.borrowerName), h('div', { class: 'hint' }, 'Issued ' + fmt.dt(loan.issuedAt) + ' · due ' + fmt.dt(loan.dueAt) + (loan.overdue ? ' · OVERDUE' : '')),
+        return h('section', { class: 'card', 'aria-label': 'Return items' }, h('h2', { class: 't-h2' }, loan.borrowerName), mobileRow(loan), h('div', { class: 'hint' }, 'Issued ' + fmt.dt(loan.issuedAt) + ' · due ' + fmt.dt(loan.dueAt) + (loan.overdue ? ' · OVERDUE' : '')),
           open.length ? h('p', { class: 'hint' }, 'Record what came back and what was consumed, damaged or missing. Unaccounted units stay on loan. Individually tracked items cannot be consumed.') : null,
           open.length ? h('div', { class: 'tbl-wrap', style: { marginTop: '10px' } }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['Item', 'Out', 'Returned', 'Consumed', 'Damaged', 'Missing', 'Condition', 'Note', ''].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, rows.map((x) => x.tr)))) : ui.empty('Everything on this loan has been returned.'),
           msg, open.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '12px' } }, summary, h('div', { class: 'toolbar' }, allBack, done)) : null);

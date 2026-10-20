@@ -15,7 +15,7 @@ var Triggers = {
   HANDLERS: {
     trg_tickSessions: { every: 'minutes', n: 5, desc: 'Open timetabled sessions, rescan windows, auto-close stale sessions, release no-show bookings, overstay alerts' },
     trg_sendEmails: { every: 'hours', n: 1, desc: 'Send queued notification emails as one digest per person' },
-    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint, monthly audit on the 1st' },
+    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint, monthly audit on the 1st, backup copy of the spreadsheet with rotation (A3)' },
     trg_morning: { every: 'day', hour: 8, desc: 'Overdue reminders, daily report, audit anchor email' },
     trg_evening: { every: 'day', hour: 18, desc: 'Daily digest per lab to the lab incharges (FR-34)' }
   },
@@ -109,11 +109,14 @@ var Jobs = {
         if (rep.fixed) Notify.toRole('admin', 'integrity', 'Inventory auto-repaired', rep.fixed + ' derived stock value(s) were out of step with loan records and were corrected.', 'inv-reconcile:' + today);
         return { fixed: rep.fixed, stale: rep.staleLoans.length };
       });
+      Jobs.step(r, 'encryptMobiles', function () { return Users.encryptMobiles(); });
       Jobs.step(r, 'auditCheckpoint', function () { var c = Audit.checkpoint('nightly'); return c ? { seq: c.seq } : null; });
       Jobs.step(r, 'monthlyAudit', function () {
         if (U.local(U.now()).d !== 1) return { skipped: 'not the 1st' };
         return Reports.runScheduledMonthly(U.local(U.dayStart(today) - 86400000).month);
       });
+      // Last, so the copy includes everything the steps above wrote tonight (A3).
+      Jobs.step(r, 'backup', function () { return Backup.nightly(); });
       return r;
     });
   },
