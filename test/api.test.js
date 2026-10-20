@@ -104,3 +104,38 @@ test('setup helpers validate the client ID and app URL', () => {
   w.e.run("Setup.setAllowedDomains('karunya.edu.in, @Gmail.com')");
   assert.deepEqual(w.eval('Auth.allowedDomains()'), ['karunya.edu.in', 'gmail.com']);
 });
+
+// B2: the coordinator (staff) manages students
+test('coordinator imports students, adds one to a course, disables and re-enables a profile; each action audited as staff', () => {
+  const w = world({ students: 1 });
+  const imp = w.ok(w.staff, 'students.import', { rows: [{ rollNo: 'URK25CS2001', name: 'Coord Import', email: 'coord.import@karunya.edu' }] });
+  assert.equal(imp.created, 1);
+  const r = w.ok(w.staff, 'roster.import', { courseId: w.course.courseId, rows: ['URK25CS2001'] });
+  assert.equal(r.added, 1);
+  const entry = w.ok(w.staff, 'roster.list', { courseId: w.course.courseId }).roster.find((x) => x.rollNo === 'URK25CS2001');
+  const stu = w.ok(w.staff, 'students.list', { q: 'URK25CS2001' }).students[0];
+  assert.equal(w.err(w.students[0].email, 'students.status', { studentId: stu.studentId, status: 'disabled', reason: 'test' }).code, 'FORBIDDEN');
+  assert.equal(w.err(w.staff, 'students.status', { studentId: stu.studentId, status: 'disabled' }).code, 'BAD_INPUT', 'a reason is required');
+  const off = w.ok(w.staff, 'students.status', { studentId: stu.studentId, status: 'disabled', reason: 'Left the programme' });
+  assert.equal(off.student.status, 'disabled');
+  assert.equal(w.ok(w.staff, 'students.status', { studentId: stu.studentId, status: 'disabled', reason: 'Left the programme' }).replayed, true);
+  assert.equal(w.ok(w.staff, 'students.list', { q: 'URK25CS2001' }).students.length, 1, 'never deleted');
+  const again = w.ok(w.staff, 'roster.import', { courseId: w.course.courseId, rows: ['URK25CS2001'] });
+  assert.equal(again.errors.length, 1, 'a disabled student cannot be added to a roster');
+  assert.equal(w.ok(w.staff, 'students.status', { studentId: stu.studentId, status: 'enabled' }).student.status, 'imported');
+  w.ok(w.staff, 'roster.remove', { rosterId: entry.rosterId });
+  const acts = w.ok(w.admin, 'audit.list', { limit: 100 }).events.filter((e) => e.actor === w.staff && ['students.import', 'roster.import', 'student.disable', 'student.enable', 'roster.remove'].includes(e.action));
+  assert.ok(acts.length >= 5 && acts.every((e) => e.role === 'staff'), 'audited with role staff');
+});
+
+test('a disabled student cannot check in', () => {
+  const w = world({ students: 1 });
+  const s = w.students[0];
+  w.ok(w.staff, 'students.status', { studentId: s.studentId, status: 'disabled', reason: 'Suspended' });
+  const res = w.checkin(s);
+  assert.equal(res.ok, false);
+  assert.equal(res.error.code, 'ACCOUNT_DISABLED');
+  w.ok(w.staff, 'students.status', { studentId: s.studentId, status: 'enabled' });
+  const back = w.checkin(s);
+  assert.notEqual(back.ok ? '' : back.error.code, 'ACCOUNT_DISABLED', 'enabled again, so the disabled refusal is gone');
+});

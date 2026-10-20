@@ -16,6 +16,38 @@ function csvButton(label, hint, columns, onRows) {
     ui.button('Import', { kind: 'primary', icon: 'upload', onClick: async () => { if (!rows || !rows.length) throw new LF.ApiError('BAD_INPUT', 'Choose a CSV file first.'); const r = await onRows(rows); clear(out).append(h('div', { class: r.errors && r.errors.length ? 'card warn' : 'card good' }, r.summary, r.errors && r.errors.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.errors.slice(0, 12).map((e) => h('li', null, 'Row ' + e.row + ': ' + e.message))) : null)); } })) };
 }
 
+/** Student list CSV import. Shared with the coordinator's Students screen (B2). */
+function studentImport() {
+  return csvButton('Student list CSV', 'Imports the official student list. With an email column, the student is verified automatically the first time they sign in with that email.', 'rollNo, name, email (optional), department, section, year',
+    async (rows) => { const r = await api('students.import', { rows }); return { summary: r.created + ' created, ' + r.updated + ' updated, ' + r.skipped + ' already linked.', errors: r.errors }; });
+}
+LF.studentImport = studentImport;
+/** Disable or re-enable a student profile (never deleted). Shared by the coordinator and super admin student tables. */
+LF.studentStatusButton = (x, reload) => x.status === 'disabled'
+  ? ui.button('Enable', { size: 'sm', onClick: async () => { await api('students.status', { studentId: x.studentId, status: 'enabled' }); LF.toast('Profile enabled', 'good'); reload(); } })
+  : ui.button('Disable', { size: 'sm', onClick: () => ui.formModal({ title: 'Disable ' + x.rollNo + ' ' + x.name + '?', intro: 'They cannot check in or book while disabled. Their records are kept and you can enable the profile again.',
+    fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Disable',
+    onSubmit: async (v) => { await api('students.status', { studentId: x.studentId, status: 'disabled', reason: v.reason }); LF.toast('Profile disabled', 'good'); reload(); } }) });
+
+/** Course roster manager (list, import, remove). Shared with the coordinator's Rosters screen (B2). */
+function rosterView() {
+  const box = h('div', { style: { display: 'grid', gap: '16px' } });
+  ui.loadInto(box, async () => {
+    const c = await api('courses.list'); if (!c.courses.length) return ui.empty('Add a course first');
+    const sel = ui.field({ name: 'course', label: 'Course', type: 'select', options: opt(c.courses, 'courseId', (x) => x.code + ' ' + x.name) }), list = h('div');
+    const imp = csvButton('Roll numbers CSV', 'Adds students to the selected course. Students must already be in the student list.', 'rollNo', async (rows) => { const r = await api('roster.import', { courseId: sel.get(), rows: rows.map((x) => ({ rollNo: x.rollNo || x.rollno || Object.values(x)[0] })) }); load(); return { summary: r.added + ' added, ' + r.already + ' already enrolled.', errors: r.errors }; });
+    const load = () => ui.loadInto(list, async () => {
+      const r = await api('roster.list', { courseId: sel.get() });
+      return ui.table({ caption: 'Course roster', rows: r.roster, searchPlaceholder: 'Search roster', pageSize: 25, empty: ui.empty('Nobody enrolled', 'Import roll numbers below.'), columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status },
+        { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove from roster?', message: x.rollNo + ' ' + x.name + '. Past attendance is kept.', confirmLabel: 'Remove', danger: true })) return; await api('roster.remove', { rosterId: x.rosterId }); load(); } }) }] }).el;
+    });
+    sel.input.addEventListener('change', load); load();
+    return h('div', { style: { display: 'grid', gap: '16px' } }, sel.el, list, h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import roster from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
+  });
+  return box;
+}
+LF.rosterView = rosterView;
+
 /* ------------------------------------------------------------------ Overview */
 LF.register({ role: 'admin', id: 'overview', label: 'Overview', icon: 'home', render(root) {
   const out = h('div', { style: { display: 'grid', gap: '20px' } }); let days = 14;
@@ -26,7 +58,7 @@ LF.register({ role: 'admin', id: 'overview', label: 'Overview', icon: 'home', re
     const chart = d.attendanceByDay.map((x) => ({ label: x.date.slice(5), a: x.sessions, b: x.present }));
     const totalPresent = d.attendanceByDay.reduce((n, x) => n + x.present, 0), totalSessions = d.attendanceByDay.reduce((n, x) => n + x.sessions, 0);
     return h('div', { style: { display: 'grid', gap: '20px' } },
-      h('div', { class: 'grid-stats' }, ui.stat('Labs', d.labs), ui.stat('Open sessions now', d.openSessions, null, d.openSessions ? 'good' : ''), ui.stat('Students', d.users.student), ui.stat('Faculty', d.users.faculty), ui.stat('Lab staff', d.users.staff), ui.stat('Admins', d.users.admin)),
+      h('div', { class: 'grid-stats' }, ui.stat('Labs', d.labs), ui.stat('Open sessions now', d.openSessions, null, d.openSessions ? 'good' : ''), ui.stat('Students', d.users.student), ui.stat('Faculty', d.users.faculty), ui.stat('Coordinators', d.users.staff), ui.stat('HODs', d.users.hod), ui.stat('Super admins', d.users.admin)),
       h('section', { class: 'card', 'aria-label': 'Attendance by day' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h2', { class: 't-h2' }, 'Sessions and attendance'), h('div', { class: 'hint' }, totalSessions + ' sessions · ' + totalPresent + ' attendances')),
         totalSessions ? [ui.barChart(chart, { label: 'Sessions (blue) and attendances (gold) per day' }), h('div', { class: 'hint' }, 'Blue bars: sessions held. Gold bars: students with a verified attendance. Based on closed and open sessions only.')] : ui.empty('No sessions in this period', 'Charts fill in as sessions are held.')),
       h('div', { class: 'split' },
@@ -61,30 +93,29 @@ LF.register({ role: 'admin', id: 'users', label: 'People', icon: 'users', render
     { id: 'import', label: 'Import', render: (p) => { p.appendChild(importView()); } }]));
   async function usersView() {
     const r = await api('users.list'), reload = () => LF.go('users');
-    return ui.table({ caption: 'Users', searchPlaceholder: 'Search name or email', pageSize: 25, rows: r.users, filters: [{ label: 'Role', options: ['student', 'faculty', 'staff', 'admin'], get: (x) => x.roles.includes('admin') ? 'admin' : x.roles.includes('staff') ? 'staff' : x.roles.includes('faculty') ? 'faculty' : 'student' }, { label: 'Status', options: ['active', 'disabled'], get: (x) => x.status }],
+    return ui.table({ caption: 'Users', searchPlaceholder: 'Search name or email', pageSize: 25, rows: r.users, filters: [{ label: 'Role', options: ['student', 'faculty', 'staff', 'admin', 'hod'], get: (x) => x.roles.includes('admin') ? 'admin' : x.roles.includes('hod') ? 'hod' : x.roles.includes('staff') ? 'staff' : x.roles.includes('faculty') ? 'faculty' : 'student' }, { label: 'Status', options: ['active', 'disabled'], get: (x) => x.status }],
       toolbar: ui.button('Add person', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => userForm(null, reload) }),
-      columns: [{ key: 'displayName', label: 'Name' }, { key: 'email', label: 'Email' }, { label: 'Roles', text: (x) => x.roles.join(' '), render: (x) => h('span', { class: 'pill-row' }, x.roles.map((r) => ui.badge(r, r === 'admin' ? 'bad' : r === 'staff' ? 'info' : ''))) },
+      columns: [{ key: 'displayName', label: 'Name' }, { key: 'email', label: 'Email' }, { label: 'Roles', text: (x) => x.roles.join(' '), render: (x) => h('span', { class: 'pill-row' }, x.roles.map((r) => ui.badge(LF.roleName(r), r === 'admin' ? 'bad' : r === 'staff' || r === 'hod' ? 'info' : ''))) },
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'lastLoginAt', label: 'Last sign-in', render: (x) => x.lastLoginAt ? fmt.dt(x.lastLoginAt) : 'never', text: (x) => x.lastLoginAt || 0 },
         { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Edit', { size: 'sm', onClick: () => userForm(x, reload) }), ui.button(x.status === 'active' ? 'Disable' : 'Enable', { size: 'sm', onClick: () => LF.ui.formModal({ title: (x.status === 'active' ? 'Disable ' : 'Enable ') + x.email, fields: [{ name: 'reason', label: 'Reason', maxlength: 200 }], submitLabel: 'Confirm', onSubmit: async (v) => { await api('users.status', { userId: x.userId, status: x.status === 'active' ? 'disabled' : 'active', reason: v.reason }); LF.toast('Updated', 'good'); reload(); } }) })) }] }).el;
   }
   function userForm(u, reload) {
-    const roles = ['student', 'faculty', 'staff', 'admin'].map((r) => ui.field({ name: r, label: r === 'staff' ? 'Lab staff' : r[0].toUpperCase() + r.slice(1), type: 'checkbox', value: u ? u.roles.includes(r) : r === 'faculty' }));
+    const roles = ['student', 'faculty', 'staff', 'hod', 'admin'].map((r) => ui.field({ name: r, label: LF.roleName(r), type: 'checkbox', value: u ? u.roles.includes(r) : r === 'faculty' }));
     const email = ui.field({ name: 'email', label: 'University email', type: 'email', required: true, value: u ? u.email : '', readOnly: !!u, hint: 'Must be @karunya.edu or @karunya.edu.in' }), name = ui.field({ name: 'displayName', label: 'Name', required: true, value: u ? u.displayName : '', maxlength: 80 });
     const dept = ui.field({ name: 'department', label: 'Department', value: 'CSE' }), code = ui.field({ name: 'employeeCode', label: 'Employee code', maxlength: 30 });
     const msg = h('div', { class: 'err', role: 'alert', hidden: true }); let m;
     m = LF.modal(u ? 'Edit ' + u.email : 'Add person', h('div', { style: { display: 'grid', gap: '12px' } }, email.el, name.el, h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px' } }, h('legend', { class: 't-label' }, 'Roles'), ...roles.map((r) => r.el)), dept.el, code.el, msg,
       h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), ui.button('Save', { kind: 'primary', onClick: async () => {
-        msg.hidden = true; const rs = ['student', 'faculty', 'staff', 'admin'].filter((r, i) => roles[i].get());
+        msg.hidden = true; const rs = ['student', 'faculty', 'staff', 'hod', 'admin'].filter((r, i) => roles[i].get());
         try { await api('users.upsert', { email: email.get(), displayName: name.get(), roles: rs, department: dept.get(), employeeCode: code.get(), status: u ? u.status : 'active' }); LF.toast('Saved', 'good'); m.close(); reload(); } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; } } }))));
   }
   async function studentsView() {
     const r = await api('students.list', { limit: 500 }), reload = () => LF.go('users');
     return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }],
-      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => LF.showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null) }] }).el;
+      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => LF.showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null, LF.studentStatusButton(x, reload)) }] }).el;
   }
   function importView() {
-    const stu = csvButton('Student list CSV', 'Imports the official student list. With an email column, the student is verified automatically the first time they sign in with that email.', 'rollNo, name, email (optional), department, section, year',
-      async (rows) => { const r = await api('students.import', { rows }); return { summary: r.created + ' created, ' + r.updated + ' updated, ' + r.skipped + ' already linked.', errors: r.errors }; });
+    const stu = studentImport();
     const usr = csvButton('Staff and faculty CSV', 'Creates or updates staff, faculty and admin accounts.', 'email, name, roles (e.g. faculty or "faculty;staff"), department, employeeCode',
       async (rows) => { const r = await api('users.import', { rows }); return { summary: r.imported + ' account(s) saved.', errors: r.errors }; });
     return h('div', { class: 'split' }, h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Students'), stu.el), h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Staff & faculty'), usr.el));
@@ -116,22 +147,6 @@ LF.register({ role: 'admin', id: 'academics', label: 'Academics', icon: 'book', 
     return ui.table({ caption: 'Faculty to course mapping', rows: m.mappings, searchPlaceholder: 'Search', empty: ui.empty('No mappings yet', 'Map faculty to the courses they teach. Mapping controls who sees which students.'),
       toolbar: ui.button('Map faculty to course', { kind: 'primary', size: 'sm', icon: 'plus', onClick: () => LF.ui.formModal({ title: 'Map faculty to course', fields: [{ name: 'facultyId', label: 'Faculty', type: 'select', required: true, options: opt(f.faculty, 'facultyId', 'name') }, { name: 'courseId', label: 'Course', type: 'select', required: true, options: opt(c.courses.filter((x) => x.status === 'active'), 'courseId', (x) => x.code + ' ' + x.name) }, { name: 'section', label: 'Section (blank = all)', maxlength: 10 }, { name: 'term', label: 'Term', maxlength: 20 }], submitLabel: 'Save', onSubmit: async (v) => { await api('facultycourses.set', v); LF.toast('Mapped', 'good'); reload(); } }) }),
       columns: [{ key: 'facultyName', label: 'Faculty' }, { key: 'courseCode', label: 'Course' }, { key: 'courseName', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'term', label: 'Term' }, { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove mapping?', message: x.facultyName + ' → ' + x.courseCode, confirmLabel: 'Remove', danger: true })) return; await api('facultycourses.remove', { mapId: x.mapId }); reload(); } }) }] }).el;
-  }
-  function rosterView() {
-    const box = h('div', { style: { display: 'grid', gap: '16px' } });
-    ui.loadInto(box, async () => {
-      const c = await api('courses.list'); if (!c.courses.length) return ui.empty('Add a course first');
-      const sel = ui.field({ name: 'course', label: 'Course', type: 'select', options: opt(c.courses, 'courseId', (x) => x.code + ' ' + x.name) }), list = h('div');
-      const imp = csvButton('Roll numbers CSV', 'Adds students to the selected course. Students must already be in the student list.', 'rollNo', async (rows) => { const r = await api('roster.import', { courseId: sel.get(), rows: rows.map((x) => ({ rollNo: x.rollNo || x.rollno || Object.values(x)[0] })) }); load(); return { summary: r.added + ' added, ' + r.already + ' already enrolled.', errors: r.errors }; });
-      const load = () => ui.loadInto(list, async () => {
-        const r = await api('roster.list', { courseId: sel.get() });
-        return ui.table({ caption: 'Course roster', rows: r.roster, searchPlaceholder: 'Search roster', pageSize: 25, empty: ui.empty('Nobody enrolled', 'Import roll numbers below.'), columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status },
-          { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove from roster?', message: x.rollNo + ' ' + x.name + '. Past attendance is kept.', confirmLabel: 'Remove', danger: true })) return; await api('roster.remove', { rosterId: x.rosterId }); load(); } }) }] }).el;
-      });
-      sel.input.addEventListener('change', load); load();
-      return h('div', { style: { display: 'grid', gap: '16px' } }, sel.el, list, h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import roster from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
-    });
-    return box;
   }
   async function timetableView() {
     const [labs, c, f] = await Promise.all([api('labs.list'), api('courses.list'), api('directory.faculty')]), reload = () => LF.go('academics');
@@ -254,7 +269,7 @@ LF.register({ role: 'admin', id: 'settings', label: 'Settings', icon: 'settings'
 
 /* ------------------------------------------------------------------ Audit & system */
 LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', render(root) {
-  root.append(h('h1', { class: 't-h1' }, 'Audit & system'), ui.tabs([{ id: 'audit', label: 'Audit trail', render: (p) => { p.appendChild(auditView()); } }, { id: 'system', label: 'System health', render: (p) => { ui.loadInto(p, systemView); } }, { id: 'quota', label: 'Quota usage', render: (p) => { ui.loadInto(p, quotaView); } }, { id: 'tools', label: 'Reconcile', render: (p) => { p.appendChild(toolsView()); } }, { id: 'reports', label: 'Reports', render: (p) => { p.appendChild(LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'erp', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'audit'])); } }]));
+  root.append(h('h1', { class: 't-h1' }, 'Audit & system'), ui.tabs([{ id: 'audit', label: 'Audit trail', render: (p) => { p.appendChild(auditView()); } }, { id: 'system', label: 'System health', render: (p) => { ui.loadInto(p, systemView); } }, { id: 'quota', label: 'Quota usage', render: (p) => { ui.loadInto(p, quotaView); } }, { id: 'tools', label: 'Reconcile', render: (p) => { p.appendChild(toolsView()); } }, { id: 'reports', label: 'Reports', render: (p) => { p.appendChild(LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'erp', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'audit', 'systemUsage', 'projects'])); } }]));
   /** Google can change Apps Script limits without notice (SRS section 14), so this shows usage against the published ones. */
   async function quotaView() {
     const q = await api('system.quota'), num = (n) => n === null || n === undefined ? 'n/a' : Number(n).toLocaleString('en-IN');
@@ -303,11 +318,12 @@ LF.register({ role: 'admin', id: 'flags', label: 'Flags', icon: 'flag', render(r
 
 /* ------------------------------------------------------------------ reuse staff views */
 function reuse(id, label, iconName) { const v = (LF.routes.staff || []).find((x) => x.id === id); if (v) LF.register(Object.assign({}, v, { role: 'admin', label: label || v.label, icon: iconName || v.icon })); }
-reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan');
+reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan'); reuse('board', 'Live board');
 
 /* ------------------------------------------------------------------ HOD (read-only; the full views are task B3) */
 LF.register({ role: 'hod', id: 'overview', label: 'Overview', icon: 'home', render(root) {
   root.append(h('h1', { class: 't-h1' }, 'Department overview'), h('h2', { class: 't-h2' }, 'Live occupancy'), ui.occupancy());
 } });
+LF.register({ role: 'hod', id: 'board', label: 'Live board', icon: 'users', render(root) { return LF.liveBoard(root); } });
 })();
 </script>

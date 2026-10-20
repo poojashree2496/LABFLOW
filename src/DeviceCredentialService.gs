@@ -128,6 +128,7 @@ var Creds = {
 
   _requireVerifiedStudent: function (ctx) {
     if (!ctx.student) fail('NOT_ONBOARDED', 'Complete your student profile first.');
+    if (ctx.student.status === 'disabled') fail('ACCOUNT_DISABLED', 'Your lab profile is disabled. Contact the lab office.');
     if (ctx.student.status !== 'verified') fail('NOT_VERIFIED', 'Your profile is not verified yet. Visit the lab desk with your ID card.');
     return ctx.student;
   },

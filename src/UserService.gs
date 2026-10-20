@@ -8,12 +8,14 @@
  * Unverified students cannot register a device or check in.
  */
 var Users = {
+  /** Stored join year, or the one in the register number for profiles saved before A1. */
+  _joinYear: function (p) { if (p.joinYear) return p.joinYear; var r = U.parseRoll(p.rollNo); return r ? r.joinYear : null; },
   _pubStudent: function (p) {
     if (!p) return null;
-    return { studentId: p.studentId, rollNo: p.rollNo, name: p.name, department: p.department, section: p.section, year: p.year,
+    return { studentId: p.studentId, rollNo: p.rollNo, name: p.name, department: p.department, section: p.section, year: p.year, joinYear: Users._joinYear(p),
              status: p.status, email: p.email, hasPhoto: !!p.photoFileId };
   },
-  _pubUser: function (u) { return { userId: u.userId, email: u.email, displayName: u.displayName, roles: String(u.roles || '').split(',').filter(Boolean), status: u.status, lastLoginAt: u.lastLoginAt }; },
+  _pubUser: function (u) { return { userId: u.userId, email: u.email, displayName: u.displayName, roles: String(u.roles || '').split(',').filter(Boolean), status: u.status, lastLoginAt: u.lastLoginAt, department: u.department || '' }; },
 
   me: function (ctx) {
     var s = Settings.all(), sid = ctx.student ? ctx.student.studentId : null;
@@ -79,7 +81,9 @@ var Users = {
     var rollNo = derived || V.rollNo(p.rollNo); // a roll number that comes from the email cannot be typed differently (FR-3)
     var mobile = Settings.get('requireMobile') || p.mobile ? V.mobile(p.mobile) : '';
     var name = V.str(p.name, 'Name', { max: 80, min: 2 });
-    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: 'CSE' });
+    var parsedRoll = U.parseRoll(rollNo);
+    // The department comes from the register number when it matches and the caller gave none (A1).
+    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: parsedRoll ? parsedRoll.dept : 'CSE' });
     var section = V.str(p.section, 'Section', { optional: true, max: 10 });
     var year = V.int(p.year, 'Year', 1, 6, { optional: true, def: null });
     var photo = p.photo ? Users._decodePhoto(p.photo) : null;
@@ -102,12 +106,12 @@ var Users = {
         var matches = existing.importedEmail ? existing.importedEmail === ctx.email : !!derived;
         out = Db.update('StudentProfiles', existing.studentId, {
           userId: user.userId, email: ctx.email, name: name, department: department || existing.department, section: section || existing.section,
-          year: year !== null ? year : existing.year, status: matches ? 'verified' : 'pending',
+          year: year !== null ? year : existing.year, joinYear: parsedRoll ? parsedRoll.joinYear : existing.joinYear, status: matches ? 'verified' : 'pending',
           verifiedBy: matches ? (existing.importedEmail ? 'import-email-match' : 'email-roll-match') : '', verifiedAt: matches ? now : null, updatedAt: now
         });
       } else {
         out = Db.insert('StudentProfiles', { studentId: U.id('student'), userId: user.userId, email: ctx.email, importedEmail: '', rollNo: rollNo, name: name,
-          department: department, section: section, year: year, status: derived ? 'verified' : 'pending', verifiedBy: derived ? 'email-roll-match' : '', verifiedAt: derived ? now : null, createdAt: now, updatedAt: now });
+          department: department, section: section, year: year, joinYear: parsedRoll ? parsedRoll.joinYear : null, status: derived ? 'verified' : 'pending', verifiedBy: derived ? 'email-roll-match' : '', verifiedAt: derived ? now : null, createdAt: now, updatedAt: now });
       }
       Audit.log({ actor: ctx.email, role: 'student', action: 'student.onboard', entityType: 'StudentProfile', entityId: out.studentId,
                   detail: { rollNo: rollNo, resultStatus: out.status } });
@@ -148,19 +152,41 @@ var Users = {
 
   /** Staff/admin/faculty student directory. Faculty only see students in their own courses. */
   revealMobile: function () { notBuilt_('A2'); },
-  setStudentStatus: function () { notBuilt_('B2'); },
+  /**
+   * Disable or re-enable a student profile (B2). A profile is never deleted, so attendance, loans and reports stay intact.
+   * A disabled student cannot check in, scan or book, and cannot be added to a roster. Enabling restores the state the profile
+   * had before: verified if it was verified, pending if it was claimed but not verified, otherwise imported.
+   */
+  setStudentStatus: function (ctx, p) {
+    V.obj(p);
+    var studentId = V.id(p.studentId, 'Student', 'student');
+    var status = V.enumOf(p.status, 'Status', ['disabled', 'enabled']);
+    var reason = V.str(p.reason, 'Reason', { optional: status === 'enabled', min: 3, max: 200 });
+    return Locks.with(function () {
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      var next = status === 'disabled' ? 'disabled' : (prof.userId ? (prof.verifiedAt ? 'verified' : 'pending') : 'imported');
+      if (prof.status === next) return { student: Users._pubStudent(prof), replayed: true };
+      if (status === 'enabled' && prof.status !== 'disabled') fail('INVALID_STATE', 'This profile is not disabled.');
+      var upd = Db.update('StudentProfiles', studentId, { status: next, updatedAt: U.now() });
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: status === 'disabled' ? 'student.disable' : 'student.enable', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, was: prof.status, now: next, reason: reason } });
+      if (prof.userId) Notify.toUser(prof.userId, 'verification', status === 'disabled' ? 'Profile disabled' : 'Profile enabled', status === 'disabled' ? 'Your lab profile was disabled. Contact the lab office.' : 'Your lab profile is active again.', 'stu-status:' + studentId + ':' + next + ':' + upd.updatedAt);
+      return { student: Users._pubStudent(upd), replayed: false };
+    });
+  },
   listStudents: function (ctx, p) {
     p = p || {};
     var q = V.str(p.q, 'Search', { optional: true, max: 60 }).toLowerCase();
     var status = V.enumOf(p.status, 'Status', ['imported', 'pending', 'verified', 'rejected', 'disabled'], { optional: true });
     var limit = V.int(p.limit, 'Limit', 1, 500, { optional: true, def: 100 });
+    var batch = V.int(p.batch, 'Batch (join year)', 2000, 2100, { optional: true, def: null });
     var rows = Db.readAll('StudentProfiles');
-    if (!ctx.has('admin') && !ctx.has('staff')) {
+    if (!Auth.canView(ctx)) {
       var allowed = Roster.studentIdsForFaculty(ctx.faculty ? ctx.faculty.facultyId : '');
       rows = rows.filter(function (r) { return allowed[r.studentId]; });
     }
     rows = rows.filter(function (r) {
       if (status && r.status !== status) return false;
+      if (batch !== null && Users._joinYear(r) !== batch) return false;
       return !q || r.rollNo.toLowerCase().indexOf(q) >= 0 || r.name.toLowerCase().indexOf(q) >= 0;
     });
     rows.sort(function (a, b) { return a.rollNo < b.rollNo ? -1 : 1; });
@@ -180,9 +206,11 @@ var Users = {
         if (seen[rollNo]) fail('BAD_INPUT', 'Duplicate roll number in file.'); seen[rollNo] = true;
         var email = raw.email ? V.email(raw.email) : '';
         if (email && domains.indexOf(email.split('@')[1]) < 0) fail('BAD_INPUT', 'Email is not on an allowed domain.');
+        var parsed = U.parseRoll(rollNo);
         var rec = { rollNo: rollNo, name: V.str(raw.name, 'Name', { max: 80, min: 2 }), importedEmail: email,
-                    department: V.str(raw.department, 'Department', { optional: true, max: 60, def: 'CSE' }), section: V.str(raw.section, 'Section', { optional: true, max: 10 }),
+                    department: V.str(raw.department, 'Department', { optional: true, max: 60, def: parsed ? parsed.dept : 'CSE' }), section: V.str(raw.section, 'Section', { optional: true, max: 10 }),
                     year: V.int(raw.year, 'Year', 1, 6, { optional: true, def: null }) };
+        if (parsed) rec.joinYear = parsed.joinYear;
         var ex = existing[rollNo];
         if (!ex) toCreate.push(rec);
         else if (ex.userId) skipped++;
@@ -193,7 +221,7 @@ var Users = {
     Locks.with(function () {
       if (toCreate.length) Db.insertMany('StudentProfiles', toCreate.map(function (r) { return Object.assign({ studentId: U.id('student'), status: 'imported', createdAt: now, updatedAt: now }, r); }));
       toUpdate.forEach(function (u) { Db.update('StudentProfiles', u.id, Object.assign({ updatedAt: now }, u.patch)); });
-      Audit.log({ actor: ctx.email, role: 'admin', action: 'students.import', entityType: 'StudentProfile', detail: { created: toCreate.length, updated: toUpdate.length, skipped: skipped, errors: errors.length } });
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'students.import', entityType: 'StudentProfile', detail: { created: toCreate.length, updated: toUpdate.length, skipped: skipped, errors: errors.length } });
     });
     return { created: toCreate.length, updated: toUpdate.length, skipped: skipped, errors: errors };
   },
@@ -275,10 +303,10 @@ var Users = {
     V.obj(p);
     var email = V.email(p.email);
     if (Auth.allowedDomains().indexOf(email.split('@')[1]) < 0) fail('BAD_INPUT', 'Email must be on an allowed domain.');
-    var roles = U.uniq(V.arr(p.roles, 'Roles', 4).map(function (r) { return V.enumOf(r, 'Role', Cfg.ROLES); }));
+    var roles = U.uniq(V.arr(p.roles, 'Roles', 5).map(function (r) { return V.enumOf(r, 'Role', Cfg.ROLES); }));
     if (!roles.length) fail('BAD_INPUT', 'Choose at least one role.');
     var displayName = V.str(p.displayName, 'Name', { max: 80, min: 2 });
-    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: 'CSE' });
+    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: 'CSE' }), departmentGiven = p.department !== undefined && p.department !== null && String(p.department).trim() !== '';
     var employeeCode = V.str(p.employeeCode, 'Employee code', { optional: true, max: 30 });
     var status = V.enumOf(p.status, 'Status', ['active', 'disabled'], { optional: true, def: 'active' });
     return Locks.with(function () {
@@ -287,15 +315,17 @@ var Users = {
       var wasAdmin = ex && ex.status === 'active' && String(ex.roles).split(',').indexOf('admin') >= 0;
       var staysAdmin = roles.indexOf('admin') >= 0 && status === 'active';
       if (wasAdmin && !staysAdmin && Users._activeAdminCount(ex.userId) === 0) fail('LAST_ADMIN', 'This is the only administrator. Add another admin before removing or disabling this one.');
-      if (ex) user = Db.update('Users', ex.userId, { displayName: displayName, roles: roles.join(','), status: status, updatedAt: now });
-      else user = Db.insert('Users', { userId: U.id('user'), email: email, displayName: displayName, roles: roles.join(','), status: status, createdAt: now, updatedAt: now });
+      // The account's department drives an HOD's lab scope (B3). Kept when an update leaves it out; CSE for a new HOD that names none.
+      var userDept = departmentGiven ? department : ((ex && ex.department) || (roles.indexOf('hod') >= 0 ? department : ''));
+      if (ex) user = Db.update('Users', ex.userId, { displayName: displayName, roles: roles.join(','), status: status, updatedAt: now, department: userDept });
+      else user = Db.insert('Users', { userId: U.id('user'), email: email, displayName: displayName, roles: roles.join(','), status: status, createdAt: now, updatedAt: now, department: userDept });
       if (roles.indexOf('faculty') >= 0) {
         var fp = Db.getBy('FacultyProfiles', 'userId', user.userId);
         if (fp) Db.update('FacultyProfiles', fp.facultyId, { name: displayName, department: department, employeeCode: employeeCode || fp.employeeCode, email: email, status: status === 'active' ? 'active' : 'disabled' });
         else Db.insert('FacultyProfiles', { facultyId: U.id('faculty'), userId: user.userId, email: email, name: displayName, department: department, employeeCode: employeeCode, status: 'active', createdAt: now });
       }
       Audit.log({ actor: ctx.email, role: 'admin', action: ex ? (before !== roles.join(',') ? 'role.change' : 'user.update') : 'user.create', entityType: 'User', entityId: user.userId,
-                  detail: { email: email, rolesBefore: before, rolesAfter: roles.join(','), status: status } });
+                  detail: { email: email, rolesBefore: before, rolesAfter: roles.join(','), status: status, department: userDept } });
       return { user: Users._pubUser(user) };
     });
   },

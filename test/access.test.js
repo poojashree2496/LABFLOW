@@ -169,3 +169,57 @@ test('a pending student profile is verified by staff or admin only, and the acti
   assert.equal(w.eval(`Db.get('StudentProfiles', ${JSON.stringify(p.studentId)}).status`), 'verified');
   assert.ok(w.eval("Db.readAll('AuditEvents')").some((a) => a.action === 'student.verify' && a.entityId === p.studentId && a.actor === w.admin));
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// B1: the HOD is a read-only role. Swept over the whole route table, not a hand-picked list.
+test('HOD: opens every read view and is refused every write (sweep over all routes)', () => {
+  const w = world({ students: 1 });
+  const s = w.session(), student = w.students[0];
+  const routes = w.eval("Object.keys(ROUTES).map(function(k){ return { k: k, roles: ROUTES[k].roles }; })");
+  // 1. Exactly these routes name the HOD. A new route that grants hod without being added here fails the test.
+  const HOD_READS = ['sessions.day', 'sessions.get', 'attend.studentEvents', 'flags.list', 'events.list', 'classreps.list', 'students.list', 'equipment.list', 'assets.list', 'assets.history',
+    'loans.list', 'booking.check', 'booking.list', 'courses.list', 'timetable.list', 'facultycourses.list', 'kiosks.list', 'roster.list', 'users.list', 'audit.list',
+    'reports.run', 'reports.csv', 'reports.pdf', 'projects.get', 'projects.list', 'labs.live', 'dash.hod'];
+  assert.deepEqual(routes.filter((r) => r.roles.includes('hod')).map((r) => r.k).sort(), HOD_READS.slice().sort());
+  // 2. A read route never refuses the HOD for lack of a role.
+  const readPayload = {
+    'sessions.get': { sessionId: s.sessionId }, 'attend.studentEvents': { sessionId: s.sessionId, studentId: student.studentId }, 'assets.history': { assetId: 'AST-' + '0'.repeat(12) },
+    'roster.list': { sessionId: s.sessionId }, 'reports.run': { type: 'daily', date: w.today }, 'reports.csv': { type: 'daily', date: w.today }, 'projects.get': { projectId: 'PRJ-' + '0'.repeat(12) },
+    'booking.check': { labId: w.lab.labId, resourceType: 'category', resourceId: 'CAT-' + '0'.repeat(12), startAt: w.NOW + 86400000, endAt: w.NOW + 90000000 }
+  };
+  for (const k of HOD_READS) {
+    const res = w.call(w.hod, k, readPayload[k] || {});
+    assert.notEqual(res.error && res.error.code, 'FORBIDDEN', k + ' refused the HOD');
+  }
+  // the report types the HOD must not reach stay admin-only
+  assert.equal(w.err(w.hod, 'reports.run', { type: 'audit' }).code, 'FORBIDDEN');
+  assert.equal(w.err(w.hod, 'reports.run', { type: 'erp' }).code, 'FORBIDDEN');
+  // the cost of a unit and settings stay with staff and admin / admin
+  assert.equal(w.ok(w.hod, 'assets.list', {}).assets.every((a) => a.valueInr === undefined), true);
+  for (const k of ['settings.get', 'system.status', 'system.quota']) assert.equal(w.err(w.hod, k).code, 'FORBIDDEN', k);
+  // 3. Every other route refuses a HOD-only account. Routes open to any account are reads of reference data or the caller's own state.
+  const ANY_ACCOUNT_READS = new Set(['me', 'notifications.list', 'notifications.read', 'categories.list', 'catalog.list', 'kits.list', 'directory.faculty', 'labs.list', 'labs.occupancy', 'systems.status', 'events.mine', 'profile.update']); // profile.update changes only the caller's own mobile/consent
+  const writes = {
+    'sessions.open': { sessionId: s.sessionId }, 'sessions.close': { sessionId: s.sessionId }, 'attend.openRescan': { sessionId: s.sessionId },
+    'attend.roster': { sessionId: s.sessionId }
+  };
+  let refused = 0;
+  for (const r of routes) {
+    if (r.roles.includes('hod') || ANY_ACCOUNT_READS.has(r.k) || r.roles.includes('kiosk') && !r.roles.includes('user')) continue;
+    const res = w.call(w.hod, r.k, writes[r.k] || {});
+    if (r.k === 'attend.roster') { assert.equal(res.ok, true, 'the HOD reads a live roster'); continue; }
+    assert.equal(res.ok, false, r.k + ' let a HOD-only account in');
+    refused++;
+  }
+  assert.ok(refused > 90, 'refusals checked: ' + refused);
+  // an account that is both a HOD and a faculty member still writes as faculty only
+  w.ok(w.admin, 'users.upsert', { email: w.faculty2, displayName: 'Faculty Two', roles: ['faculty', 'hod'], department: 'CSE' });
+  assert.equal(w.err(w.faculty2, 'sessions.open', { sessionId: s.sessionId }).code, 'FORBIDDEN', 'a second role does not widen what the first allows');
+});
+
+test('roles: up to five roles per account, and labels shown to people', () => {
+  const w = world({ students: 0 });
+  const u = w.ok(w.admin, 'users.upsert', { email: 'multi@karunya.edu', displayName: 'Everything', roles: ['student', 'faculty', 'staff', 'hod', 'admin'], department: 'CSE' });
+  assert.equal(u.user.roles.length, 5);
+  assert.equal(w.err(w.admin, 'users.upsert', { email: 'multi2@karunya.edu', displayName: 'Six', roles: ['student', 'faculty', 'staff', 'hod', 'admin', 'admin'] }).code, 'BAD_INPUT');
+});

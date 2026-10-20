@@ -8,6 +8,8 @@
  * stock promised to an approved booking.
  *
  * Statuses: pending -> approved | rejected | cancelled | expired ; approved -> fulfilled | cancelled | expired (no-show) | completed (used workstation slot).
+ * waitlisted (A5): a request for a taken slot that asked to wait. It holds no stock and moves to pending, first come first served,
+ * when a cancellation, rejection or release frees the stock; it expires when its slot starts.
  */
 var Booking = {
   COLLECT_EARLY_MS: 2 * 3600000,
@@ -98,7 +100,17 @@ var Booking = {
   },
   _view: function (r) {
     return { reservationId: r.reservationId, labId: r.labId, resourceType: r.resourceType, resourceId: r.resourceId, resourceName: Booking._resourceName(r), quantity: r.quantity, requesterType: r.requesterType, requesterId: r.requesterId,
-      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, collectionOpensAt: r.startAt - Booking.COLLECT_EARLY_MS, status: r.status, purpose: r.purpose, requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote };
+      requesterName: Booking._requesterName(r), startAt: r.startAt, endAt: r.endAt, collectionOpensAt: r.startAt - Booking.COLLECT_EARLY_MS, status: r.status, purpose: r.purpose, projectId: r.projectId || '', requestedAt: r.requestedAt, decidedAt: r.decidedAt, decisionNote: r.decisionNote, waitlistedAt: r.waitlistedAt || null };
+  },
+  /** Place in the queue (1 = next) among earlier waitlisted requests that compete for the same stock in an overlapping window. */
+  _position: function (r) {
+    var mine = Booking.demand(r.resourceType, r.resourceId, r.quantity);
+    return 1 + Db.where('Reservations', function (x) {
+      if (x.status !== 'waitlisted' || x.labId !== r.labId || x.reservationId === r.reservationId || !U.overlaps(r.startAt, r.endAt, x.startAt, x.endAt)) return false;
+      if (x.waitlistedAt > r.waitlistedAt || (x.waitlistedAt === r.waitlistedAt && x.reservationId > r.reservationId)) return false;
+      var theirs = Booking.demand(x.resourceType, x.resourceId, x.quantity);
+      return Object.keys(theirs).some(function (c) { return mine[c]; });
+    }).length;
   },
   _mayAct: function (ctx, r) {
     if (ctx.has('admin') || ctx.has('staff')) return true;
@@ -114,6 +126,7 @@ var Booking = {
     var rid = rt === 'category' ? V.id(p.resourceId, 'Category', 'category') : rt === 'kit' ? V.id(p.resourceId, 'Kit', 'kit') : V.id(p.resourceId, 'Asset', 'asset');
     var qty = V.int(p.quantity === undefined ? 1 : p.quantity, 'Quantity', 1, 1000), start = V.int(p.startAt, 'Start', 0, 4102444800000), end = V.int(p.endAt, 'End', 0, 4102444800000);
     var purpose = V.str(p.purpose, 'Purpose', { min: 3, max: 200 });
+    var projectId = p.projectId ? V.id(p.projectId, 'Project', 'project') : '';
     var now = U.now();
     if (start < now - 60000) fail('BAD_INPUT', 'The start time is in the past.');
     if (end <= start) fail('BAD_INPUT', 'End must be after start.');
@@ -129,19 +142,36 @@ var Booking = {
     }
     return Locks.with(function () {
       var lab = Db.mustGet('Labs', labId, 'Lab'); if (lab.status !== 'active') fail('INVALID_STATE', 'This lab is not active.');
+      if (projectId) {
+        // A booking may name the project it serves (R7). Students and their groups use their own project; faculty only one they supervise.
+        var project = Db.mustGet('Projects', projectId, 'Project');
+        var allowed = requesterType === 'faculty' ? !!(ctx.faculty && project.supervisorFacultyId === ctx.faculty.facultyId) : !!(ctx.student && Projects.usableBy(ctx.student.studentId, projectId));
+        if (!allowed) fail('NOT_ELIGIBLE', 'Choose one of your own pending or active projects.');
+      }
       var res = rt === 'category' ? Db.mustGet('Categories', rid, 'Category') : rt === 'kit' ? Db.mustGet('Kits', rid, 'Kit') : Db.mustGet('Assets', rid, 'Asset');
       if (rt !== 'category' && res.labId !== labId) fail('BAD_INPUT', 'That resource belongs to a different lab.');
       if (rt === 'asset') { qty = 1; if (res.trackingMode !== 'individual') fail('BAD_INPUT', 'Book consumable stock by category.'); }
-      var active = Db.where('Reservations', function (r) { return r.requesterType === requesterType && r.requesterId === requesterId && (r.status === 'pending' || r.status === 'approved'); });
+      var active = Db.where('Reservations', function (r) { return r.requesterType === requesterType && r.requesterId === requesterId && (r.status === 'pending' || r.status === 'approved' || r.status === 'waitlisted'); });
       var dup = active.filter(function (r) { return r.labId === labId && r.resourceType === rt && r.resourceId === rid && r.quantity === qty && r.startAt === start && r.endAt === end; });
-      if (dup.length) return { reservation: Booking._view(dup[0]), replayed: true };
+      if (dup.length) { var again = Booking._view(dup[0]); if (dup[0].status === 'waitlisted') again.waitlistPosition = Booking._position(dup[0]); return { reservation: again, replayed: true, waitlisted: dup[0].status === 'waitlisted' }; }
       if (active.length >= Settings.get('bookingMaxActivePerRequester')) fail('LIMIT', 'You already have ' + active.length + ' active bookings (limit ' + Settings.get('bookingMaxActivePerRequester') + ').');
       var demand = Booking.demand(rt, rid, qty);
       var rec = { reservationId: U.id('reservation'), labId: labId, resourceType: rt, resourceId: rid, quantity: qty, requesterType: requesterType, requesterId: requesterId, requestedBy: ctx.email, startAt: start, endAt: end,
-        status: 'pending', purpose: purpose, requestedAt: now, decidedBy: '', decidedAt: null, decisionNote: '', cancelledAt: null };
-      Booking._checkAssetExclusive(rec, null);
-      Booking._checkCapacity(labId, demand, start, end, null);
+        status: 'pending', purpose: purpose, requestedAt: now, decidedBy: '', decidedAt: null, decisionNote: '', cancelledAt: null, projectId: projectId };
+      var waitlisted = false;
+      try {
+        Booking._checkAssetExclusive(rec, null);
+        Booking._checkCapacity(labId, demand, start, end, null);
+      } catch (e) {
+        if (!(p.waitlist === true && e && e.code === 'NOT_AVAILABLE')) throw e;
+        waitlisted = true; rec.status = 'waitlisted'; rec.waitlistedAt = now;
+      }
       var r = Db.insert('Reservations', rec);
+      if (waitlisted) {
+        Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'booking.waitlist', entityType: 'Reservation', entityId: r.reservationId, detail: { resourceType: rt, resourceId: rid, quantity: qty, startAt: start, endAt: end } });
+        var queued = Booking._view(r); queued.waitlistPosition = Booking._position(r);
+        return { reservation: queued, replayed: false, waitlisted: true };
+      }
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'booking.request', entityType: 'Reservation', entityId: r.reservationId, detail: { resourceType: rt, resourceId: rid, quantity: qty, startAt: start, endAt: end } });
       Notify.toRole('staff', 'booking', 'New booking request', Booking._requesterName(r) + ' requested ' + Booking._resourceName(r) + ' x' + qty + ' from ' + U.fmt(start) + '.', 'bk-new:' + r.reservationId);
       return { reservation: Booking._view(r), replayed: false };
@@ -163,6 +193,7 @@ var Booking = {
       var next = Db.update('Reservations', r.reservationId, { status: approve ? 'approved' : 'rejected', decidedBy: ctx.email, decidedAt: U.now(), decisionNote: note });
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: approve ? 'booking.approve' : 'booking.reject', entityType: 'Reservation', entityId: r.reservationId, detail: { note: note } });
       Booking._notifyRequester(next, 'booking', approve ? 'Booking approved' : 'Booking rejected', Booking._resourceName(next) + ' from ' + U.fmt(next.startAt) + (note ? '. ' + note : ''), 'bk-dec:' + r.reservationId);
+      if (!approve) Booking._promote(r.labId);
       return { reservation: Booking._view(next) };
     });
   },
@@ -173,11 +204,43 @@ var Booking = {
       var r = Db.mustGet('Reservations', V.id(p.reservationId, 'Reservation', 'reservation'), 'Reservation');
       if (!Booking._mayAct(ctx, r)) fail('FORBIDDEN', 'You cannot cancel this booking.');
       if (r.status === 'cancelled') return { reservation: Booking._view(r), replayed: true };
-      if (r.status !== 'pending' && r.status !== 'approved') fail('INVALID_STATE', 'A ' + r.status + ' booking cannot be cancelled.');
+      if (r.status !== 'pending' && r.status !== 'approved' && r.status !== 'waitlisted') fail('INVALID_STATE', 'A ' + r.status + ' booking cannot be cancelled.');
       var next = Db.update('Reservations', r.reservationId, { status: 'cancelled', cancelledAt: U.now() });
       Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'booking.cancel', entityType: 'Reservation', entityId: r.reservationId, detail: { was: r.status } });
+      Booking._promote(r.labId);
       return { reservation: Booking._view(next), replayed: false };
     });
+  },
+
+  /**
+   * Waitlist (A5). Call inside the lock after stock is freed. Waitlisted requests whose slot has started expire; the rest are
+   * offered the stock first come first served (by waitlistedAt): one that now fits becomes a normal pending request and the
+   * requester is told, one that still does not fit keeps its place. Returns the promoted reservation ids.
+   */
+  _promote: function (labId) {
+    var now = U.now(), promoted = [];
+    var queue = Db.where('Reservations', function (r) { return r.status === 'waitlisted' && r.labId === labId; });
+    queue.sort(function (a, b) { return (a.waitlistedAt - b.waitlistedAt) || (a.reservationId < b.reservationId ? -1 : 1); });
+    queue.forEach(function (r) {
+      try {
+        if (r.startAt < now) {
+          var gone = Db.update('Reservations', r.reservationId, { status: 'expired', decidedAt: now, decisionNote: 'Waitlist ended: the slot started before stock became free' });
+          Audit.log({ actor: 'system', role: 'system', action: 'booking.expire', entityType: 'Reservation', entityId: r.reservationId, detail: { was: 'waitlisted' } });
+          Booking._notifyRequester(gone, 'booking', 'Waitlist ended', Booking._resourceName(gone) + ' from ' + U.fmt(gone.startAt) + ' did not become free in time.', 'bk-wl-exp:' + r.reservationId);
+          return;
+        }
+        try {
+          Booking._checkAssetExclusive(r, r.reservationId);
+          Booking._checkCapacity(r.labId, Booking.demand(r.resourceType, r.resourceId, r.quantity), r.startAt, r.endAt, r.reservationId);
+        } catch (e) { if (e && e.code === 'NOT_AVAILABLE') return; throw e; }
+        var next = Db.update('Reservations', r.reservationId, { status: 'pending', requestedAt: now });
+        promoted.push(r.reservationId);
+        Audit.log({ actor: 'system', role: 'system', action: 'booking.promote', entityType: 'Reservation', entityId: r.reservationId, detail: { waitedMs: now - r.waitlistedAt } });
+        Booking._notifyRequester(next, 'booking', 'Your waitlisted booking is now open', Booking._resourceName(next) + ' from ' + U.fmt(next.startAt) + ' is free. Lab staff will confirm it.', 'bk-wl:' + r.reservationId);
+        Notify.toRole('staff', 'booking', 'New booking request', Booking._requesterName(next) + ' moved off the waitlist for ' + Booking._resourceName(next) + ' from ' + U.fmt(next.startAt) + '.', 'bk-new:' + r.reservationId);
+      } catch (e) { Syslog.error('booking', 'PROMOTE_FAILED', String(e && e.message), { id: r.reservationId }); }
+    });
+    return promoted;
   },
 
   _notifyRequester: function (r, type, title, body, dedupe) {
@@ -193,11 +256,11 @@ var Booking = {
       if (r.requesterType === 'faculty') return !!ctx.faculty && r.requesterId === ctx.faculty.facultyId;
       return !!groups[r.requesterId];
     });
-    return { reservations: rows.slice(-100).reverse().map(Booking._view) };
+    return { reservations: rows.slice(-100).reverse().map(function (r) { var v = Booking._view(r); if (r.status === 'waitlisted') v.waitlistPosition = Booking._position(r); return v; }) };
   },
   list: function (ctx, p) {
     p = p || {};
-    var status = p.status ? V.enumOf(p.status, 'Status', ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed']) : '';
+    var status = p.status ? V.enumOf(p.status, 'Status', ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed', 'waitlisted']) : '';
     var rows = Db.where('Reservations', function (r) { return (!status || r.status === status) && (!p.labId || r.labId === p.labId); }).reverse();
     return { reservations: rows.slice(0, 200).map(Booking._view), total: rows.length };
   },
@@ -243,7 +306,10 @@ var Booking = {
         if (r.resourceType === 'asset' && r.status === 'approved') released++; else n++;
       } catch (e) { Syslog.error('booking', 'EXPIRE_FAILED', String(e && e.message), { id: r.reservationId }); }
     });
-    return { expired: n, released: released, completed: completed };
+    var promoted = 0, labs = {};
+    Db.where('Reservations', function (r) { return r.status === 'waitlisted'; }).forEach(function (r) { labs[r.labId] = true; });
+    Object.keys(labs).forEach(function (labId) { promoted += Locks.with(function () { return Booking._promote(labId); }).length; });
+    return { expired: n, released: released, completed: completed, promoted: promoted };
   }
 };
 

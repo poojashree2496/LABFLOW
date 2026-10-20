@@ -94,6 +94,80 @@ function bookingRow(b, reload) {
       ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject booking', fields: [{ name: 'note', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('booking.decide', { reservationId: b.reservationId, approve: false, note: v.note }); reload(); } }) })) : ui.status(b.status));
 }
 
+/* ------------------------------------------------------------------ Live board (R1, R2, R9) */
+/* A named board for faculty, coordinators, HODs and super admins: who is inside each lab, on which system and for which project.
+   It reads labs.live (named, role-restricted); students and kiosks only ever see head counts. Readable remotely. */
+const BOARD_SYSTEM = { free: ['Free', 'good'], busy: ['In use', 'info'], booked: ['Booked', 'warn'], unavailable: ['Unavailable', 'bad'] };
+function liveBoard(root) {
+  const stamp = h('span', { class: 'hint t-data', 'aria-live': 'polite' }), notice = h('div', { role: 'status' }), picker = h('div'), out = h('div', { style: { display: 'grid', gap: '16px' } });
+  root.append(h('h1', { class: 't-h1' }, 'Live board'),
+    h('p', { class: 't-muted' }, 'Who is inside each lab right now, on which system and for which project. Names are shown to faculty, coordinators, HODs and super admins only. This page refreshes by itself.'),
+    h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, picker, h('span', { class: 'toolbar' }, stamp, ui.button('Refresh now', { size: 'sm', icon: 'refresh', onClick: () => load(true) }))), notice, out);
+  let data = null, skew = 0, fetchedAt = 0, failedAt = 0, stopped = false, busy = false, interval = null, firstLoad = true;
+  const wanted = () => (LF.sel && LF.sel.boardLab) || '';
+  const nowServer = () => Date.now() + skew;
+  LF.onLeave(() => { stopped = true; });
+
+  function systemSummary(lab) {
+    const n = { free: 0, busy: 0, booked: 0, unavailable: 0 };
+    lab.systems.forEach((s) => { n[s.status] = (n[s.status] || 0) + 1; });
+    return n;
+  }
+  function labCard(lab) {
+    const n = systemSummary(lab), over = !!lab.capacity && lab.inside > lab.capacity;
+    const visits = lab.visits.length
+      ? h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('caption', { class: 'sr-only', style: { position: 'absolute', left: '-9999px' } }, 'Students inside ' + lab.name),
+        h('thead', null, h('tr', null, ['Student', 'Session', 'System', 'Project', 'Inside for'].map((c) => h('th', { scope: 'col', style: { textAlign: 'left' } }, c)))),
+        h('tbody', null, lab.visits.map((v) => h('tr', null,
+          h('td', null, h('strong', null, v.name), h('div', { class: 'hint t-data' }, v.rollNo)),
+          h('td', null, v.sessionTitle || '-', v.sessionType === 'openlab' ? ' ' : null, v.sessionType === 'openlab' ? ui.badge('open lab', 'info') : null),
+          h('td', null, v.assetName ? [v.assetName, v.assetTag ? h('div', { class: 'hint t-data' }, v.assetTag) : null] : h('span', { class: 'hint' }, 'Own laptop / none')),
+          h('td', null, v.projectTitle ? v.projectTitle : h('span', { class: 'hint' }, 'No project chosen')),
+          h('td', null, h('span', { class: 't-data', 'data-since': String(v.since || '') }, v.since ? fmt.mins((nowServer() - v.since) / 60000) : '-'), h('div', { class: 'hint t-data' }, v.since ? 'since ' + fmt.time(v.since) : ''))))))) 
+      : ui.empty('Nobody inside', 'Students who check in to this lab appear here with their system and project.');
+    const systems = lab.systems.length
+      ? h('details', null, h('summary', null, 'Systems (' + lab.systems.length + ')'),
+        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } }, lab.systems.map((s) => { const m = BOARD_SYSTEM[s.status] || [s.status, '']; return h('span', { class: 'badge ' + m[1], title: s.assetTag || '' }, s.name + ' · ' + m[0]); })))
+      : null;
+    return h('section', { class: 'card', 'aria-label': lab.name, style: { display: 'grid', gap: '12px', minWidth: 0 } },
+      h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('span', { class: 't-label' }, lab.code), h('h2', { class: 't-h2', style: { margin: 0 } }, lab.name)),
+        h('div', { class: 'toolbar' }, over ? ui.badge('over capacity', 'bad') : null, h('span', null, h('span', { class: 't-big', style: { fontSize: '30px' } }, String(lab.inside)), h('span', { class: 'hint' }, lab.capacity ? ' inside of ' + lab.capacity : ' inside')))),
+      lab.systems.length ? h('div', { class: 'toolbar' }, ['free', 'busy', 'booked', 'unavailable'].filter((k) => n[k]).map((k) => ui.badge(n[k] + ' ' + BOARD_SYSTEM[k][0].toLowerCase(), BOARD_SYSTEM[k][1]))) : null,
+      visits, systems);
+  }
+  function draw() {
+    if (!data) return;
+    const labs = data.labs, sel = wanted(), shown = labs.filter((l) => !sel || l.labId === sel);
+    clear(picker);
+    if (labs.length > 1) picker.append(h('div', { class: 'field', style: { maxWidth: '280px' } }, h('label', { for: 'board-lab' }, 'Lab'), h('select', { class: 'input', id: 'board-lab', onchange: (e) => { LF.sel = LF.sel || {}; LF.sel.boardLab = e.target.value; draw(); } },
+      h('option', { value: '' }, 'All labs (' + labs.reduce((a, l) => a + l.inside, 0) + ' inside)'), labs.map((l) => h('option', { value: l.labId, selected: l.labId === sel }, l.code + ' · ' + l.name + ' (' + l.inside + ')')))));
+    clear(out).append(...(shown.length ? shown.map(labCard) : [ui.empty('No labs to show', 'Active labs in your scope appear here.')]));
+    const stale = failedAt && failedAt >= fetchedAt;
+    stamp.textContent = 'Updated ' + fmt.time(data.serverNow) + (stale ? ' (not refreshed)' : '');
+  }
+  function tick() { out.querySelectorAll('[data-since]').forEach((el) => { const s = Number(el.getAttribute('data-since')); if (s) el.textContent = fmt.mins((nowServer() - s) / 60000); }); }
+  async function load(manual) {
+    if (stopped || busy) return; busy = true;
+    try {
+      const r = await api('labs.live');
+      data = r; skew = r.serverNow - Date.now(); fetchedAt = Date.now(); failedAt = 0; clear(notice);
+      if (firstLoad || manual) { firstLoad = false; }
+      const ms = Math.max(3, r.refreshSeconds || (LF.me.settings && LF.me.settings.occupancyRefreshSeconds) || 5) * 1000;
+      if (!interval) interval = LF.every(ms, () => load(false));
+      draw();
+    } catch (e) {
+      failedAt = Date.now();
+      if (!data) { clear(out).append(ui.errorBox(e, () => { clear(out).append(ui.skeleton(3)); load(true); })); if (!interval) interval = LF.every(10000, () => load(false)); }
+      else { clear(notice).append(h('div', { class: 'card bad', role: 'alert' }, 'Could not refresh the board. Showing the last data from ' + fmt.time(data.serverNow) + '. ' + LF.errMsg(e))); draw(); }
+    } finally { busy = false; }
+  }
+  out.append(ui.skeleton(3));
+  LF.every(30000, tick);
+  load(true);
+}
+LF.liveBoard = liveBoard;
+['staff', 'faculty'].forEach((role) => LF.register({ role, id: 'board', label: 'Live board', icon: 'users', render(root) { return liveBoard(root); } }));
+
 /* ------------------------------------------------------------------ Issue / Return */
 LF.register({ role: 'staff', id: 'desk', label: 'Issue / Return', icon: 'scan', render(root) {
   const wanted = LF.sel && LF.sel.loanId; if (LF.sel) LF.sel.loanId = null;
@@ -515,7 +589,7 @@ LF.register({ role: 'staff', id: 'bookings', label: 'Bookings', icon: 'calendar'
   ui.loadInto(out, async () => {
     await loadMeta(); const r = await api('booking.list', {});
     const reload = () => LF.go('bookings');
-    return ui.table({ caption: 'Bookings', searchPlaceholder: 'Search requester or item', pageSize: 20, rows: r.reservations, filters: [{ label: 'Status', options: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed'], get: (x) => x.status }, { label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }],
+    return ui.table({ caption: 'Bookings', searchPlaceholder: 'Search requester or item', pageSize: 20, rows: r.reservations, filters: [{ label: 'Status', options: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed', 'waitlisted'], get: (x) => x.status }, { label: 'Lab', options: opt(meta.labs, 'labId', 'name'), get: (x) => x.labId }],
       columns: [{ key: 'requesterName', label: 'Requester' }, { key: 'resourceName', label: 'Item' }, { key: 'quantity', label: 'Qty', align: 'right' }, { key: 'startAt', label: 'From', render: (x) => fmt.dt(x.startAt) }, { key: 'endAt', label: 'To', render: (x) => fmt.dt(x.endAt) }, { key: 'purpose', label: 'Purpose' },
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },
         { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, x.status === 'pending' ? [ui.button('Approve', { size: 'sm', kind: 'primary', onClick: async () => { await api('booking.decide', { reservationId: x.reservationId, approve: true }); LF.toast('Approved', 'good'); reload(); } }), ui.button('Reject', { size: 'sm', onClick: () => LF.ui.formModal({ title: 'Reject booking', fields: [{ name: 'note', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Reject', onSubmit: async (v) => { await api('booking.decide', { reservationId: x.reservationId, approve: false, note: v.note }); reload(); } }) })] : null,
@@ -525,15 +599,19 @@ LF.register({ role: 'staff', id: 'bookings', label: 'Bookings', icon: 'calendar'
 
 /* ------------------------------------------------------------------ People */
 LF.register({ role: 'staff', id: 'people', label: 'Students', icon: 'users', render(root) {
-  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Students'), out);
+  const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Students'), ui.tabs([
+    { id: 'list', label: 'Student list', render: (p) => { p.appendChild(out); } },
+    { id: 'import', label: 'Import students', render: (p) => { p.appendChild(h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Import the student list'), LF.studentImport().el)); } }]));
   ui.loadInto(out, async () => {
     const r = await api('students.list', { limit: 500 }); const reload = () => LF.go('people');
-    return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }],
-      empty: ui.empty('No students yet', 'An administrator imports the student list. Students can also create their own profile at first sign-in.'),
-      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'hasPhoto', label: 'Photo', render: (x) => x.hasPhoto ? 'Yes' : 'No', text: (x) => x.hasPhoto ? 'yes' : 'no' },
-        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null) }] }).el;
+    return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }, { label: 'Batch', options: [...new Set(r.students.map((x) => x.joinYear).filter(Boolean))].sort(), get: (x) => x.joinYear }],
+      empty: ui.empty('No students yet', 'Import the student list from the Import tab. Students can also create their own profile at first sign-in.'),
+      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Sec.' }, { key: 'year', label: 'Year' }, { key: 'joinYear', label: 'Batch', render: (x) => x.joinYear || '-' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { key: 'hasPhoto', label: 'Photo', render: (x) => x.hasPhoto ? 'Yes' : 'No', text: (x) => x.hasPhoto ? 'yes' : 'no' },
+        { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null, LF.studentStatusButton(x, reload)) }] }).el;
   });
 } });
+
+LF.register({ role: 'staff', id: 'rosters', label: 'Course rosters', icon: 'book', render(root) { root.append(h('h1', { class: 't-h1' }, 'Course rosters'), LF.rosterView()); } });
 
 /* ------------------------------------------------------------------ Scanning self-work and research visits (Version B) */
 LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', render(root) {
@@ -542,6 +620,6 @@ LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', ren
 } });
 
 LF.register({ role: 'staff', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
-LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue'])); } });
+LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'systemUsage', 'projects'])); } });
 })();
 </script>

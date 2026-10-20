@@ -6,7 +6,7 @@ Legend: `[ ]` not started, `[~]` in progress, `[!]` blocked (say why). Order ins
 
 Implementation deadline: 23 Oct 2026, 5:00 PM.
 
-Last updated: 2026-10-19
+Last updated: 2026-10-20
 
 ---
 
@@ -52,13 +52,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-A Data, security and queue (@?)
 
-- [ ] **A1 Register numbers** (R18)
-  - Files: `Util.gs` (`U.parseRoll`), `UserService.gs` (`Users.onboard`, `Users.importStudents`, `Users.listStudents`/`students.list`).
-  - Parse `^URK(\d{2})([A-Z]{2,4})(\d{3,5})$` into `{ joinYear: 2000+yy, gradYear: joinYear+4, dept, serial }`. Return `null` for other formats; `V.rollNo` still accepts them.
-  - On onboarding and import, fill `joinYear`, and fill `department` when it is blank.
-  - Add a `batch` (join year) filter to `students.list`.
-  - Done when: `URK24CS1021` gives joinYear 2024, gradYear 2028, dept CS; a PhD-style number imports without parsed fields; the filter works.
-  - Tests: `test/api.test.js` or a new `test/roll.test.js`.
 - [ ] **A2 Phone encryption** (R15)
   - Files: `Util.gs` (`Crypt`), `Setup.gs` (`PII_KEY` in `Setup.initialise`, `Setup.selfTest` round trip), `UserService.gs` (`Users.me`, `Users.updateProfile`, `Users.onboard`), `Code.gs` (`setupEncryptMobiles` global, protected by `ownerOnly_`), `TriggerService.gs` (nightly sweep step), `ScriptsStaff.html` (loan desk reveal), `test/harness.js`.
   - `Crypt.seal`: random IV (hash of `Utilities.getUuid()`); keystream block i = HMAC(encKey, IV || i); tag = HMAC(macKey, `enc1|IV|ct`) cut to 16 bytes.
@@ -92,52 +85,14 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Auto-run in July using a JobRuns marker, plus the academic-year start-month setting (default June).
   - Done when: after archiving, student history and totals are unchanged, the live AttendanceEvents row count drops, the archive holds the rows, a correction on an archived session is refused, and the audit chain still verifies.
   - Tests: new `test/archive.test.js`.
-- [ ] **A5 Waitlist** (R6)
-  - Files: `BookingService.gs` (`Booking.request`, `Booking.cancel`, `Booking.decide`, `Booking.expireStale`, `Booking.mine`, new `Booking._promote`), `NotificationService.gs` (reuse `Notify.toStudent`), `ScriptsStudent.html` (the "Join waitlist" button and position).
-  - In `Booking.request` with `waitlist: true`: when `_checkCapacity` or `_checkAssetExclusive` throws `NOT_AVAILABLE`, insert the booking as `waitlisted` with `waitlistedAt`. It is not counted in `_holds`. It does count toward the active-booking limit, which stops spamming.
-  - `Booking._promote(labId, resourceType, resourceId, startAt, endAt)`: first-come by `waitlistedAt`. Re-run the capacity checks, excluding the booking's own id. Promote to `pending` (or `approved`, following the normal flow) and notify the student. Call it after cancel, after reject, and after the no-show release in `expireStale`, inside `Locks.with`.
-  - `Booking.mine` shows the position (`#2`). A waitlisted entry expires when its slot starts.
-  - Done when: two students wait for a taken 3D printer slot; cancelling promotes the first and notifies them; the second becomes `#1`.
-  - Tests: `test/inventory.test.js`.
-
 ### WS-B Roles, dashboards, live board and reports (@?)
 
-- [ ] **B1 Roles** (R16)
-  - Files: `AuthService.gs` (`Auth.canView`), every read handler with `has('admin') || has('staff')`, `UserService.gs` (`Users.upsertUser` role cap 4 -> 5; `Dash.admin` role counts), `Scripts.html` (`ROLE_LABEL`: Coordinator, Super admin, HOD), `ScriptsThemes.html` (its copy of the labels), `ScriptsFaculty.html` / `ScriptsStudent.html` (text "coordinator" -> "Event lead"), `ScriptsAdmin.html` (role checkboxes, filters, badges).
-  - Add `hod` to the roles of the read-only routes. The full list is in the role audit summary below this section.
-  - In handlers, switch **reads only** to `Auth.canView(ctx)`.
-  - `system.status`, `system.quota` and `settings.get` stay admin-only.
-  - Done when: a HOD account can open every read view, and is refused every write. Test the refusal as a sweep over all routes, not a hand-picked list.
-  - Tests: `test/access.test.js`.
-- [ ] **B2 Coordinator manages students** (R16)
-  - Files: `Code.gs` (`students.import`, `roster.import`, `roster.remove` -> staff + admin), `UserService.gs` (`Users.importStudents` audit role `ctx.roles[0]`; new `Users.setStudentStatus` for `students.status`), `LabService.gs` (`Roster.import` audit role), `ScriptsStaff.html` (reuse the admin import and roster views, the way `ScriptsAdmin.html` `reuse()` shares staff views).
-  - "Remove a student" means disable the profile (`status: 'disabled'`), never delete it. Disabled students cannot check in.
-  - Done when: a coordinator imports a CSV, adds a student to a course, and disables one; each action is audited with role `staff`.
-  - Tests: `test/api.test.js`.
 - [ ] **B3 Department scope and HOD views** (R16)
   - Files: `LabService.gs` (`Labs.upsert` takes `department`), `UserService.gs` (`department` on users), `AuthService.gs` (`Auth.labScope`), `AdminService.gs` (`Dash.hod`, built from `Dash.admin` + `Dash.staff`, filtered by scope), new HOD views in `ScriptsAdmin.html` or a new `ScriptsHod.html` (if new: add it to `FRONTEND_FILES` and `Index.html`).
   - HOD views: overview, labs and facilities (read-only asset list), live board (B4), reports.
   - A placeholder HOD "Overview" (live occupancy only) sits at the end of `ScriptsAdmin.html`; replace it.
   - Done when: a CSE HOD sees CSE labs and labs without a department, and does not see an ECE lab.
   - Tests: `test/access.test.js` or a new `test/hod.test.js`.
-- [~] **B4 Live board and systems** (R1, R2, R9)
-  - Files: `LabService.gs` (`labs.live`, `systems.status`), `Scripts.html` or `ScriptsStaff.html` (a Live view, auto-refresh every `occupancyRefreshSeconds`), registered for faculty, staff, admin and hod.
-  - Backend implemented and tested; shared board screen remains in progress. See [Live board](live-board.md).
-  - `labs.live`: for each lab in scope, each student inside, with name, register number, session, system, project and since-when.
-    - Build it from `Attend.studentState` and the latest IN or WORK event carrying `assetId` and `projectId`. `Jobs.overstay` already loops over the students inside.
-    - Do not put names into the cached `labs.occupancy` payload; every user can read that one.
-  - C3 already implements the workstation category flag/editor and `Work.current`/`Work.occupants` helpers; reuse these for effective work assignments and availability.
-  - `systems.status`: each workstation is free, busy (someone inside on it) or booked (a held booking now). Students get free/busy only.
-  - Done when: two students check in on two systems; the board shows both with their projects; one checks out and disappears.
-  - Tests: `test/checkin.test.js`.
-- [ ] **B5 Reports** (R10, R11, R7)
-  - Files: `ReportService.gs` (`Reports._student`, new `Reports._systemUsage`, new `Reports._projects`, `Reports.TYPES`), `Scripts.html` (`LF.ui.reports` asset picker), the views' report lists, `ScriptsStudent.html` (days and hours per lab on the student home).
-  - Student report: add a totals block with total hours, distinct days, visits and auto sign-outs. The lookup by register number already works.
-  - `systemUsage` for one asset: distinct people, visits, hours, and a table of who used it, when and for what (project title or booking purpose). Sources: `AttendanceEvents.assetId`, Reservations, LoanItems.
-  - `projects`: each project with owner, supervisor, timeline, status, outcome and hours logged.
-  - Done when: the three reports run, give the expected numbers on a seeded world, and export to CSV.
-  - Tests: `test/platform.test.js` or a new `test/reports.test.js`.
-
 ### WS-C Extra-hours check-in and projects (@?)
 
 - [ ] **C5 Confirm Intel Unnati AI Lab data** (R8, real inputs expected 21 Oct)
@@ -145,9 +100,9 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - Replace the placeholder building, room, synthetic GPS/radius, capacity, hours and inventory with confirmed details in `dev/world.js`; update seed assertions and the demo notes.
   - Verify the real geofence at the lab door during deployment. No real location or asset list has been supplied yet.
 
-### Role audit summary (for B1)
+### Role audit summary (B1 done)
 
-The routes a HOD needs read access to, with their current roles in `src/Code.gs`. Also extend the handler checks shown.
+The routes a HOD needs read access to, with their roles before B1. B1 added `hod` to all of them except `dash.admin`, `dash.staff` and `activity.feed`, which return unscoped totals for every lab; the HOD gets the department-scoped `dash.hod` instead (B3). `photo.get` stays closed to the HOD (student photos).
 
 | Route(s) | Roles today | Handler check to extend |
 |---|---|---|

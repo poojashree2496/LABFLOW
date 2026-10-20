@@ -390,7 +390,8 @@ function runCleanups() { LF.timers.forEach(clearInterval); LF.timers = []; LF.cl
     `when` hides a view unless it applies to this account (for example the class representative page). */
 LF.register = (v) => { (LF.routes[v.role] = LF.routes[v.role] || []).push(v); };
 const visible = (role) => (LF.routes[role] || []).filter((v) => !v.when || v.when(LF.me));
-const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator', hod: 'HOD', kiosk: 'Kiosk' };
+const ROLE_LABEL = { student: 'Student', faculty: 'Faculty', staff: 'Coordinator', admin: 'Super admin', hod: 'HOD', kiosk: 'Kiosk' };
+LF.roleName = (r) => ROLE_LABEL[r] || r;
 const ROLE_ORDER = ['admin', 'hod', 'staff', 'faculty', 'student'];
 
 function appRoot() { return $('#app'); }
@@ -780,7 +781,7 @@ LF.ui.flagsView = () => {
 
 /* ------------------------------------------------------------------ generic reports view (all roles) */
 const REPORT_LABEL = { digest: 'Daily digest (per lab)', monthlyAudit: 'Monthly audit', custom: 'Custom date range', session: 'Session log', erp: 'ERP export (fixed columns)', daily: 'Daily sessions table', monthly: 'Monthly summary',
-  faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail' };
+  faculty: 'Faculty report', student: 'Student attendance', utilisation: 'Lab utilisation', assetUsage: 'Asset usage', inventory: 'Inventory snapshot', overdue: 'Overdue loans', audit: 'Audit trail', systemUsage: 'System usage', projects: 'Projects' };
 LF.ui.reports = (allowed) => {
   const box = h('div', { style: { display: 'grid', gap: '16px' } }), out = h('div');
   const type = h('select', { class: 'input', id: 'rp-type', style: { maxWidth: '280px' } }, allowed.map((t) => h('option', { value: t }, REPORT_LABEL[t])));
@@ -792,9 +793,10 @@ LF.ui.reports = (allowed) => {
   const fac = h('select', { class: 'input', id: 'rp-fac', 'aria-label': 'Faculty member' }); let facLoaded = false;
   const lab = h('select', { class: 'input', id: 'rp-lab', 'aria-label': 'Lab' }, h('option', { value: '' }, 'All labs')); let labsLoaded = false;
   const ses = h('select', { class: 'input', id: 'rp-ses', 'aria-label': 'Session' }); let sesLoaded = '';
+  const asset = h('select', { class: 'input', id: 'rp-asset', 'aria-label': 'System' }, h('option', { value: '' }, 'Choose a system')); let assetsLoaded = false;
   const wrap = (lbl, el, id) => h('div', { class: 'field', dataset: { k: id } }, h('label', { for: el.id }, lbl), el);
-  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses');
-  const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp'];
+  const fDate = wrap('Date', date, 'date'), fMonth = wrap('Month', month, 'month'), fFrom = wrap('From', from, 'from'), fTo = wrap('To', to, 'to'), fWho = wrap('Student', who, 'who'), fFac = wrap('Faculty member', fac, 'fac'), fLab = wrap('Lab', lab, 'lab'), fSes = wrap('Session', ses, 'ses'), fAsset = wrap('System or asset', asset, 'asset');
+  const RANGED = ['faculty', 'student', 'utilisation', 'assetUsage', 'audit', 'custom', 'erp', 'systemUsage'];
   let last = null;
   const priv = () => LF.me.roles.includes('admin') || LF.me.roles.includes('staff');
   function loadSessions() {
@@ -807,8 +809,9 @@ LF.ui.reports = (allowed) => {
     fFrom.hidden = fTo.hidden = RANGED.indexOf(t) < 0;
     fFac.hidden = !(t === 'faculty' && priv()); if (!fFac.hidden && !facLoaded) { facLoaded = true; api('directory.faculty').then((r) => { r.faculty.forEach((f) => fac.appendChild(h('option', { value: f.facultyId }, f.name))); }).catch(fail); }
     fWho.hidden = !(t === 'student' && (priv() || LF.me.roles.includes('faculty')));
-    fLab.hidden = !(t === 'digest' || t === 'custom'); if (!fLab.hidden && !labsLoaded) { labsLoaded = true; api('labs.list').then((r) => r.labs.forEach((l) => lab.appendChild(h('option', { value: l.labId }, l.code + ' ' + l.name)))).catch(fail); }
+    fLab.hidden = !(t === 'digest' || t === 'custom' || t === 'projects'); if (!fLab.hidden && !labsLoaded) { labsLoaded = true; api('labs.list').then((r) => r.labs.forEach((l) => lab.appendChild(h('option', { value: l.labId }, l.code + ' ' + l.name)))).catch(fail); }
     fSes.hidden = t !== 'session'; if (!fSes.hidden) loadSessions();
+    fAsset.hidden = t !== 'systemUsage'; if (!fAsset.hidden && !assetsLoaded) { assetsLoaded = true; api('assets.list', { limit: 500 }).then((r) => r.assets.filter((a) => a.trackingMode === 'individual').forEach((a) => asset.appendChild(h('option', { value: a.assetId }, a.name + (a.assetTag ? ' (' + a.assetTag + ')' : ''))))).catch(fail); }
   }
   type.addEventListener('change', sync); date.addEventListener('change', () => { if (type.value === 'session') loadSessions(); }); sync();
   async function params() {
@@ -816,7 +819,8 @@ LF.ui.reports = (allowed) => {
     if (t === 'daily' || t === 'digest') p.date = date.value;
     if (t === 'monthly' || t === 'monthlyAudit') p.month = month.value;
     if (RANGED.indexOf(t) >= 0) { p.from = from.value; p.to = to.value; }
-    if ((t === 'digest' || t === 'custom') && lab.value) p.labId = lab.value;
+    if ((t === 'digest' || t === 'custom' || t === 'projects') && lab.value) p.labId = lab.value;
+    if (t === 'systemUsage') { if (!asset.value) throw new ApiError('BAD_INPUT', 'Choose a system.'); p.assetId = asset.value; }
     if (t === 'session') { if (!ses.value) throw new ApiError('BAD_INPUT', 'Choose a session.'); p.sessionId = ses.value; }
     if (t === 'faculty' && !fFac.hidden) p.facultyId = fac.value;
     if (t === 'student' && who.value.trim()) { const r = await api('students.list', { q: who.value.trim(), limit: 5 }); const s = r.students.find((x) => x.rollNo.toLowerCase() === who.value.trim().toLowerCase()) || r.students[0]; if (!s) throw new ApiError('NOT_FOUND', 'No student matches that roll number.'); p.studentId = s.studentId; }
@@ -836,7 +840,7 @@ LF.ui.reports = (allowed) => {
         h('div', { style: { display: 'grid', gap: '16px' } }, sections.map((s) => h('section', null, s.title ? h('h4', { class: 't-h3', style: { margin: '0 0 6px' } }, s.title) : null, sectionTable(s, r.title))))]);
     } catch (e) { clear(out).appendChild(errorBox(e)); }
   } });
-  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fLab, fSes, fWho, fFac, run), out]);
+  append(box, [h('div', { class: 'card', style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' } }, h('div', { class: 'field' }, h('label', { for: 'rp-type' }, 'Report'), type), fDate, fMonth, fFrom, fTo, fLab, fSes, fAsset, fWho, fFac, run), out]);
   return box;
 };
 const ui = LF.ui;

@@ -247,6 +247,7 @@ var Attend = {
   _verifiedStudent: function (studentId) {
     var st = Db.get('StudentProfiles', studentId);
     if (!st) fail('UNKNOWN_STUDENT', 'Student not found.');
+    if (st.status === 'disabled') fail('ACCOUNT_DISABLED', 'This student profile is disabled. Contact the lab office.');
     if (st.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
     var user = st.userId ? Db.get('Users', st.userId) : null;
     if (!user || user.status !== 'active' || String(user.roles).split(',').indexOf('student') < 0) fail('ACCOUNT_DISABLED', 'This student account is not active.');
@@ -288,6 +289,7 @@ var Attend = {
     { id: 'student_verified', label: 'Student profile is verified and the account active', run: function (c) {
       c.student = Db.cachedGet('StudentProfiles', 'studentId', c.studentId, 120);
       if (!c.student) fail('UNKNOWN_STUDENT', 'Student not found.');
+      if (c.student.status === 'disabled') fail('ACCOUNT_DISABLED', 'This student profile is disabled. Contact the lab office.');
       if (c.student.status !== 'verified') fail('NOT_VERIFIED', 'This student profile is not verified.');
       var user = c.student.userId ? Db.cachedGet('Users', 'userId', c.student.userId, 120) : null;
       if (!user || user.status !== 'active') fail('ACCOUNT_DISABLED', 'This account is disabled.');
@@ -443,7 +445,7 @@ var Attend = {
   roster: function (ctx, p) {
     V.obj(p);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('staff') || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
+    if (!(Auth.canView(ctx) || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var eligible = session.openToAll ? {} : Roster.eligibleSet(session), ids = Object.assign({}, eligible);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
@@ -709,13 +711,23 @@ var Attend = {
     var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, autoSignOuts: 0, flagged: 0, verifiedMinutes: 0 };
     rows.forEach(function (r) { if ((r.flags || []).indexOf('auto_out') >= 0) totals.autoSignOuts++; if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
     totals.verifiedMinutes = Math.round(totals.verifiedMinutes);
+    // Days used and time per lab for the student home (R10): a day counts when the student actually entered a lab.
+    var usedDays = {}, perLab = {};
+    rows.forEach(function (r) {
+      if (!r.firstIn) return;
+      var l = perLab[r.labName || 'Lab'] || (perLab[r.labName || 'Lab'] = { labName: r.labName || 'Lab', days: {}, visits: 0, verifiedMinutes: 0 });
+      usedDays[r.date] = true; l.days[r.date] = true; l.visits++; l.verifiedMinutes += r.verifiedMinutes || 0;
+    });
+    totals.days = Object.keys(usedDays).length;
+    totals.byLab = Object.keys(perLab).map(function (k) { var l = perLab[k]; return { labName: l.labName, days: Object.keys(l.days).length, visits: l.visits, verifiedMinutes: Math.round(l.verifiedMinutes) }; })
+      .sort(function (a, b) { return b.verifiedMinutes - a.verifiedMinutes; });
     return { history: rows.slice(0, limit), totals: totals };
   },
   /** One student's raw events in one session, for the responsible faculty (or staff/admin), so an earlier scan can be voided with a reason. */
   studentEvents: function (ctx, p) {
     V.obj(p);
     var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
-    if (!(ctx.has('staff') || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'This is not your session.');
+    if (!(Auth.canView(ctx) || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'This is not your session.');
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });

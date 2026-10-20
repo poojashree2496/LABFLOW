@@ -1,6 +1,6 @@
 # Live lab board
 
-B4 supplies the `labs.live` and `systems.status` handlers in `LabService.gs`. The board screen is in progress.
+B4 supplies the `labs.live` and `systems.status` handlers in `LabService.gs` and the shared **Live board** screen (`liveBoard` in `ScriptsStaff.html`, also exposed as `LF.liveBoard`). The screen is registered for coordinators, faculty, super admins and HODs; students and kiosks have no board screen.
 
 `labs.live` is restricted to faculty, staff, admin and HOD accounts. Each active lab includes its current visits (student name/register number, session, entry time, current project and system), a distinct student count and its workstation statuses. Optional `labId` selects one accessible active lab. A person inside more than one session has a row per visit and counts once per lab.
 
@@ -11,3 +11,7 @@ Effective attendance events determine the rows: IN/CORR_IN starts a visit; WORK 
 Both endpoints take one script-locked snapshot and return `serverNow` and `refreshSeconds`. Named data is never stored in the public `labs.occupancy` cache. HOD-only accounts use `Auth.labScope(ctx)` and fail closed while B3 remains a stub; a missing/invalid scope also refuses access. Admin/staff accounts retain their existing global scope.
 
 Backend cases in `test/checkin.test.js` cover assignments, work changes/voids, exits, delayed close recovery, booking boundaries, broken/non-system assets, role denial, anonymous public responses and supplied HOD scopes. Google runtime throughput and department configuration still require deployment checks.
+
+## Screen
+
+One card per lab: head count against capacity, system availability (free, in use, booked, unavailable), and a table with one row per visit (student, register number, session, system, project, time inside). A lab picker appears when more than one lab is in scope. The page polls `labs.live` every `occupancyRefreshSeconds` (at least 3 s), shows the time of the last successful update, and keeps the last data on screen with a warning when a refresh fails. Project descriptions are never shown. `npm run e2e:board` covers it in a browser, including a 390 px phone.

@@ -162,7 +162,7 @@ var Dash = {
   },
   admin: function (ctx, p) {
     var now = U.now(), today = U.local(now).date, days = V.int(p && p.days, 'Days', 3, 60, { optional: true, def: 14 });
-    var users = Db.readAll('Users'), roleCount = { student: 0, faculty: 0, staff: 0, admin: 0 };
+    var users = Db.readAll('Users'), roleCount = { student: 0, faculty: 0, staff: 0, admin: 0, hod: 0 };
     users.forEach(function (u) { if (u.status === 'active') String(u.roles).split(',').forEach(function (r) { if (roleCount[r] !== undefined) roleCount[r]++; }); });
     var from = U.addDays(today, -(days - 1)), sessions = Db.where('Sessions', function (s) { return s.date >= from && s.date <= today && (s.status === 'closed' || s.status === 'open'); });
     var byId = {}; sessions.forEach(function (s) { byId[s.sessionId] = s; });

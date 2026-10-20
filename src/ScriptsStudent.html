@@ -287,6 +287,7 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
     const d = await api('dash.student'); const cred = d.credential;
     clear(stats).append(
       ui.stat('Verified time', fmt.mins(d.attendance.verifiedMinutes || 0), (d.attendance.present || 0) + ' sessions present'),
+      ui.stat('Days in the lab', String(d.attendance.days || 0), (d.attendance.byLab || []).map((l) => l.labName + ' ' + fmt.mins(l.verifiedMinutes)).join(' · ') || 'No visits yet'),
       ui.stat('Unverified exits', String(d.attendance.unverifiedExits || 0), 'No exit scan recorded', d.attendance.unverifiedExits ? 'warn' : ''),
       ui.stat('Equipment on loan', String(d.activeLoans), d.overdueLoans ? d.overdueLoans + ' overdue' : 'None overdue', d.overdueLoans ? 'bad' : ''),
       ui.stat('Device', cred.hasActive ? 'Active' : cred.pending ? 'Waiting' : 'None', cred.hasActive ? cred.active[0].label : cred.pending ? 'Needs approval at the lab desk' : 'Needed only in device-QR labs', cred.hasActive ? 'good' : ''));
@@ -433,8 +434,8 @@ LF.register({ role: 'student', id: 'equipment', label: 'Equipment', icon: 'box',
     if (!r.reservations.length) return ui.empty('No bookings', 'Book equipment or a workstation slot from the "Book in advance" tab.');
     return ui.table({ caption: 'My bookings', columns: [
       { key: 'resourceName', label: 'Item' }, { key: 'quantity', label: 'Qty', align: 'right' }, { key: 'startAt', label: 'From', render: (x) => fmt.dt(x.startAt) }, { key: 'endAt', label: 'To', render: (x) => fmt.dt(x.endAt) },
-      { key: 'status', label: 'Status', render: (x) => h('span', { title: x.decisionNote || '' }, ui.status(x.status)) }, { key: 'requesterName', label: 'For' },
-      { label: '', sort: false, render: (x) => (x.status === 'pending' || x.status === 'approved') ? ui.button('Cancel', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Cancel this booking?', message: x.resourceName + ' on ' + fmt.dt(x.startAt), confirmLabel: 'Cancel booking', cancelLabel: 'Keep', danger: true })) return; await api('booking.cancel', { reservationId: x.reservationId }); LF.toast('Booking cancelled', 'good'); LF.go('equipment'); } }) : null }], rows: r.reservations, pageSize: 15 }).el;
+      { key: 'status', label: 'Status', render: (x) => h('span', { title: x.decisionNote || '' }, x.status === 'waitlisted' ? ui.badge('Waitlist #' + x.waitlistPosition, '') : ui.status(x.status)) }, { key: 'requesterName', label: 'For' },
+      { label: '', sort: false, render: (x) => (x.status === 'pending' || x.status === 'approved' || x.status === 'waitlisted') ? ui.button('Cancel', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: x.status === 'waitlisted' ? 'Leave the waitlist?' : 'Cancel this booking?', message: x.resourceName + ' on ' + fmt.dt(x.startAt), confirmLabel: 'Cancel booking', cancelLabel: 'Keep', danger: true })) return; await api('booking.cancel', { reservationId: x.reservationId }); LF.toast('Booking cancelled', 'good'); LF.go('equipment'); } }) : null }], rows: r.reservations, pageSize: 15 }).el;
   }
   async function groupsView() {
     const r = await api('groups.list');
@@ -447,13 +448,14 @@ LF.bookingForm = bookingForm;
 function bookingForm(onDone) {
   const root = h('div', { class: 'card', style: { display: 'grid', gap: '12px', maxWidth: '640px' } }), msg = h('div', { role: 'status', 'aria-live': 'polite' });
   ui.loadInto(root, async () => {
-    const [labs, cats, groups] = await Promise.all([api('labs.list'), api('categories.list'), LF.me.student ? api('groups.list') : Promise.resolve({ groups: [] })]);
+    const [labs, cats, groups, mineProjects] = await Promise.all([api('labs.list'), api('categories.list'), LF.me.student ? api('groups.list') : Promise.resolve({ groups: [] }), LF.me.student ? api('projects.mine').catch(() => ({ projects: [] })) : Promise.resolve({ projects: [] })]);
     if (!labs.labs.length) return ui.empty('No labs configured', 'An administrator must add labs first.');
     const lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.labs.map((l) => ({ value: l.labId, label: l.name })) });
     const kind = ui.field({ name: 'kind', label: 'What do you need?', type: 'select', options: [{ value: 'category', label: 'Equipment type (any unit)' }, { value: 'kit', label: 'A kit' }, { value: 'asset', label: 'A specific workstation or unit (time slot)' }] });
     const res = ui.field({ name: 'res', label: 'Item', type: 'select', required: true, options: [] });
     const qty = ui.field({ name: 'quantity', label: 'Quantity', type: 'number', min: 1, step: 1, value: 1, required: true });
     const forWho = ui.field({ name: 'for', label: 'Booking for', type: 'select', options: [{ value: '', label: 'Me' }].concat(groups.groups.map((g) => ({ value: g.groupId, label: 'Group: ' + g.name }))) });
+    const proj = ui.field({ name: 'projectId', label: 'Project (optional)', type: 'select', options: [{ value: '', label: 'No project' }].concat(mineProjects.projects.filter((x) => x.status === 'pending' || x.status === 'active').map((x) => ({ value: x.projectId, label: x.title }))) });
     const start = ui.field({ name: 'start', label: 'From (IST)', type: 'datetime-local', required: true, value: LF.util.msToIstInput(Math.ceil((LF.now() + 3600000) / 900000) * 900000) });
     const end = ui.field({ name: 'end', label: 'Until (IST)', type: 'datetime-local', required: true, value: LF.util.msToIstInput(Math.ceil((LF.now() + 3 * 3600000) / 900000) * 900000) });
     const purpose = ui.field({ name: 'purpose', label: 'Purpose', type: 'textarea', rows: 2, required: true, maxlength: 200, placeholder: 'e.g. IoT mini-project demo' });
@@ -471,6 +473,7 @@ function bookingForm(onDone) {
       if (!s || !e) throw new LF.ApiError('BAD_INPUT', 'Choose a start and end time.');
       const p = { labId: lab.get(), resourceType: kind.get(), resourceId: res.get(), quantity: Number(qty.get()) || 1, startAt: s, endAt: e, purpose: purpose.get() };
       if (forWho.get()) { p.requesterType = 'group'; p.requesterId = forWho.get(); }
+      if (proj.get()) p.projectId = proj.get();
       return p;
     }
     const avail = h('div', { class: 'hint' });
@@ -479,9 +482,13 @@ function bookingForm(onDone) {
       clear(avail).append(...r.categories.map((c) => h('div', { class: c.free >= c.needed ? '' : 'err' }, c.name + ': ' + c.free + ' free for that period (need ' + c.needed + ')')));
     } });
     const submit = ui.button('Request booking', { kind: 'primary', icon: 'calendar', onClick: async () => {
-      clear(msg); await api('booking.request', payload()); LF.toast('Booking requested. Lab staff will confirm.', 'good'); if (onDone) onDone(); } });
+      clear(msg); await api('booking.request', payload()); LF.toast('Booking requested. A coordinator will confirm.', 'good'); if (onDone) onDone(); } });
+    // A5: when the slot is taken, wait for it instead of starting again. The first person in the queue gets it back if it is cancelled.
+    const wait = ui.button('Join waitlist', { icon: 'clock', onClick: async () => {
+      clear(msg); const r = await api('booking.request', Object.assign(payload(), { waitlist: true }));
+      LF.toast(r.waitlisted ? 'You are #' + r.reservation.waitlistPosition + ' on the waitlist. You will be told if it frees up.' : 'That slot is free, so it was requested normally. A coordinator will confirm.', 'good'); if (onDone) onDone(); } });
     return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Advance bookings reserve stock for a time window. You collect items at the lab desk. A workstation slot is released if you have not checked in to the lab 15 minutes after it starts.'),
-      lab.el, kind.el, res.el, qty.el, forWho.el, h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '12px' } }, start.el, end.el), purpose.el, avail, msg, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, check, submit));
+      lab.el, kind.el, res.el, qty.el, forWho.el, mineProjects.projects.some((x) => x.status === 'pending' || x.status === 'active') ? proj.el : null, h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '12px' } }, start.el, end.el), purpose.el, avail, msg, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, check, submit, wait), h('p', { class: 'hint', style: { margin: 0 } }, 'Slot taken? Join the waitlist. If someone cancels, the first person waiting gets it and you are notified. A waitlist entry ends when the slot starts.'));
   });
   return root;
 }
@@ -533,7 +540,7 @@ function coordinatorView(root) {
     h('p', { class: 't-muted', style: { marginTop: 0 } }, 'Your rights cover this event only and end shortly after it. You can open the session, scan participants, add guests without a university account, and watch the count against the lab capacity.'), out);
   const reload = () => ui.loadInto(out, async () => {
     const r = await api('events.mine');
-    if (!r.events.length) return ui.empty('No events', 'When a faculty member names you as coordinator, the event appears here.');
+    if (!r.events.length) return ui.empty('No events', 'When a faculty member names you as event lead, the event appears here.');
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.events.map((e) => {
       const c = e.counts, over = c && c.overCapacity;
       return h('article', { class: 'card' + (over ? ' bad' : '') }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name), h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + ' - ' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : ''))), e.session ? ui.status(e.session.status) : null),
@@ -545,7 +552,7 @@ function coordinatorView(root) {
           ui.button('Add a guest', { icon: 'plus', onClick: () => ui.formModal({ title: 'Add a guest', intro: 'For speakers or visitors without a Karunya account. Each addition is logged.', fields: [{ name: 'name', label: 'Name', required: true, maxlength: 80 }, { name: 'organisation', label: 'Organisation', maxlength: 80 }], submitLabel: 'Add guest', onSubmit: async (v) => { await api('events.addGuest', Object.assign({ labEventId: e.labEventId }, v)); LF.toast('Guest added', 'good'); reload(); } }) }),
           ui.button('Register participants', { onClick: () => ui.formModal({ title: 'Register participants', fields: [{ name: 'rolls', label: 'Roll numbers (one per line or comma separated)', type: 'textarea', rows: 6, required: true }], submitLabel: 'Register', onSubmit: async (v) => { const x = await api('events.register', { labEventId: e.labEventId, rollNos: v.rolls.split(/[\s,;]+/).filter(Boolean) }); LF.toast(x.added + ' registered' + (x.errors.length ? ', ' + x.errors.length + ' not found' : ''), x.errors.length ? '' : 'good'); reload(); } }) }),
           e.session && e.session.status === 'open' ? ui.button('Close', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close the event session?', message: 'Participants can still scan out for a short grace period.', confirmLabel: 'Close' })) return; await api('sessions.close', { sessionId: e.sessionId, reason: 'closed by coordinator' }); reload(); } }) : null)
-          : h('div', { class: 'hint', style: { marginTop: '10px' } }, 'Your coordinator rights start ' + fmt.dt(e.startAt) + ' (minus a short lead time).'));
+          : h('div', { class: 'hint', style: { marginTop: '10px' } }, 'Your event lead rights start ' + fmt.dt(e.startAt) + ' (minus a short lead time).'));
     }));
   });
   reload(); LF.every(10000, () => { if (!document.querySelector('.modal-back')) reload(); });

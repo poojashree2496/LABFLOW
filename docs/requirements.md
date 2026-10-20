@@ -37,24 +37,24 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 
 | # | Status | What exists | What is missing | Tasks |
 |---|---|---|---|---|
-| R1 | Partial | Live head count per lab and session (`Occupancy.lab`, LabService.gs ~63) | Each student's system and project | C3, B4 |
-| R2 | Partial | `labs.occupancy` is open to every signed-in user (Code.gs ~61) | A board listing the students inside | B4 |
+| R1 | Done on local fakes | Live board with each student's system and project (`labs.live`, Live board screen) | Real Workspace check | B4 |
+| R2 | Done on local fakes | Named Live board for faculty, coordinator, HOD and super admin, readable remotely | Real Workspace check | B4 |
 | R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
 | R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
-| R6 | Partial | Time-slot bookings with clash checks and no-show release (BookingService.gs) | A waitlist for a taken slot | A5 |
-| R7 | Missing | A booking stores only `purpose` | Projects with timeline and outcome | C1, C3 |
+| R6 | Done | Time-slot bookings with clash checks and no-show release; a taken slot can be waited for (`waitlist: true`): first come first served, promoted to a normal request and the student told when stock frees (cancel, reject, no-show release), position shown, ends when the slot starts (BookingService.gs) | | |
+| R7 | Partial | Bookings can now carry a `projectId`; new `projects` report (owner, supervisor, timeline, status, outcome, hours, visits) | Project outcome capture on return | C1, C3 |
 | R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
-| R10 | Partial | Student report found by roll number, minutes per session (`Reports._student`) | Total hours and distinct days | B5 |
-| R11 | Partial | Asset usage report counts loans and units (`Reports._assetUsage`) | Distinct people and purposes per system | B5 |
+| R10 | Done | Student report by register number now has summary tiles (verified hours, distinct days, visits, automatic sign-outs) and a by-lab section; the student home shows days in the lab and time per lab (`Reports._student`, `Attend.myHistory`) | | |
+| R11 | Done | New `systemUsage` report per system: who, when, how long and for which project or purpose, split at every system change, plus loans and bookings (`Reports._systemUsage`) | | |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
 | R14 | Missing | Nothing | Nightly backup copies and a yearly archive spreadsheet | A3, A4 |
 | R15 | Partial | Role-checked RPC gateway, rate limits, hash-chained audit log | `Users.mobile` is plain text | A2 |
-| R16 | Partial | student, faculty, staff, admin, kiosk; students already see their own verified minutes (`Attend.myHistory` totals) | HOD role; coordinator managing students; new labels | B1, B2, B3 |
+| R16 | Partial | student, faculty, staff, admin, hod, kiosk. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff`. B1 done: the HOD role is read-only on 27 routes (swept in `test/access.test.js`), up to 5 roles per account, labels Coordinator / Super admin / HOD / Event lead. Students see their own verified minutes | Department scope and HOD views | B3 |
 | R17 | Done | Device-bound signed QR, two check-in modes, tamper-evident audit chain, Test Lab with attack scenarios | Keep it in the pitch | S2 |
-| R18 | Partial | `V.rollNo` accepts any 3-20 characters | Parsing the join year and department | A1 |
+| R18 | Done on local fakes | `U.parseRoll`; join year and department filled on import and onboarding; batch filter on `students.list`; `V.rollNo` still accepts other formats | | A1 |
 
 ## 3. Decisions (agreed 19 Oct)
 

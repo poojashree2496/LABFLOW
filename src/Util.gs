@@ -19,7 +19,12 @@ function notBuilt_(task) { fail('NOT_IMPLEMENTED', 'This feature is not built ye
 var U = {
   // v2 stubs (docs/requirements.md section 4); each task replaces its own.
   /** URK24CS1021 -> { joinYear: 2024, gradYear: 2028, dept: 'CS', serial: '1021' }; null for other formats. */
-  parseRoll: function () { notBuilt_('A1'); },
+  parseRoll: function (roll) {
+    var m = /^URK(\d{2})([A-Z]{2,4})(\d{3,5})$/.exec(String(roll === undefined || roll === null ? '' : roll).trim().toUpperCase());
+    if (!m) return null;
+    var joinYear = 2000 + parseInt(m[1], 10);
+    return { joinYear: joinYear, gradYear: joinYear + 4, dept: m[2], serial: m[3] };
+  },
   /** Current time in epoch ms. Tests may set the global __testNow to control the clock. */
   now: function () { return (typeof __testNow === 'number') ? __testNow : Date.now(); },
 

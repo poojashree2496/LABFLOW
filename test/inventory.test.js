@@ -360,3 +360,52 @@ test('settings: validated, audited, applied; unknown keys and bad values rejecte
   assert.equal(w.eval('Settings.get("reportRecipients")'), 'head@karunya.edu,dean@karunya.edu.in');
   assert.ok(w.ok(w.admin, 'audit.list', { action: 'settings.update' }).events.length === 1);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// A5 waitlist
+test('waitlist: a taken slot can be waited for; cancelling promotes the first in line and tells them; the next moves up', () => {
+  const w = world({ students: 3 }); const s = stock(w); const [a, b, c] = w.students;
+  const slot = { startAt: hr(w, 24), endAt: hr(w, 30), resourceId: s.arduino.categoryId };
+  const first = book(w, a, Object.assign({ quantity: 3 }, slot)); assert.equal(first.ok, true);
+  const hold = first.data.reservation.reservationId;
+  assert.equal(book(w, b, Object.assign({ quantity: 2 }, slot)).error.code, 'NOT_AVAILABLE', 'without asking to wait, the request is refused as before');
+  const wb = book(w, b, Object.assign({ quantity: 2, waitlist: true }, slot)); const wc = book(w, c, Object.assign({ quantity: 2, waitlist: true }, slot));
+  assert.equal(wb.data.waitlisted, true); assert.equal(wb.data.reservation.status, 'waitlisted'); assert.equal(wb.data.reservation.waitlistPosition, 1);
+  assert.equal(wc.data.reservation.waitlistPosition, 2);
+  assert.equal(w.ok(b.email, 'booking.check', { labId: w.lab.labId, resourceType: 'category', resourceId: s.arduino.categoryId, startAt: slot.startAt, endAt: slot.endAt }).categories[0].free, 0, 'a waitlisted request holds no stock');
+  assert.equal(book(w, b, Object.assign({ quantity: 2, waitlist: true }, slot)).data.replayed, true, 'asking again returns the same place in the queue');
+  assert.equal(w.ok(w.staff, 'booking.list', { status: 'waitlisted' }).reservations.length, 2);
+  assert.equal(w.err(w.staff, 'booking.decide', { reservationId: wb.data.reservation.reservationId, approve: true }).code, 'INVALID_STATE', 'staff decide only real requests');
+  w.ok(a.email, 'booking.cancel', { reservationId: hold });
+  const mineB = w.ok(b.email, 'booking.mine').reservations[0], mineC = w.ok(c.email, 'booking.mine').reservations[0];
+  assert.equal(mineB.status, 'pending', 'first in line is promoted to a normal request');
+  assert.equal(mineC.status, 'waitlisted'); assert.equal(mineC.waitlistPosition, 1, 'the next person moves up');
+  assert.ok(w.ok(b.email, 'notifications.list').notifications.some((n) => /waitlisted booking is now open/.test(n.title)), 'the promoted student is told');
+  w.ok(w.staff, 'booking.decide', { reservationId: mineB.reservationId, approve: true });
+  w.ok(b.email, 'booking.cancel', { reservationId: mineB.reservationId });
+  assert.equal(w.ok(c.email, 'booking.mine').reservations[0].status, 'pending', 'a later cancellation promotes the next one');
+});
+
+test('waitlist: rejection also promotes, it counts toward the active limit, expires when the slot starts, and is left alone when stock is still short', () => {
+  const w = world({ students: 3 }); const s = stock(w); const [a, b, c] = w.students;
+  const slot = { startAt: hr(w, 24), endAt: hr(w, 30), resourceId: s.arduino.categoryId };
+  const held = book(w, a, Object.assign({ quantity: 3 }, slot)).data.reservation.reservationId;
+  const waiting = book(w, b, Object.assign({ quantity: 1, waitlist: true }, slot)).data.reservation.reservationId;
+  w.ok(w.staff, 'booking.decide', { reservationId: held, approve: false, note: 'Not this week' });
+  assert.equal(w.ok(b.email, 'booking.mine').reservations.find((r) => r.reservationId === waiting).status, 'pending', 'a rejection frees the stock for the waitlist');
+  // a free slot with waitlist:true is an ordinary request
+  const free = book(w, c, { resourceId: s.arduino.categoryId, startAt: hr(w, 40), endAt: hr(w, 44), waitlist: true });
+  assert.equal(free.data.reservation.status, 'pending'); assert.ok(!free.data.waitlisted);
+  // waitlisted entries count toward the limit of active bookings (no spamming the queue)
+  const d = w.students[2];
+  for (let i = 0; i < 3; i++) book(w, d, { resourceId: s.arduino.categoryId, startAt: hr(w, 50 + i * 10), endAt: hr(w, 53 + i * 10), quantity: 3 });
+  const over = book(w, w.students[1], { resourceId: s.arduino.categoryId, startAt: hr(w, 50), endAt: hr(w, 53), quantity: 3, waitlist: true });
+  assert.equal(over.ok, true, 'b has one active booking so far, so may queue');
+  book(w, w.students[1], { resourceId: s.arduino.categoryId, startAt: hr(w, 60), endAt: hr(w, 63), quantity: 3, waitlist: true });
+  assert.equal(book(w, w.students[1], { resourceId: s.arduino.categoryId, startAt: hr(w, 70), endAt: hr(w, 73), quantity: 3, waitlist: true }).error.code, 'LIMIT');
+  // the slot starts before stock frees: the entry ends and the student is told
+  w.advance(51 * 3600000);
+  w.eval('Booking.expireStale()');
+  const ended = w.ok(b.email, 'booking.mine').reservations.filter((r) => /Waitlist ended/.test(r.decisionNote || ''));
+  assert.equal(ended.length >= 1, true); assert.equal(ended[0].status, 'expired');
+});

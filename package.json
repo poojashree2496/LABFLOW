@@ -16,6 +16,8 @@
     "e2e:openlab": "node test/e2e/openlab.e2e.js",
     "e2e:autoclose": "node test/e2e/autoclose.e2e.js",
     "e2e:work": "node test/e2e/work.e2e.js",
+    "e2e:board": "node test/e2e/board.e2e.js",
+    "e2e:reports": "node test/e2e/reports.e2e.js",
     "dev": "node dev/server.js",
     "check": "npm run lint && npm test"
   },

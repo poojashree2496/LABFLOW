@@ -17,7 +17,7 @@ LF.SKINS = {
     hero(me, role) {
       const s = me.student, f = me.faculty;
       const meta = [s ? ['key', s.rollNo] : null, s && s.department ? ['book', [s.department, s.year ? 'Year ' + s.year : '', s.section ? 'Section ' + s.section : ''].filter(Boolean).join(' · ')] : null, f && f.department ? ['book', f.department] : null,
-        ['users', { student: 'Student', faculty: 'Faculty', staff: 'Lab staff', admin: 'Administrator' }[role] || role], ['inbox', me.email]].filter(Boolean);
+        ['users', { student: 'Student', faculty: 'Faculty', staff: 'Coordinator', admin: 'Super admin', hod: 'HOD' }[role] || role], ['inbox', me.email]].filter(Boolean);
       return h('section', { class: 'skin-hero', 'aria-label': 'Your profile' },
         h('div', { class: 'hero-photo', 'aria-hidden': 'true' }, icon('user'), h('i', { class: 'hero-dot' })),
         h('div', { class: 'hero-body' }, h('div', { class: 'hero-name' }, me.displayName, h('span', { class: 'hero-tick', title: 'Verified university account' }, icon('verified'))),

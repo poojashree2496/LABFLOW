@@ -109,7 +109,7 @@ var Flags = {
 
   // ---- review -----------------------------------------------------------------------------------------------
   _visible: function (ctx, f, sessions) {
-    if (ctx.has('admin') || ctx.has('staff')) return true;
+    if (Auth.canView(ctx)) return true;
     var s = f.sessionId ? sessions[f.sessionId] : null;
     return !!(s && ctx.faculty && s.facultyId === ctx.faculty.facultyId);
   },

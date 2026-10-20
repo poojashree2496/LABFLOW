@@ -92,9 +92,27 @@ var Auth = {
 
   /** Throw FORBIDDEN unless the caller holds one of the roles. Central check used by the RPC router. */
   /** Read access to department-wide data (coordinator, HOD, super admin). Use for reads only, never for writes. */
+  /** The role to write in the audit trail for an action a coordinator or a super admin may both perform. */
+  actorRole: function (ctx) { return ctx.has('admin') ? 'admin' : ctx.has('staff') ? 'staff' : (ctx.roles[0] || 'user'); },
   canView: function (ctx) { return ctx.has('admin') || ctx.has('staff') || ctx.has('hod'); },
-  /** Lab ids this account may see (task B3). */
-  labScope: function () { notBuilt_('B3'); },
+  /** The department an HOD answers for. CSE is the only department in the first year, so an HOD with none recorded is CSE. */
+  department: function (ctx) { return String((ctx.user && ctx.user.department) || 'CSE').trim(); },
+  /**
+   * Lab ids this account may see (B3). Coordinators and super admins see every lab. An HOD sees the labs of their own
+   * department plus labs with no department; the match ignores case and spaces. Everyone else gets an empty scope.
+   */
+  labScope: function (ctx) {
+    var all = Db.readAll('Labs');
+    if (ctx.has('admin') || ctx.has('staff')) return all.map(function (l) { return l.labId; });
+    if (!ctx.has('hod')) return [];
+    var dept = Auth.department(ctx).toLowerCase();
+    return all.filter(function (l) { var d = String(l.department || '').trim().toLowerCase(); return !d || d === dept; }).map(function (l) { return l.labId; });
+  },
+  /** null when the caller's reach is not limited by department; otherwise a {labId: true} set to filter reads by. Only an account that is an HOD and neither coordinator nor super admin is limited. */
+  labFilter: function (ctx) {
+    if (!ctx.has('hod') || ctx.has('admin') || ctx.has('staff')) return null;
+    var set = {}; Auth.labScope(ctx).forEach(function (id) { set[id] = true; }); return set;
+  },
   requireRole: function (ctx, roles) {
     if (!roles.some(function (r) { return ctx.has(r); })) fail('FORBIDDEN', 'You do not have permission to do that.');
   },

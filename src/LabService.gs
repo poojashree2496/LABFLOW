@@ -11,7 +11,7 @@ var Labs = {
   _pub: function (l) {
     return { labId: l.labId, code: l.code, name: l.name, type: l.type, building: l.building, room: l.room, capacity: l.capacity, status: l.status, notes: l.notes,
              latitude: l.latitude, longitude: l.longitude, radiusM: l.radiusM, openTime: l.openTime, closeTime: l.closeTime, checkinMode: l.checkinMode || '',
-             mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '', openLab: l.openLab === true };
+             mode: Labs.modeOf(l), inchargeEmails: l.inchargeEmails || '', openLab: l.openLab === true, department: l.department || '' };
   },
   /** The lab's check-in mode: its own setting, else the global default. 'A', 'B' or 'AB'. */
   modeOf: function (lab) { return (lab && lab.checkinMode) || Settings.get('defaultCheckinMode'); },
@@ -28,7 +28,7 @@ var Labs = {
       code: V.str(p.code, 'Code', { max: 20, re: /^[A-Za-z0-9_-]+$/ }).toUpperCase(), name: V.str(p.name, 'Name', { max: 80 }),
       type: V.enumOf(p.type, 'Type', Cfg.LAB_TYPES), building: V.str(p.building, 'Building', { optional: true, max: 60 }), room: V.str(p.room, 'Room', { optional: true, max: 30 }),
       capacity: V.int(p.capacity, 'Capacity', 1, 1000, { optional: true, def: 60 }), status: V.enumOf(p.status, 'Status', ['active', 'inactive'], { optional: true, def: 'active' }),
-      notes: V.str(p.notes, 'Notes', { optional: true, max: 300 }),
+      notes: V.str(p.notes, 'Notes', { optional: true, max: 300 }), department: V.str(p.department, 'Department', { optional: true, max: 60, def: '' }),
       checkinMode: V.enumOf(p.checkinMode, 'Check-in mode', Cfg.CHECKIN_MODES, { optional: true, def: '' }),
       radiusM: V.int(p.radiusM, 'Geofence radius', 5, 500, { optional: true, def: null }),
       latitude: null, longitude: null, openTime: '', closeTime: '', inchargeEmails: ''
@@ -42,6 +42,7 @@ var Labs = {
       if (rec.closeTime <= rec.openTime) fail('BAD_INPUT', 'Closing time must be after opening time.');
     }
     var existing = p.labId ? Db.mustGet('Labs', V.id(p.labId, 'Lab', 'lab'), 'Lab') : null;
+    if (p.department === undefined && existing) rec.department = existing.department || ''; // an update that leaves it out keeps it (B3)
     rec.openLab = p.openLab === undefined ? !!(existing && existing.openLab) : V.bool(p.openLab);
     if (rec.openLab && !rec.openTime) fail('BAD_INPUT', 'Set opening and closing times before enabling open lab.');
     if (p.inchargeEmails) {
@@ -252,7 +253,7 @@ var Roster = {
       if (create.length) Db.insertMany('Rosters', create);
       reactivate.forEach(function (r) { Db.update('Rosters', r.rosterId, { status: 'active', addedBy: ctx.email, addedAt: U.now() }); });
       Roster._bump();
-      Audit.log({ actor: ctx.email, role: 'admin', action: 'roster.import', entityType: 'Course', entityId: course.courseId, detail: { added: create.length + reactivate.length, already: already, errors: errors.length } });
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'roster.import', entityType: 'Course', entityId: course.courseId, detail: { added: create.length + reactivate.length, already: already, errors: errors.length } });
     });
     return { added: create.length + reactivate.length, already: already, errors: errors };
   },
@@ -286,15 +287,15 @@ var Roster = {
     var r = Db.mustGet('Rosters', V.id(p.rosterId, 'Roster entry', 'roster'), 'Roster entry');
     Db.update('Rosters', r.rosterId, { status: 'removed' });
     Roster._bump();
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'roster.remove', entityType: 'Roster', entityId: r.rosterId, detail: { scope: r.scopeType + ':' + r.scopeId, studentId: r.studentId } });
+    Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'roster.remove', entityType: 'Roster', entityId: r.rosterId, detail: { scope: r.scopeType + ':' + r.scopeId, studentId: r.studentId } });
     return { ok: true };
   },
 
   list: function (ctx, p) {
     V.obj(p);
     var scopeType = p.sessionId ? 'session' : 'course', scopeId = p.sessionId ? V.id(p.sessionId, 'Session', 'session') : V.id(p.courseId, 'Course', 'course');
-    if (scopeType === 'session') { var ses = Db.mustGet('Sessions', scopeId, 'Session'); if (!ctx.has('staff') && !Auth.ownsSession(ctx, ses)) fail('FORBIDDEN', 'This is not your session.'); }
-    else if (!ctx.has('admin') && !ctx.has('staff')) {
+    if (scopeType === 'session') { var ses = Db.mustGet('Sessions', scopeId, 'Session'); if (!Auth.canView(ctx) && !Auth.ownsSession(ctx, ses)) fail('FORBIDDEN', 'This is not your session.'); }
+    else if (!Auth.canView(ctx)) {
       var mine = Db.where('FacultyCourses', function (m) { return ctx.faculty && m.facultyId === ctx.faculty.facultyId && m.courseId === scopeId && m.status === 'active'; });
       if (!mine.length) fail('FORBIDDEN', 'This is not your course.');
     }
@@ -339,7 +340,7 @@ var Roster = {
 var FacultyCourses = {
   list: function (ctx) {
     var faculty = U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId'), courses = U.indexBy(Db.readAll('Courses'), 'courseId');
-    var rows = Db.readAll('FacultyCourses').filter(function (m) { return m.status === 'active' && (ctx.has('admin') || ctx.has('staff') || (ctx.faculty && m.facultyId === ctx.faculty.facultyId)); });
+    var rows = Db.readAll('FacultyCourses').filter(function (m) { return m.status === 'active' && (Auth.canView(ctx) || (ctx.faculty && m.facultyId === ctx.faculty.facultyId)); });
     return { mappings: rows.map(function (m) { return { mapId: m.mapId, facultyId: m.facultyId, facultyName: (faculty[m.facultyId] || {}).name, courseId: m.courseId, courseCode: (courses[m.courseId] || {}).code, courseName: (courses[m.courseId] || {}).name, section: m.section, term: m.term }; }) };
   },
   set: function (ctx, p) {
@@ -382,7 +383,7 @@ var Timetable = {
   list: function (ctx, p) {
     p = p || {};
     var rows = Db.where('Timetable', function (s) { return s.status === 'active'; });
-    if (ctx.has('admin') || ctx.has('staff')) { if (p.labId) rows = rows.filter(function (s) { return s.labId === p.labId; }); }
+    if (Auth.canView(ctx)) { if (p.labId) rows = rows.filter(function (s) { return s.labId === p.labId; }); }
     else if (ctx.has('faculty') && ctx.faculty) rows = rows.filter(function (s) { return s.facultyId === ctx.faculty.facultyId; });
     else if (ctx.has('student') && ctx.student) {
       var mine = {}; Db.where('Rosters', function (r) { return r.scopeType === 'course' && r.studentId === ctx.student.studentId && r.status === 'active'; }).forEach(function (r) { mine[r.scopeId] = true; });
