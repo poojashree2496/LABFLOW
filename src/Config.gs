@@ -106,6 +106,7 @@ var Cfg = (function () {
     qrTtlSeconds: { group: 'Device QR (B)', type: 'int', def: 60, min: 20, max: 180, desc: 'Lifetime of a server nonce. The phone fetches a new one about every half of this.' },
     studentQrRotateSeconds: { group: 'Device QR (B)', type: 'int', def: 3, min: 2, max: 10, desc: 'The student QR is re-signed and redrawn this often.' },
     qrFreshSeconds: { group: 'Device QR (B)', type: 'int', def: 15, min: 5, max: 60, desc: 'A rotating QR whose signed timestamp is older than this is refused, so screenshots go stale.' },
+    scanLivenessReads: { group: 'Device QR (B)', type: 'int', def: 1, min: 1, max: 2, desc: '2 = a student QR is accepted only after the scanner has read it twice, with a new signed timestamp the second time. A photo or screenshot of the QR has one timestamp and never passes, so it has to be a live phone. A live video relay still passes (see SECURITY.md). 1 = single read.' },
     credentialMaxActive: { group: 'Device QR (B)', type: 'int', def: 1, min: 1, max: 3, desc: 'Active device credentials allowed per student.' },
     crScanningEnabled: { group: 'Device QR (B)', type: 'bool', def: true, desc: 'Class representatives may scan classmates during their own open session.' },
     backToBackSeconds: { group: 'Device QR (B)', type: 'int', def: 2, min: 0, max: 30, desc: 'Two students scanned on the same phone scanner closer together than this are flagged (one person, two phones). 0 = off.' },

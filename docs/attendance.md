@@ -40,7 +40,9 @@ Steps 11 to 15 run under the script lock: `code_once` (this student has not used
 
 1. The phone registers a non-extractable ECDSA P-256 key. The server issues a challenge; the phone signs it. A second or replacement device needs in-person approval by staff.
 2. To check in, the phone asks for a server nonce bound to student, credential, session and lab and shows a QR that it re-signs every few seconds.
-3. The scanner submits the QR. The server runs: `payload`, `token_mac`, `nonce_fresh`, `qr_fresh`, `mode_enabled`, `scanner_allowed`, `rate_limit`, `device_active`, `student_verified`, `signature`. Then, under the lock, it re-checks the account, scanner, lab and code freshness, consumes the nonce once (Redemptions sheet plus cache), and appends the event.
+3. The scanner submits the QR. The server runs: `payload`, `token_mac`, `nonce_fresh`, `qr_fresh`, `mode_enabled`, `scanner_allowed`, `rate_limit`, `device_active`, `student_verified`, `signature`, `liveness`. Then, under the lock, it re-checks the account, scanner, lab and code freshness, consumes the nonce once (Redemptions sheet plus cache), and appends the event.
+
+`liveness` does nothing unless the setting `scanLivenessReads` is 2. With 2, the first read is answered with `SCAN_AGAIN` (not logged as a rejection) and the code is accepted only when the same scanner reads the same challenge again, within 20 seconds, with a later signed timestamp. A still picture of the QR carries one timestamp and never passes. A live video relay still passes; see [SECURITY.md](../SECURITY.md).
 
 `Pipeline.run` records every step, so the Test Lab can show which step refused a scan. The steps that need the lock always come last.
 

@@ -173,3 +173,76 @@ test('pipelines are data: every step is traced in order and the locked steps com
   const a = w.eval('Pipeline.describe(Checkin.STEPS_A)').map((x) => x.id);
   assert.deepEqual(a.slice(-5), ['code_once', 'session_open', 'enrolment', 'attendance_state', 'record']);
 });
+
+// Two-read liveness (scanLivenessReads = 2): a picture of the QR has one timestamp and can never pass; a live phone can.
+async function liveReady() {
+  const w = await ready(2);
+  w.ok(w.admin, 'settings.set', { values: { scanLivenessReads: 2 } });
+  return w;
+}
+const row = (w, s) => w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster.find((x) => x.studentId === s.studentId);
+
+test('liveness: off by default; with two reads on, the first read asks for another and records nothing', async () => {
+  const w0 = await ready(1);
+  assert.equal(w0.scan(await w0.qr(w0.students[0], w0.sid, 'in')).ok, true, 'default is a single read');
+  const w = await liveReady(); const [s] = w.students;
+  const ch = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: w.devices[s.studentId].credentialId });
+  const dev = w.devices[s.studentId], t0 = w.eval('U.now()');
+  const first = w.scan(await w.sign(ch.token, dev, t0));
+  assert.equal(first.error.code, 'SCAN_AGAIN');
+  assert.equal(row(w, s).state, 'none', 'nothing recorded after the first read');
+  assert.equal(w.eval("Db.readAll('AuditEvents').filter(function (e) { return e.action === 'scan.reject'; }).length"), 0, 'a first read is not logged as a rejection');
+  assert.equal(w.eval("Db.readAll('Flags').length"), 0, 'and raises no flag');
+  const second = w.scan(await w.sign(ch.token, dev, t0 + 3000));
+  assert.equal(second.ok, true); assert.equal(row(w, s).state, 'in');
+});
+
+test('liveness: the same picture read again never passes, even many times', async () => {
+  const w = await liveReady(); const [s] = w.students, dev = w.devices[s.studentId];
+  const ch = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: dev.credentialId });
+  const picture = await w.sign(ch.token, dev, w.eval('U.now()'));
+  for (let i = 0; i < 4; i++) { w.advance(1500); assert.equal(w.scan(picture).error.code, 'SCAN_AGAIN'); }
+  assert.equal(row(w, s).state, 'none');
+});
+
+test('liveness: a different scanner cannot finish another scanner\'s first read, and a stale first read starts over', async () => {
+  const w = await liveReady(); const [s] = w.students, dev = w.devices[s.studentId];
+  const ch = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: dev.credentialId });
+  const t0 = w.eval('U.now()');
+  assert.equal(w.phoneScan(w.faculty, await w.sign(ch.token, dev, t0)).error.code, 'SCAN_AGAIN');
+  assert.equal(w.phoneScan(w.staff, await w.sign(ch.token, dev, t0 + 2000)).error.code, 'SCAN_AGAIN', 'another scanner starts its own first read');
+  assert.equal(w.phoneScan(w.faculty, await w.sign(ch.token, dev, t0 + 3000)).error.code, 'SCAN_AGAIN', 'the first scanner\'s read was replaced, so it starts over');
+  assert.equal(w.phoneScan(w.faculty, await w.sign(ch.token, dev, t0 + 6000)).ok, true);
+});
+
+test('liveness: only a verified second read counts; a forged second timestamp, a replay after success and a stale first read all fail', async () => {
+  const w = await liveReady(); const [a, b] = w.students;
+  const da = w.devices[a.studentId], db = w.devices[b.studentId];
+  const ch = w.ok(a.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: da.credentialId });
+  const t0 = w.eval('U.now()');
+  assert.equal(w.scan(await w.sign(ch.token, da, t0)).error.code, 'SCAN_AGAIN');
+  const forged = ch.token + '~' + (t0 + 3000) + '~' + (await w.sign(ch.token, da, t0 + 1)).split('~')[2];
+  assert.equal(w.scan(forged).error.code, 'BAD_SIGNATURE', 'the signature is checked before the second read counts');
+  assert.equal(w.scan(await w.sign(ch.token, da, t0 + 3000)).ok, true);
+  assert.equal(w.scan(await w.sign(ch.token, da, t0 + 6000)).error.code, 'REPLAY', 'a used code is still refused');
+  // a first read older than 20 s is forgotten
+  const chB = w.ok(b.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: db.credentialId });
+  const u0 = w.eval('U.now()');
+  assert.equal(w.scan(await w.sign(chB.token, db, u0)).error.code, 'SCAN_AGAIN');
+  w.advance(21000);
+  assert.equal(w.scan(await w.sign(chB.token, db, w.eval('U.now()'))).error.code, 'SCAN_AGAIN', 'after 20 s it is a fresh first read');
+});
+
+test('liveness: out and rescan scans follow the same rule, and desk identification is not affected', async () => {
+  const w = await liveReady(); const [s] = w.students, dev = w.devices[s.studentId];
+  const live = async (purpose) => {
+    const ch = w.ok(s.email, 'attend.challenge', { sessionId: w.sid, purpose, credentialId: dev.credentialId });
+    const t = w.eval('U.now()');
+    assert.equal(w.scan(await w.sign(ch.token, dev, t)).error.code, 'SCAN_AGAIN');
+    return w.scan(await w.sign(ch.token, dev, t + 3000));
+  };
+  assert.equal((await live('in')).ok, true);
+  w.advance(600000);
+  assert.equal((await live('out')).ok, true);
+  assert.equal(row(w, s).state, 'out');
+});

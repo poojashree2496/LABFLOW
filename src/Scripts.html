@@ -732,7 +732,10 @@ LF.openPhoneScanner = (title, first) => {
   const sc = LF.ui.scanner({ title: 'Student QR', onCode: (code) => { busy = busy.then(() => run(code)); } });
   async function run(code) {
     try { const r = await api('scan.submit', { qr: code }); n++; count.textContent = n + ' scanned'; results.prepend(LF.ui.scanResult(r)); }
-    catch (e) { results.prepend(LF.ui.scanError(e)); }
+    catch (e) {
+      if (e.code === 'SCAN_AGAIN') { const old = results.querySelector('.live-hint'); if (old) old.remove(); results.prepend(h('div', { class: 'hint live-hint', role: 'status' }, e.message)); }
+      else results.prepend(LF.ui.scanError(e));
+    }
     while (results.children.length > 8) results.lastChild.remove();
   }
   const m = modal(title || 'Scan students', h('div', { style: { display: 'grid', gap: '12px' } },

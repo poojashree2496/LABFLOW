@@ -65,6 +65,7 @@ LF.register({ role: 'kiosk', id: 'kiosk', label: 'Kiosk', icon: 'scan', render(r
       } catch (e) {
         if ((e.code === 'NETWORK' || e.code === 'BUSY') && attempt < 2) { sawNetwork = true; await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
         if (e.code === 'REPLAY' && sawNetwork) { show('good', 'Probably recorded', 'The first attempt may have gone through. Check the roster.'); return; }
+        if (e.code === 'SCAN_AGAIN') { show('idle', 'Keep your phone in view', e.message); return; }
         const who = e.extra && e.extra.student ? e.extra.student + ': ' : '';
         show('bad', e.code === 'NETWORK' ? 'No connection' : 'Not accepted', who + e.message); beep(false); return;
       }

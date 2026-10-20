@@ -211,6 +211,7 @@ var Attend = {
   },
   /** Record why a scan was refused, and raise a flag for refusals that indicate sharing or relaying. */
   _afterReject: function (c, e, actor, role) {
+    if (e && e.code === 'SCAN_AGAIN') return; // a normal first read of a two-read check, not a rejection
     Audit.tryLog({ actor: actor, role: role, action: 'scan.reject', entityType: 'Session', entityId: c.sessionId || '', result: 'rejected',
                    detail: { code: e.code, mode: c.mode, method: c.method, kioskId: c.kioskId || '', studentId: c.studentId || '', purpose: c.purpose || '', step: (c.trace && c.trace.length) ? c.trace[c.trace.length - 1].id : '' } });
     try { Flags.afterReject(c, e); } catch (x) { /* never mask the real error */ }
@@ -246,6 +247,24 @@ var Attend = {
     var age = (U.now() - c.ts) / 1000;
     if (age > Settings.get('qrFreshSeconds')) fail('STALE_QR', 'This QR is ' + Math.round(age) + ' seconds old. Show the live code on the phone, not a screenshot.');
     if (age < -10) fail('STALE_QR', 'This QR is dated in the future. Check the phone clock and reopen the app.');
+  },
+  /**
+   * Optional second read (setting scanLivenessReads = 2). The phone re-signs its QR every few seconds with a new timestamp.
+   * The first good read is remembered and answered with SCAN_AGAIN; the code is accepted only when the same scanner reads
+   * the same challenge again with a LATER signed timestamp. A still picture carries one timestamp, so it can never pass.
+   * A live video of the phone does pass: this raises the cost of relaying, it does not remove it.
+   */
+  _liveness: function (c) {
+    if (Settings.get('scanLivenessReads') < 2) return;
+    if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'This code was already used.');
+    var cache = CacheService.getScriptCache(), key = 'live|' + c.nonce, now = U.now(), first = null;
+    try { first = JSON.parse(cache.get(key) || 'null'); } catch (e) { first = null; }
+    if (first && first.by === c.scannedBy && now - first.at <= 20000) {
+      if (c.ts > first.ts) { try { cache.remove(key); } catch (e) { /* the nonce is consumed on record anyway */ } return; }
+      fail('SCAN_AGAIN', 'Same picture as the last read. Keep the live code in view until it changes.');
+    }
+    try { cache.put(key, JSON.stringify({ ts: c.ts, at: now, by: c.scannedBy }), 30); } catch (e) { fail('BUSY', 'Try the scan again.'); }
+    fail('SCAN_AGAIN', 'Keep the phone in view. One more read to confirm it is live.');
   },
   _verifiedStudent: function (studentId) {
     var st = Db.get('StudentProfiles', studentId);
@@ -300,6 +319,7 @@ var Attend = {
     { id: 'signature', label: 'ECDSA P-256 signature matches the registered public key', run: function (c) {
       if (!Creds.verifySignature(c.cred.publicKey, c.token + '.' + c.ts, c.sig)) fail('BAD_SIGNATURE', 'The device signature is invalid.');
     } },
+    { id: 'liveness', label: 'QR was read twice with a new signed timestamp (live phone, not a picture)', run: function (c) { Attend._liveness(c); } },
     { id: 'replay', locked: true, label: 'Nonce has not been used before', run: function (c) {
       if (Tokens.wasRedeemed(c.nonce)) fail('REPLAY', 'This code was already used.');
     } },
