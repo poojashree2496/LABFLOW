@@ -52,18 +52,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### WS-A Data, security and queue (@?)
 
-- [ ] **A4 Yearly archive** (R14)
-  - Files: `BackupService.gs` (`Backup.archiveYear`), `Setup.gs` (extract `Setup.ensureSchema(ss, tables)` from `Setup.initialise`), `AttendanceService.gs` (`Attend.rebuildSummary`, `Attend.correct`, `Attend.decideCorrection`), `AdminService.gs` (reconcileSession), `ReportService.gs`, `TriggerService.gs`, `Code.gs` (`system.archive`), `ScriptsAdmin.html`, `test/harness.js` (`deleteRows` on FakeSheet).
-  - Archive spreadsheet per academic year, `LABFLOW Archive 2025-26`. Keep its ids in one script property (JSON map).
-  - The move runs under `Locks.with`: copy, verify the counts, then delete from the live sheet, in chunks that stop at the job deadline and resume next run.
-    - Archive whole sessions only, and skip any session with a pending correction or a pending `JobRuns` `openlabClose` journal; retain those journals until closure recovery completes.
-    - AssetEvents plan and complete rows move together.
-  - Move the existing-summary read in `Attend.rebuildSummary` inside the lock. Today it reads `__row` outside the lock and writes inside it; deleting rows in between would overwrite the wrong row.
-  - Set `Sessions.archivedAt`. `Attend.correct`, `Attend.decideCorrection` and `system.reconcileSession` refuse it with `ARCHIVED`.
-  - Reports that read events (`_digest`, `_erp`, `_session`) say "archived" for those sessions.
-  - Auto-run in July using a JobRuns marker, plus the academic-year start-month setting (default June).
-  - Done when: after archiving, student history and totals are unchanged, the live AttendanceEvents row count drops, the archive holds the rows, a correction on an archived session is refused, and the audit chain still verifies.
-  - Tests: new `test/archive.test.js`.
 ### WS-B Roles, dashboards, live board and reports (@?)
 
 ### WS-C Extra-hours check-in and projects (@?)

@@ -15,7 +15,7 @@ var Triggers = {
   HANDLERS: {
     trg_tickSessions: { every: 'minutes', n: 5, desc: 'Open timetabled sessions, rescan windows, auto-close stale sessions, release no-show bookings, overstay alerts' },
     trg_sendEmails: { every: 'hours', n: 1, desc: 'Send queued notification emails as one digest per person' },
-    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint, monthly audit on the 1st, backup copy of the spreadsheet with rotation (A3)' },
+    trg_nightly: { every: 'day', hour: 1, desc: 'Materialise timetable sessions, reconcile attendance and inventory, audit checkpoint, monthly audit on the 1st, backup copy of the spreadsheet with rotation (A3), yearly archive in July (A4)' },
     trg_morning: { every: 'day', hour: 8, desc: 'Overdue reminders, daily report, audit anchor email' },
     trg_evening: { every: 'day', hour: 18, desc: 'Daily digest per lab to the lab incharges (FR-34)' }
   },
@@ -117,6 +117,8 @@ var Jobs = {
       });
       // Last, so the copy includes everything the steps above wrote tonight (A3).
       Jobs.step(r, 'backup', function () { return Backup.nightly(); });
+      // Each July, archive academic years older than the previous one. Only runs when tonight's backup exists (A4).
+      Jobs.step(r, 'archive', function () { return Backup.autoArchive(deadline); });
       return r;
     });
   },

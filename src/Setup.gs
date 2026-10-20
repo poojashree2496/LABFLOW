@@ -19,13 +19,31 @@ var Setup = {
       props.setProperty(Cfg.PROP.DB_ID, ss.getId());
     }
     Db.resetHandles();
+    var made = Setup.ensureSchema(ss), created = made.created, checked = made.verified, extended = made.extended;
+
+    if (!props.getProperty(Cfg.PROP.HMAC)) props.setProperty(Cfg.PROP.HMAC, Setup._newSecret());
+    if (!props.getProperty(Cfg.PROP.PII_KEY)) props.setProperty(Cfg.PROP.PII_KEY, Setup._newSecret()); // encryption key for personal data (A2); never overwritten, because that would make stored values unreadable
+    if (opts.adminEmail) Setup.setBootstrapAdmin(opts.adminEmail);
+    Db.resetHandles();
+    var out = { spreadsheetId: ss.getId(), url: ss.getUrl(), created: created, verified: checked, extended: extended };
+    if (!opts.silent) console.log(JSON.stringify(out));
+    return out;
+  },
+
+  /**
+   * Create or extend the given tables (default: all) in a spreadsheet. Shared by initialise() and the yearly archive, which
+   * builds each archive spreadsheet from the same schema so a row can move between the two unchanged.
+   */
+  ensureSchema: function (ss, tables) {
     var created = [], checked = [], extended = [];
-    Object.keys(Cfg.SCHEMA).forEach(function (table) {
+    (tables || Object.keys(Cfg.SCHEMA)).forEach(function (table) {
       var cols = Cfg.SCHEMA[table];
       var sheet = ss.getSheetByName(table);
       var header = cols.map(function (c) { return c.name; });
       if (!sheet) {
         sheet = ss.insertSheet(table);
+        // A new sheet has 26 columns; the wider tables (AttendanceEvents has 28) need more before the header is written.
+        if (sheet.getMaxColumns && sheet.getMaxColumns() < cols.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.length - sheet.getMaxColumns());
         sheet.getRange(1, 1, 1, cols.length).setValues([header]);
         created.push(table);
       } else {
@@ -37,6 +55,7 @@ var Setup = {
         var restBlank = existing.slice(have).every(function (v) { return v === '' || v === null; });
         if (have === 0 || !restBlank) fail('SCHEMA_MISMATCH', 'Sheet "' + table + '" headers differ from the expected schema. Refusing to modify existing data.');
         if (have < header.length) {
+          if (sheet.getMaxColumns && sheet.getMaxColumns() < cols.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.length - sheet.getMaxColumns());
           sheet.getRange(1, have + 1, 1, header.length - have).setValues([header.slice(have)]);
           extended.push(table + ' +' + (header.length - have));
         }
@@ -50,14 +69,7 @@ var Setup = {
     });
     var blank = ss.getSheetByName('Sheet1');
     if (blank && ss.getSheets().length > 1) { try { ss.deleteSheet(blank); } catch (e) {} }
-
-    if (!props.getProperty(Cfg.PROP.HMAC)) props.setProperty(Cfg.PROP.HMAC, Setup._newSecret());
-    if (!props.getProperty(Cfg.PROP.PII_KEY)) props.setProperty(Cfg.PROP.PII_KEY, Setup._newSecret()); // encryption key for personal data (A2); never overwritten, because that would make stored values unreadable
-    if (opts.adminEmail) Setup.setBootstrapAdmin(opts.adminEmail);
-    Db.resetHandles();
-    var out = { spreadsheetId: ss.getId(), url: ss.getUrl(), created: created, verified: checked, extended: extended };
-    if (!opts.silent) console.log(JSON.stringify(out));
-    return out;
+    return { created: created, verified: checked, extended: extended };
   },
 
   _newSecret: function () {

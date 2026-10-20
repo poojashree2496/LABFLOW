@@ -122,6 +122,9 @@ var Auth = {
     Db.where('Sessions', function (s) { return labs(s.labId); }).forEach(function (s) { sessions[s.sessionId] = true; });
     Db.where('Rosters', function (r) { return r.status === 'active' && (r.scopeType === 'session' ? sessions[r.scopeId] : courses(r.scopeId)); }).forEach(function (r) { ids[r.studentId] = true; });
     Db.where('AttendanceEvents', function (e) { return sessions[e.sessionId]; }).forEach(function (e) { ids[e.studentId] = true; });
+    // Archived sessions no longer have events here; their stored summaries say who attended.
+    var archived = {}; Db.where('Sessions', function (s) { return s.archivedAt && sessions[s.sessionId]; }).forEach(function (s) { archived[s.sessionId] = true; });
+    if (Object.keys(archived).length) Db.where('AttendanceSummaries', function (x) { return archived[x.sessionId] && x.firstIn !== null && x.firstIn !== undefined; }).forEach(function (x) { ids[x.studentId] = true; });
     Db.where('Groups', function (g) { return labs(g.labId); }).forEach(function (g) { groups[g.groupId] = true; });
     Db.where('Projects', function(p){return labs(p.labId);}).forEach(function(p){ids[p.ownerStudentId]=true;});
     Db.where('GroupMembers', function (m) { return groups[m.groupId]; }).forEach(function (m) { ids[m.studentId] = true; });

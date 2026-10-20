@@ -450,6 +450,7 @@ var Attend = {
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     if (!(Auth.canView(ctx) || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
     Auth.assertLab(ctx, session.labId);
+    if (session.archivedAt) return Attend._archivedRoster(session);
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var eligible = session.openToAll ? {} : Roster.eligibleSet(session), ids = Object.assign({}, eligible);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
@@ -463,6 +464,25 @@ var Attend = {
     }).sort(function (a, b) { return String(a.rollNo) < String(b.rollNo) ? -1 : 1; });
     var openFlags = Db.where('Flags', function (f) { return f.sessionId === session.sessionId && f.status === 'open'; }).length;
     return { session: Sessions.pub(session, Sessions._ref()), counts: Attend.liveCounts(session), roster: rows, openFlags: openFlags, guests: session.labEventId ? Events.guestCount(session.labEventId) : 0, serverNow: now };
+  },
+
+  /** Roster of an archived session. Its scan-level events live in the archive, so this shows the stored summaries. */
+  _archivedRoster: function (session) {
+    var sums = Db.where('AttendanceSummaries', function (x) { return x.sessionId === session.sessionId; }), profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
+    var eligible = session.openToAll ? null : Roster.eligibleSet(session), seen = 0, flagged = 0, unverified = 0;
+    var rows = sums.map(function (x) {
+      var pr = profiles[x.studentId] || {};
+      if (x.firstIn !== null && x.firstIn !== undefined) seen++;
+      if (x.status === 'flagged' || x.status === 'missed_rescan') flagged++;
+      if (x.status === 'unverified_exit') unverified++;
+      return { studentId: x.studentId, rollNo: pr.rollNo, name: pr.name, section: pr.section, enrolled: eligible ? !!eligible[x.studentId] : null, state: x.firstIn === null || x.firstIn === undefined ? 'none' : 'out',
+               firstIn: x.firstIn, lastOut: x.lastOut, status: x.status, flags: x.flags || [], verifiedMinutes: x.verifiedMinutes, spotCheck: null, hasPhoto: !!pr.photoFileId,
+               method: '', scannerRole: '', scannedBy: '', geofence: '', assurance: '' };
+    }).sort(function (a, b) { return String(a.rollNo) < String(b.rollNo) ? -1 : 1; });
+    var enrolled = eligible ? Object.keys(eligible).length : null, now = U.now();
+    return { session: Sessions.pub(session, Sessions._ref()), archived: true, roster: rows, openFlags: 0, serverNow: now, guests: session.labEventId ? Events.guestCount(session.labEventId) : 0,
+             counts: { enrolled: enrolled, inside: 0, left: seen, attended: seen, absent: enrolled === null ? null : Math.max(0, enrolled - seen), flagged: flagged, unverifiedExits: unverified,
+                       rescanWindow: null, capacity: null, overCapacity: false, onBreak: false, serverNow: now } };
   },
 
   // ---- rescan windows --------------------------------------------------------------------------------------
@@ -556,6 +576,7 @@ var Attend = {
     return Locks.with(function () {
       var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
       if (!Auth.ownsSession(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+      if (s.archivedAt) fail('ARCHIVED', 'This session is archived and can no longer be corrected.');
       if (s.status !== 'open' && s.status !== 'closed') fail('INVALID_STATE', 'Corrections apply to opened sessions.');
       var studentId = V.id(p.studentId, 'Student', 'student');
       var student = Db.mustGet('StudentProfiles', studentId, 'Student');
@@ -606,6 +627,8 @@ var Attend = {
     var approve = V.bool(p.approve), note = V.str(p.note, 'Note', { optional: true, max: 200 });
     return Locks.with(function () {
       var e = Db.mustGet('AttendanceEvents', V.id(p.eventId, 'Correction', 'event'), 'Correction');
+      var own = Db.get('Sessions', e.sessionId);
+      if (own && own.archivedAt) fail('ARCHIVED', 'This session is archived and can no longer be changed.');
       if (e.approvalStatus !== 'pending' || ['CORR_IN', 'CORR_OUT', 'VOID'].indexOf(e.type) < 0) fail('INVALID_STATE', 'This is not a pending correction.');
       if (Db.where('AttendanceEvents', function (d) { return d.type === 'DECISION' && d.ref === e.eventId; }).length) fail('INVALID_STATE', 'Already decided.');
       var now = U.now();
@@ -621,13 +644,16 @@ var Attend = {
   /** Recompute AttendanceSummaries for a session from its events. Safe to run any number of times. */
   rebuildSummary: function (sessionId) {
     var s = Db.mustGet('Sessions', sessionId, 'Session'), now = U.now();
+    // The scan-level events of an archived session are gone, so a rebuild would wipe its stored totals.
+    if (s.archivedAt) fail('ARCHIVED', 'This session is archived. Its stored summary is final.');
     var events = Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId; });
     var eff = Attend._effective(events), wins = Db.where('RescanWindows', function (w) { return w.sessionId === sessionId; });
     var ids = s.openToAll ? {} : Roster.eligibleSet(s);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
-    var existing = {}; Db.where('AttendanceSummaries', function (r) { return r.sessionId === sessionId; }).forEach(function (r) { existing[r.studentId] = r; });
     var create = [], updated = 0;
     Locks.with(function () {
+      // Read the stored rows inside the lock: the archive deletes rows, and a row number read earlier could point at a different row.
+      var existing = {}; Db.where('AttendanceSummaries', function (r) { return r.sessionId === sessionId; }).forEach(function (r) { existing[r.studentId] = r; });
       Object.keys(ids).forEach(function (sid) {
         var c = Attend._compute(s, eff[sid] || [], wins, now);
         var rec = { sumId: sessionId + ':' + sid, sessionId: sessionId, studentId: sid, status: c.status, firstIn: c.firstIn, lastOut: c.lastOut, verifiedUntil: c.verifiedUntil, verifiedMinutes: c.verifiedMinutes, flags: c.flags, computedAt: now };
@@ -643,6 +669,7 @@ var Attend = {
   /** Consistency checks for one session (admin tool / nightly job). Reports; does not change events. */
   reconcile: function (sessionId) {
     var s = Db.mustGet('Sessions', sessionId, 'Session'), problems = [];
+    if (s.archivedAt) fail('ARCHIVED', 'This session is archived. Its events are in the archive spreadsheet, so it cannot be reconciled here.');
     var events = Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId; });
     var seenNonce = {};
     events.forEach(function (e) {
@@ -736,14 +763,14 @@ var Attend = {
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });
-    return { events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, method: e.method, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
+    return { archived: !!s.archivedAt, events: evs.filter(function (e) { return e.type !== 'DECISION'; }).map(function (e) { return { eventId: e.eventId, type: e.type, at: e.at, source: e.source, method: e.method, reason: e.reason, approvalStatus: e.approvalStatus, voided: !!voided[e.eventId] }; }).sort(function (a, b) { return a.at - b.at; }) };
   },
   /** One session's raw events for the student themselves (shows exceptions and corrections transparently). */
   myEvents: function (ctx, p) {
     V.obj(p);
     if (!ctx.student) return { events: [] };
-    var sessionId = V.id(p.sessionId, 'Session', 'session'), sid = ctx.student.studentId;
-    return { events: Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId && e.studentId === sid && e.type !== 'DECISION'; })
+    var sessionId = V.id(p.sessionId, 'Session', 'session'), sid = ctx.student.studentId, own = Db.get('Sessions', sessionId);
+    return { archived: !!(own && own.archivedAt), events: Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId && e.studentId === sid && e.type !== 'DECISION'; })
       .map(function (e) { return { type: e.type, at: e.at, source: e.source, method: e.method, reason: e.source === 'manual' ? e.reason : '', approvalStatus: e.approvalStatus }; }).sort(function (a, b) { return a.at - b.at; }) };
   }
 };

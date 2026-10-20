@@ -102,6 +102,7 @@ var Reports = {
   build: function (type, p) {
     var fn = Reports['_' + type];
     var rep = fn(p);
+    Reports._noteArchived(type, p, rep);
     rep.type = type;
     rep.generatedAt = U.now();
     rep.truncated = false;
@@ -111,6 +112,20 @@ var Reports = {
     }
     if (rep.rows.length > Reports.MAX_ROWS) { rep.rows = rep.rows.slice(0, Reports.MAX_ROWS); rep.truncated = true; }
     return rep;
+  },
+
+  /**
+   * Archived sessions keep their stored totals but not their scan-level events (visit counts, work by system or project, the
+   * check-in method). A report whose range includes any says so, instead of quietly showing short numbers.
+   */
+  _noteArchived: function (type, p, rep) {
+    if (['digest', 'session', 'erp', 'student', 'systemUsage', 'projects'].indexOf(type) < 0 || !rep.meta) return;
+    var m = rep.meta, from = m.from || m.date, to = m.to || m.date, n = 0;
+    if (type === 'session') { var one = Db.get('Sessions', m.sessionId); n = one && one.archivedAt ? 1 : 0; }
+    else if (from && to) n = Db.where('Sessions', function (s) { return s.archivedAt && s.date >= from && s.date <= to && Reports._reportLab(p || {}, s.labId); }).length;
+    if (!n) return;
+    m.archivedSessions = n;
+    m.note = (m.note ? m.note + ' ' : '') + n + ' archived session' + (n === 1 ? '' : 's') + ' in this range: attendance totals are kept, but scan-level detail (visit counts, work by system or project, check-in method) is in the archive spreadsheet and is not included here.';
   },
 
   _sessionsIn: function (r, pred, p) {
@@ -158,6 +173,7 @@ var Reports = {
     deltas.forEach(function (d) { inside += d[1]; if (d[0] >= from && d[0] < to) { var hh = U.local(d[0]).H; hourly[hh].peak = Math.max(hourly[hh].peak, inside); } });
     var peakH = 0; Object.keys(hourly).forEach(function (k) { if (hourly[k].peak > hourly[peakH].peak) peakH = +k; });
     var sums = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), unverified = 0;
+    sessions.forEach(function (s) { if (s.archivedAt) (sums[s.sessionId] || []).forEach(function (x) { if (x.firstIn !== null && x.firstIn !== undefined) visitors[x.studentId] = true; }); });
     Object.keys(sums).forEach(function (k) { sums[k].forEach(function (x) { if (x.status === 'unverified_exit') unverified++; }); });
     var now = U.now(), unreturned = 0;
     var openLoans = U.indexBy(Db.where('Loans', function (l) { return (l.status === 'open' || l.status === 'partial') && Reports._reportLab(p, l.labId) && (!labId || l.labId === labId) && l.dueAt < to; }), 'loanId');
@@ -248,6 +264,7 @@ var Reports = {
   /** FR-37 session log: who was there, times, how they were checked in, flags. */
   _session: function (p) {
     var s = Db.mustGet('Sessions', p.sessionId, 'Session'), now = U.now();
+    if (s.archivedAt) return Reports._archivedSession(s);
     var eff = Attend._effective(Attend._eventsFor(s)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === s.sessionId; });
     var ids = s.openToAll ? {} : Object.assign({}, Roster.eligibleSet(s)); Object.keys(eff).forEach(function (k) { ids[k] = true; });
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), lab = Db.cachedGet('Labs', 'labId', s.labId, 120) || {};
@@ -263,6 +280,18 @@ var Reports = {
       meta: { sessionId: s.sessionId, status: s.status, guests: s.labEventId ? Events.guestCount(s.labEventId) : 0 } };
   },
 
+  /** The session log of an archived session: who attended and for how long, from the stored summaries; scan detail is archived. */
+  _archivedSession: function (s) {
+    var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), lab = Db.cachedGet('Labs', 'labId', s.labId, 120) || {};
+    var rows = Db.where('AttendanceSummaries', function (x) { return x.sessionId === s.sessionId; }).map(function (x) {
+      var pr = profiles[x.studentId] || {};
+      return [pr.rollNo || x.studentId, pr.name || '', x.status, Reports._hhmm(x.firstIn), Reports._hhmm(x.lastOut), x.verifiedMinutes || 0, 'archived', '', '', (x.flags || []).join(' ')];
+    }).sort(function (a, b) { return String(a[0]) < String(b[0]) ? -1 : 1; });
+    return { title: 'Session log - ' + s.title + ' - ' + s.date + ' (' + (lab.code || '') + ')',
+      columns: ['Roll no', 'Name', 'Status', 'First in', 'Last out', 'Verified minutes', 'Method', 'Scanned by (CR / coordinator)', 'Geofence', 'Flags'], rows: rows,
+      meta: { sessionId: s.sessionId, status: s.status, guests: s.labEventId ? Events.guestCount(s.labEventId) : 0, archived: true } };
+  },
+
   /** FR-39 ERP export: raw attendance rows in a fixed column order (one row per student per session). */
   _erp: function (p) {
     var r = Reports._range(p, 30), ref = Sessions._ref(), sessions = U.indexBy(Reports._sessionsIn(r, function (s) { return s.status === 'closed'; }, p), 'sessionId');
@@ -270,7 +299,7 @@ var Reports = {
     Db.where('AttendanceEvents', function (e) { return sessions[e.sessionId] && (e.type === 'IN' || e.type === 'CORR_IN'); }).forEach(function (e) { methods[e.sessionId + '|' + e.studentId] = e.method || e.source; });
     var rows = Db.where('AttendanceSummaries', function (x) { return sessions[x.sessionId]; }).map(function (x) {
       var s = sessions[x.sessionId], pr = profiles[x.studentId] || {}, c = ref.courses[s.courseId] || {}, lab = ref.labs[s.labId] || {};
-      return [s.date, pr.rollNo || '', pr.name || '', c.code || '', s.section || '', lab.code || '', s.sessionId, s.type, x.status, Reports._hhmm(x.firstIn), Reports._hhmm(x.lastOut), x.verifiedMinutes || 0, methods[x.sessionId + '|' + x.studentId] || '', (x.flags || []).join(' ')];
+      return [s.date, pr.rollNo || '', pr.name || '', c.code || '', s.section || '', lab.code || '', s.sessionId, s.type, x.status, Reports._hhmm(x.firstIn), Reports._hhmm(x.lastOut), x.verifiedMinutes || 0, methods[x.sessionId + '|' + x.studentId] || (s.archivedAt ? 'archived' : ''), (x.flags || []).join(' ')];
     }).sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : String(a[1]) < String(b[1]) ? -1 : 1; });
     return { title: 'ERP export ' + r.from + ' to ' + r.to, columns: Reports.ERP_COLUMNS.slice(), rows: rows, meta: { from: r.from, to: r.to, fixedColumns: true } };
   },

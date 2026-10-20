@@ -38,7 +38,7 @@ class FakeRange {
   setValues(vals) {
     if (this.sheet.ss.onOp) this.sheet.ss.onOp('write', this.sheet.name);
     if (vals.length !== this.nr || vals[0].length !== this.nc) throw new Error('setValues dimension mismatch');
-    if (this.r + this.nr - 1 > this.sheet.maxRows) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
+    if (this.r + this.nr - 1 > this.sheet.maxRows || this.c + this.nc - 1 > this.sheet.maxCols) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     for (let i = 0; i < this.nr; i++) {
       const rr = this.r + i - 1;
       this.sheet.cells[rr] = this.sheet.cells[rr] || [];
@@ -57,11 +57,19 @@ class FakeRange {
   setFontWeight() { return this; } setBackground() { return this; } setFontColor() { return this; }
 }
 class FakeSheet {
-  constructor(name, ss) { this.name = name; this.ss = ss; this.cells = []; this.maxRows = 1000; this.colFormat = {}; this.writes = 0; this.frozen = 0; }
+  constructor(name, ss) { this.name = name; this.ss = ss; this.cells = []; this.maxRows = 1000; this.maxCols = 26; this.colFormat = {}; this.writes = 0; this.frozen = 0; }
   getName() { return this.name; }
   getLastRow() { for (let i = this.cells.length - 1; i >= 0; i--) if ((this.cells[i] || []).some((v) => v !== '' && v !== undefined)) return i + 1; return 0; }
   getMaxRows() { return this.maxRows; }
   insertRowsAfter(_after, n) { this.maxRows += n; }
+  getMaxColumns() { return this.maxCols; }
+  insertColumnsAfter(_after, n) { this.maxCols += n; }
+  /** Like Sheets: later rows move up, the grid shrinks, and the last non-frozen row cannot be deleted. */
+  deleteRows(start, n) {
+    if (start < 1 || n < 1 || start + n - 1 > this.maxRows) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
+    if (this.maxRows - n <= this.frozen) throw new Error("You can't delete all the non-frozen rows in a sheet.");
+    this.cells.splice(start - 1, n); this.maxRows -= n; this.writes++;
+  }
   getRange(r, c, nr = 1, nc = 1) {
     if (r < 1 || c < 1) throw new Error('Range coordinates must be >= 1');
     return new FakeRange(this, r, c, nr, nc);
@@ -161,6 +169,7 @@ function createEnv(opts = {}) {
         f.getDateCreated = () => new Date(f.created);
         f.setTrashed = (v) => { f.trashed = v !== false; trashed.push(id); return f; };
         f.makeCopy = (n, folder) => { const c = mk('file-' + (++seq), n, folder || parent, { copyOf: id }); if (folder) folder.files.push(c); return c; };
+        f.moveTo = (folder) => { f.parent = folder; folder.files.push(f); return f; };
         f.getAs = () => ({ getBytes: () => signed(Buffer.from('%PDF-fake')) });
         files[id] = f; return f;
       };

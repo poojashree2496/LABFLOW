@@ -50,7 +50,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R11 | Done on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | Deployment checks | Deployment |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
-| R14 | Partial | Nightly backup copies with rotation (30 daily + 12 monthly), manual backup and an admin panel (A3, built 21 Oct) | The yearly archive spreadsheet | A4 |
+| R14 | Done | Nightly backup copies with rotation (30 daily + 12 monthly), manual backup and an admin panel (A3); yearly archive to a per-year spreadsheet, manual or automatic each July, with an admin panel (A4, built 21 Oct) | None | - |
 | R15 | Done on local fakes | Role-checked RPC gateway, rate limits, hash-chained audit log. A2 done: `Users.mobile` is sealed with AES-256-GCM (`Crypt`), shown masked to everyone but its owner, revealed to a coordinator or super admin one student at a time with an audit entry | Run `setupEncryptMobiles` on the real sheet; deployment checks | Deployment |
 | R16 | Partial | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff` | Deployment checks | Deployment |
 | R17 | Done | Device-bound signed QR, two check-in modes, tamper-evident audit chain, Test Lab with attack scenarios | Keep it in the pitch | S2 |
@@ -97,7 +97,9 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 - **What moves** to a per-year spreadsheet "LABFLOW Archive YYYY-YY": AttendanceEvents of closed sessions, RescanWindows, SpotChecks, Redemptions, AssetEvents of returned loans (plan and complete rows move together), SystemLog, JobRuns, and Notifications that have been read.
 - **What stays live**: Sessions, AttendanceSummaries, Loans, LoanItems and AuditEvents. Student history, totals and most reports keep working.
 - An archived session refuses corrections and reconciles (error `ARCHIVED`). Reports that need event-level rows from an archived range say so instead of showing short numbers.
-- Rows are copied and verified before they are deleted from the live sheet, under the script lock.
+- Rows are copied and verified before they are deleted from the live sheet, under the script lock. A run stops at its time budget and carries on next time; running a year twice copies nothing twice.
+- A backup of the day is made before any archive run. The nightly automatic run in July needs that backup to exist and does nothing without it.
+- Known limits: the scoped-HOD audit view cannot map audit rows about archived scans, an asset's history shows fewer events for archived loans, and visit counts for archived sessions are shown as unavailable.
 
 **Encryption**
 - `Users.mobile` is encrypted at rest with **AES-256-GCM**, a vetted authenticated cipher (the audited `@noble/ciphers` bundle in `Vendor_AES.gs`; no homemade cipher). The key is HMAC-SHA256(`PII_KEY`, `'enc'`), where `PII_KEY` is a script property created by `Setup.initialise`; it is never in the sheet and is never regenerated, because that would make stored values unreadable. Each value has a fresh random 96-bit nonce, and the field name (`Users.mobile`) is bound in as additional authenticated data. Stored form: `enc1:<nonce>:<ciphertext>:<tag>` (base64url). A value that was changed in any character, sealed for another field, or opened with another key fails with `INTEGRITY`.

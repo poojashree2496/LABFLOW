@@ -113,6 +113,7 @@ var Cfg = (function () {
     // labs, events, live view
     overstayAlertMinutes: { group: 'Labs and events', type: 'int', def: 10, min: 0, max: 120, desc: 'Staff are alerted about students still inside this long after the lab closing time.' },
     occupancyRefreshSeconds: { group: 'Labs and events', type: 'int', def: 5, min: 3, max: 60, desc: 'Live counters and rosters refresh this often.' },
+    academicYearStartMonth: { group: 'Backups and archive', type: 'int', def: 6, min: 1, max: 12, desc: 'Month the academic year starts (6 = June, so the year runs 1 June to 31 May). The yearly archive groups sessions by this.' },
     eventCoordinatorGraceMinutes: { group: 'Labs and events', type: 'int', def: 60, min: 0, max: 240, desc: 'An event coordinator\'s permissions start this long before and end this long after the event.' },
 
     // inventory and bookings
@@ -166,7 +167,7 @@ var Cfg = (function () {
     /** Script-property keys (secrets and deployment configuration; never stored in a sheet). */
     PROP: { DB_ID: 'DB_SPREADSHEET_ID', HMAC: 'QR_HMAC_SECRET', BOOTSTRAP_ADMIN: 'BOOTSTRAP_ADMIN_EMAIL', DOMAINS: 'ALLOWED_DOMAINS',
             AUDIT_HEAD: 'AUDIT_HEAD', PHOTO_FOLDER: 'PHOTO_FOLDER_ID', REPORT_FOLDER: 'REPORT_FOLDER_ID', EMAIL_TRANSPORT: 'EMAIL_TRANSPORT',
-            WEBAPP_URL: 'WEBAPP_URL', SESSION: 'SESSION_SECRET', GOOGLE_CLIENT_ID: 'GOOGLE_CLIENT_ID', PII_KEY: 'PII_KEY', BACKUP_FOLDER: 'BACKUP_FOLDER_ID' }
+            WEBAPP_URL: 'WEBAPP_URL', SESSION: 'SESSION_SECRET', GOOGLE_CLIENT_ID: 'GOOGLE_CLIENT_ID', PII_KEY: 'PII_KEY', BACKUP_FOLDER: 'BACKUP_FOLDER_ID', ARCHIVES: 'ARCHIVE_SPREADSHEETS', ARCHIVE_FOLDER: 'ARCHIVE_FOLDER_ID' }
   };
 })();
 

@@ -297,7 +297,7 @@ LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', 
     const s = await api('system.status');
     return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Triggers', s.triggers.ok ? 'OK' : 'Problem', s.triggers.summary, s.triggers.ok ? 'good' : 'bad'), ui.stat('Email today', s.mail.remainingToday === null ? 'n/a' : s.mail.remainingToday, s.mail.queued + ' queued · transport: ' + s.emailTransport), ui.stat('Time zone', s.timeZone, fmt.dt(s.serverNow)), ui.stat('Allowed domains', s.allowedDomains.length, s.allowedDomains.join(', '))),
       h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Background jobs'), s.latestJobs.length ? ui.table({ caption: 'Jobs', search: false, rows: s.latestJobs, columns: [{ key: 'job', label: 'Job' }, { key: 'at', label: 'Last run', render: (x) => fmt.dt(x.at) }, { key: 'status', label: 'Result', render: (x) => ui.badge(x.status, x.status === 'ok' ? 'good' : 'bad') }, { key: 'detail', label: 'Detail' }] }).el : ui.empty('No job has run yet', 'Install triggers from the Apps Script editor (see README).')),
-      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')), backupsPanel());
+      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')), backupsPanel(), archivePanel());
   }
   /** Backups (A3): the nightly Drive copies, what rotation keeps, and a Back up now button. */
   function backupsPanel() {
@@ -308,6 +308,22 @@ LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', 
         h('p', { class: 'hint', style: { margin: 0 } }, 'A copy of the whole database is saved to Drive every night. The last ' + r.retention.dailyDays + ' days are kept, plus the first copy of each of the last ' + r.retention.monthlyMonths + ' months. The phone-number key is not inside the copy, so keep a separate note of it (see SECURITY.md).'),
         h('div', { class: 'toolbar' }, ui.button('Back up now', { kind: 'primary', icon: 'shield', onClick: async () => { await api('system.backup'); LF.toast('Backup made', 'good'); load(); } }), link(r.folderUrl, 'Open the backup folder')),
         r.backups.length ? ui.table({ caption: 'Backups', search: false, pageSize: 10, rows: r.backups, columns: [{ key: 'name', label: 'Copy' }, { key: 'createdAt', label: 'Made', render: (x) => fmt.dt(x.createdAt) }, { key: 'keeps', label: 'Kept as', render: (x) => x.keeps || '-' }, { label: '', sort: false, render: (x) => link(x.url, 'Open') }] }).el : ui.empty('No backup yet', 'The first one is made tonight, or press Back up now.'));
+    });
+    load();
+    return box;
+  }
+  /** Yearly archive (A4): old academic years move to their own spreadsheet; totals and history stay. */
+  function archivePanel() {
+    const box = h('section', { class: 'card', style: { display: 'grid', gap: '10px' } });
+    const link = (u, text) => /^https:\/\//.test(u || '') ? h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, text) : null;
+    const total = (m) => Object.keys(m || {}).reduce((a, k) => a + m[k], 0);
+    const load = () => ui.loadInto(box, async () => {
+      const r = await api('system.archive');
+      return h('div', { style: { display: 'grid', gap: '10px' } }, h('h2', { class: 't-h2' }, 'Yearly archive'),
+        h('p', { class: 'hint', style: { margin: 0 } }, 'Scan-level records of finished academic years move to a separate spreadsheet so the live one stays fast. Each year is copied, checked, then removed. Student history, hours and reports keep working. Years older than the previous one move on their own each July after a fresh backup; the previous year waits for you here.'),
+        r.plan.length ? ui.table({ caption: 'Academic years', search: false, rows: r.plan, columns: [{ key: 'year', label: 'Year' }, { key: 'sessions', label: 'Sessions to move' }, { label: 'Rows to move', render: (x) => total(x.moved) }, { label: 'Moves', render: (x) => x.auto ? 'Automatically in July' : 'When you run it' },
+          { label: '', sort: false, render: (x) => x.sessions || total(x.moved) ? ui.button('Archive ' + x.year, { onClick: async () => { if (!await LF.confirm({ title: 'Archive ' + x.year + '?', message: 'A backup is made first, then ' + x.sessions + ' finished sessions and their scan records move to the archive spreadsheet. This cannot be undone from the app.', confirmLabel: 'Archive' })) return; const d = await api('system.archive', { year: x.year }); LF.toast(d.status === 'complete' ? 'Archived ' + x.year : 'Part of ' + x.year + ' archived. Press the button again to continue.', d.status === 'complete' ? 'good' : 'warn'); load(); } }) : null }] }).el : ui.empty('Nothing to archive', 'Finished years appear here once the academic year has ended.'),
+        r.archives.length ? ui.table({ caption: 'Archive spreadsheets', search: false, rows: r.archives, columns: [{ key: 'year', label: 'Year' }, { key: 'name', label: 'Spreadsheet' }, { label: '', sort: false, render: (x) => link(x.url, 'Open') }] }).el : null);
     });
     load();
     return box;

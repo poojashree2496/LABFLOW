@@ -400,11 +400,12 @@ test('backup: a failed copy keeps every older backup, tells the admin, and does 
   assert.ok(w.eval("Db.readAll('Notifications')").some((n) => n.title === 'Nightly backup failed'));
 });
 
-test('backup: the nightly job runs the backup step last and the job log shows it', () => {
+test('backup: the nightly job runs the backup step after everything else and the job log shows it', () => {
   const w = world({ students: 0 });
   const r = JSON.parse(w.e.run('JSON.stringify(Jobs.nightly())'));
   assert.equal(r.status, 'ok', JSON.stringify(r));
   assert.equal(r.detail.backup.created, 'LABFLOW backup 2026-10-14');
-  assert.equal(Object.keys(r.detail).pop(), 'backup');
+  assert.deepEqual(Object.keys(r.detail).slice(-2), ['backup', 'archive'], 'the backup comes right before the archive step');
+  assert.equal(r.detail.archive.skipped, 'not July');
   assert.equal(backups(w).length, 1);
 });

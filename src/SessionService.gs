@@ -19,7 +19,7 @@ var Sessions = {
     return { sessionId: s.sessionId, type: s.type, labId: s.labId, labName: lab.name, labCode: lab.code, courseId: s.courseId, courseCode: course.code, courseName: course.name,
       facultyId: s.facultyId, facultyName: fac.name, title: s.title, section: s.section, date: s.date, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status,
       openedAt: s.openedAt, closedAt: s.closedAt, openToAll: s.openToAll, rescanMode: s.rescanMode, nextRescanAt: s.nextRescanAt, rescansDone: s.rescansDone, notes: s.notes,
-      labEventId: s.labEventId || '', breakStart: s.breakStart, breakEnd: s.breakEnd, selfWork: String(s.slotKey || '').indexOf('rsv|') === 0, labMode: lab.labId ? Labs.modeOf(lab) : '' };
+      labEventId: s.labEventId || '', breakStart: s.breakStart, breakEnd: s.breakEnd, archived: !!s.archivedAt, selfWork: String(s.slotKey || '').indexOf('rsv|') === 0, labMode: lab.labId ? Labs.modeOf(lab) : '' };
   },
   _ref: function () {
     return { labs: U.indexBy(Db.readAll('Labs'), 'labId'), courses: U.indexBy(Db.readAll('Courses'), 'courseId'), fac: U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId') };
