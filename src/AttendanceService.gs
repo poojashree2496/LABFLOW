@@ -64,7 +64,7 @@ var Attend = {
   inBreak: function (session, t) { return !!(session.breakStart && session.breakEnd && t >= session.breakStart && t < session.breakEnd); },
 
   /** Pure derivation for ONE student from their effective events. */
-  _compute: function (session, evts, windows, now) {
+  _compute: function (session, evts, windows, now, withIntervals) {
     var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, autoOut = false, lastEvent = null;
     (evts || []).forEach(function (e) {
       if (e.type === 'WORK') return; // work metadata never verifies presence or resets the scan gap
@@ -95,7 +95,7 @@ var Attend = {
       if (!rescans.some(function (r) { return r.at >= w.openedAt && r.at <= w.closesAt + 2000; })) missed.push(w.openedAt);
     });
 
-    var requireExit = Settings.get('requireExitScan'), minutes = 0, verifiedUntil = null;
+    var requireExit = Settings.get('requireExitScan'), minutes = 0, verifiedUntil = null, intervals = [];
     stints.forEach(function (s) {
       var inStint = verified.filter(function (t) { return t >= s.inAt && (s.out === null || t <= s.out); });
       var lastV = Math.max.apply(null, inStint.concat([s.inAt]));
@@ -107,6 +107,7 @@ var Attend = {
         var before = inStint.filter(function (t) { return t < cap; });
         end = Math.min(end, Math.max.apply(null, before.concat([s.inAt])));
       }
+      if (withIntervals) intervals.push({ from: s.inAt, to: end });
       minutes += Math.max(0, end - s.inAt - Attend._breakOverlap(session, s.inAt, end)) / 60000;
       if (verifiedUntil === null || end > verifiedUntil) verifiedUntil = end;
     });
@@ -119,8 +120,10 @@ var Attend = {
     if (corrected) flags.push('corrected');
     if (autoOut) flags.push('auto_out');
     var status = firstIn === null ? 'absent' : spotFail ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
-    return { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
+    var result = { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
              status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent };
+    if (withIntervals) result.creditedIntervals = intervals;
+    return result;
   },
 
   activeWindow: function (sessionId, now) {
@@ -446,6 +449,7 @@ var Attend = {
     V.obj(p);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     if (!(Auth.canView(ctx) || Auth.canOperate(ctx, session))) fail('FORBIDDEN', 'This is not your session.');
+    Auth.assertLab(ctx, session.labId);
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var eligible = session.openToAll ? {} : Roster.eligibleSet(session), ids = Object.assign({}, eligible);
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
@@ -728,6 +732,7 @@ var Attend = {
     V.obj(p);
     var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     if (!(Auth.canView(ctx) || Auth.ownsSession(ctx, s))) fail('FORBIDDEN', 'This is not your session.');
+    Auth.assertLab(ctx, s.labId);
     var sid = V.id(p.studentId, 'Student', 'student');
     var evs = Db.where('AttendanceEvents', function (e) { return e.sessionId === s.sessionId && e.studentId === sid; }), voided = {};
     evs.forEach(function (e) { if (e.type === 'VOID' && e.approvalStatus !== 'rejected') voided[e.ref] = true; });

@@ -288,9 +288,9 @@ test('systems: only individual workstations are listed; broken systems are never
   assert.equal(w.systemStatus(w.students[0].email)[0].status, 'busy');
 });
 
-test('live board: HOD fails closed until B3 exists, then both endpoints enforce its supplied lab scope', () => {
+test('live board: HOD endpoints use department scope and reject an invalid supplied scope', () => {
   const w = liveWorld(); w.enterLive(0);
-  for (const route of ['labs.live', 'systems.status']) assert.equal(w.err(w.hod, route).code, 'NOT_IMPLEMENTED');
+  for (const route of ['labs.live', 'systems.status']) assert.equal(w.ok(w.hod, route).labs.length, 2);
   w.e.run(`Auth.labScope=function(){return ['${w.lab2.labId}'];};`);
   for (const route of ['labs.live', 'systems.status']) {
     const result = w.ok(w.hod, route); assert.deepEqual(result.labs.map((l) => l.labId), [w.lab2.labId]);

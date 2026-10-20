@@ -15,6 +15,12 @@ The [critical workflow audit](docs/workflow-audit.md) adds fresh student/account
 
 Project/system assignments are checked against the authenticated student, active group membership, project status and lab. Workstation claims and booking checks run under the attendance write lock, with a second check after GPS acquisition. Mid-visit WORK events are append-only, bound to an entry and expected version, and use client event ids for safe retries. They never verify attendance or reset the exit gap. System choices expose availability without other occupants' identities. These are reported assignments rather than computer/device identity.
 
+The named `labs.live` board is restricted to faculty/staff/admin and department-scoped HOD accounts. HOD reads use the current account department plus shared labs; no assigned department grants shared labs only. Snapshots never enter the public occupancy cache. `systems.status` returns no occupant, project or reservation identities; student responses use only free/busy. The board clears previous visitor data after a failed/refused refresh and discards late responses after navigation.
+
+System-usage reports allow coordinators/super admins and department-scoped HODs; project reports also allow the named supervisor. Client-supplied report scope is overwritten by server authorization. HOD report scope is enforced before building rows, counts or exports. Student reports remain self-only or subject to the existing faculty roster check. CSV formula neutralization and safe text rendering apply to the new report fields.
+
+HOD-only business mutations are refused by an explicit action policy, including generic user/any routes. Updating the caller's own mobile/consent and marking their own notifications read remain allowed and cannot change roles or department. Role/department administration stays super-admin-only. Legacy reads, direct IDs, activity/audit data and exports are scoped on the server. Imported student departments survive onboarding. See [HOD access](docs/hod-access.md).
+
 ## 2. Attendance: device-bound reverse QR
 
 Design: the phone proves possession of a registered key by signing a fresh server challenge; the kiosk only relays. The QR is `token~signature`, the token is an HMAC-protected, stateless blob bound to student, credential, session, lab and challenge.

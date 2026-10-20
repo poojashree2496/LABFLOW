@@ -2,7 +2,7 @@
 
 Multi-laboratory management for a university CSE division: device-bound reverse-QR attendance, sessions and timetable, inventory/kits/loans/bookings, reports, and a tamper-evident audit log. Google Apps Script (V8) web app, Google Sheets as the database, Drive/Docs for photos and reports, Gmail for notifications.
 
-Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mode. Every action goes through one `rpc(action, payload)` gateway that checks the role on the server; the UI hides things but never decides.
+Five role dashboards (student, faculty, coordinator, super admin and HOD) plus a kiosk mode. Every action goes through one `rpc(action, payload)` gateway that checks the role on the server; the UI hides things but never decides.
 
 ![admin overview](docs/screens/14-admin-overview.png)
 
@@ -10,8 +10,8 @@ Four role dashboards (student, faculty, lab staff, super admin) plus a kiosk mod
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 252 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 84 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks and 15 automatic sign-out checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 278 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
 Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
@@ -20,9 +20,15 @@ The [critical workflow audit](docs/workflow-audit.md) adds 29 regression cases a
 
 The issue screen adds a request/kit checklist, combined stock validation, booking collection guidance and an action to open the new loan for return. Its 33 focused browser checks also cover stale responses, multi-unit kits and retrying an uncertain checkout without changing the original payload.
 
-Students can now create individual or group projects, choose a supervisor and timeline, and submit outcomes after approval. Supervisors review outcomes; coordinators and super admins can approve or reject projects. See [Projects](docs/projects.md) for permissions, retry behaviour and the remaining HOD dependency.
+Students can now create individual or group projects, choose a supervisor and timeline, and submit outcomes after approval. Supervisors review outcomes; coordinators and super admins can approve or reject projects. See [Projects](docs/projects.md) for permissions, retry behaviour and department-scoped HOD reads.
 
 Super admins can enable daily Open lab sessions in lab settings. Verified students can walk in during opening hours without a booking, and regular classes continue alongside them. See [Daily open lab](docs/openlab.md); students can now choose a project/system and change it while inside. Automatic sign-out credits open-lab visits through closing and marks them in history; see [Project and system selection](docs/work-selection.md).
+
+Faculty, staff and admin can open **Live board** to see current visitors, projects and systems across labs, with automatic updates and workstation availability. Student availability responses contain no occupant identities. HOD access is read-only and restricted to its department plus shared labs; see [Live board](docs/live-board.md).
+
+Reports now include student hours/days/visits/auto sign-outs, per-system use and supervised project outcomes/hours, with CSV/PDF exports. Student Today shows per-lab days and hours for the past 90 days. Reservations and loans stay separate from verified attendance; see [Reports](docs/reports.md).
+
+Super admins can assign the HOD role and account/lab departments. HOD accounts have an overview, read-only facilities, live board and scoped reports. A blank lab department means shared; a HOD with no department sees shared labs only. See [HOD access](docs/hod-access.md).
 
 ## Authentication: the blocker you must check
 
@@ -74,7 +80,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 252 backend tests
+npm run check      # syntax lint of every .gs/.html script + 278 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)

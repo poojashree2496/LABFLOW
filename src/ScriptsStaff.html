@@ -620,6 +620,84 @@ LF.register({ role: 'staff', id: 'scan', label: 'Scan visitors', icon: 'qr', ren
 } });
 
 LF.register({ role: 'staff', id: 'flags', label: 'Flags', icon: 'flag', render(root) { root.append(h('h1', { class: 't-h1' }, 'Flags to review'), LF.ui.flagsView()); } });
-LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'inventory', 'overdue', 'systemUsage', 'projects'])); } });
+LF.register({ role: 'staff', id: 'reports', label: 'Reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'Reports'), LF.ui.reports(['digest', 'monthlyAudit', 'custom', 'session', 'daily', 'monthly', 'faculty', 'student', 'utilisation', 'assetUsage', 'systemUsage', 'projects', 'inventory', 'overdue'])); } });
+/* ------------------------------------------------------------------ Lab-wide board, separate from the session roster */
+function liveBoard(root) {
+  let snapshot = null, loading = false, alive = true, blocked = false, timer = null, intervalMs = Math.max(3, LF.me.settings.occupancyRefreshSeconds || 5) * 1000;
+  const message = h('div', { class: 'hint', role: 'status' }, 'Loading current visits…');
+  const out = h('div', { style: { display: 'grid', gap: '20px', minWidth: 0 } });
+  const labFilter = h('select', { class: 'input', 'aria-label': 'Board lab', style: { maxWidth: '100%' }, onchange: draw }, h('option', { value: '' }, 'All accessible labs'));
+  const search = h('input', { class: 'input', type: 'search', 'aria-label': 'Search live board', placeholder: 'Name, register number, project or system', style: { maxWidth: '100%', minWidth: 0 }, oninput: draw });
+  const refresh = ui.button('Refresh board', { icon: 'refresh', onClick: () => { blocked = false; return load(); } });
+  root.append(h('h1', { class: 't-h1' }, 'Live lab board'), h('p', { class: 't-muted' }, 'People currently checked in, their reported projects and systems, and workstation availability.'),
+    h('div', { class: 'toolbar', style: { flexWrap: 'wrap', marginBottom: '12px' } }, h('label', { class: 'field', style: { minWidth: 0 } }, 'Lab', labFilter),
+      h('label', { class: 'field', style: { flex: '1', minWidth: 'min(100%, 220px)' } }, 'Search', search), refresh), message, out);
+  const cell = (text) => h('span', { style: { display: 'block', maxWidth: '240px', whiteSpace: 'normal', overflowWrap: 'anywhere' } }, text);
+  const statusLabels = { free: 'Free', busy: 'Busy', booked: 'Booked', unavailable: 'Unavailable' };
+  function draw() {
+    if (!snapshot || !alive) return;
+    const q = search.value.trim().toLowerCase(), matches = (values) => !q || values.join(' ').toLowerCase().includes(q);
+    const scroll = {};
+    out.querySelectorAll('[data-board-lab]').forEach((section) => { const table = section.querySelector('.tbl-wrap'); if (table) scroll[section.dataset.boardLab] = table.scrollLeft; });
+    clear(out);
+    snapshot.labs.filter((l) => !labFilter.value || l.labId === labFilter.value).forEach((lab) => {
+      const visits = lab.visits.filter((v) => matches([v.name, v.rollNo, v.sessionTitle, v.projectTitle, v.assetName, v.assetTag]));
+      const systems = lab.systems.filter((s) => matches([s.name, s.assetTag, statusLabels[s.status]]));
+      if (q && !visits.length && !systems.length) return;
+      const table = ui.table({ caption: lab.name + ' current visits', search: false, pageSize: 100,
+        empty: ui.empty(q ? 'No matching visitors' : 'Nobody checked in', 'Current visits appear here after entry.'), rows: visits,
+        columns: [
+          { label: 'Student', render: (v) => h('div', null, cell(v.name), h('div', { class: 'hint' }, v.rollNo)) },
+          { label: 'Session', render: (v) => cell(v.sessionTitle) },
+          { label: 'Project', render: (v) => cell(v.projectTitle || 'No project selected') },
+          { label: 'System', render: (v) => cell(v.assetName ? v.assetName + (v.assetTag ? ' · ' + v.assetTag : '') : 'No lab system selected') },
+          { label: 'Inside since', render: (v) => h('time', { datetime: new Date(v.since).toISOString() }, fmt.dt(v.since)) }]
+      });
+      const dataTable = table.el.querySelector('table');
+      if (dataTable) dataTable.style.minWidth = '760px';
+      const section = h('section', { class: 'card', role: 'region', 'aria-label': lab.code + ' live board', dataset: { boardLab: lab.labId }, style: { minWidth: 0, overflow: 'hidden' } },
+        h('div', { class: 'toolbar', style: { justifyContent: 'space-between', flexWrap: 'wrap' } }, h('h2', { class: 't-h2' }, lab.name), h('span', { class: 'hint' }, lab.code)),
+        h('p', null, h('strong', null, String(lab.inside)), ' people inside' + (lab.capacity ? ' · ' + lab.capacity + ' seats' : ''),
+          ' · ' + lab.systems.filter((s) => s.status === 'free').length + ' of ' + lab.systems.length + ' systems free'),
+        table.el, h('h3', { class: 't-h3', style: { marginTop: '16px' } }, 'Systems'),
+        systems.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))', gap: '8px' } }, systems.map((s) =>
+          h('article', { 'aria-label': s.assetTag || s.name, style: { border: '1px solid var(--line)', borderRadius: '8px', padding: '10px', minWidth: 0, overflowWrap: 'anywhere' } },
+            h('strong', null, s.name), h('div', { class: 'hint' }, s.assetTag), ui.badge(statusLabels[s.status], s.status === 'free' ? 'good' : s.status === 'unavailable' ? 'bad' : 'warn')))) :
+          h('p', { class: 'hint' }, q ? 'No matching systems.' : 'No workstations configured.'));
+      out.append(section);
+      const scroller = section.querySelector('.tbl-wrap');
+      if (scroller) scroller.scrollLeft = scroll[lab.labId] || 0;
+    });
+    if (!out.children.length) out.append(ui.empty(snapshot.labs.length ? 'No matches' : 'No accessible labs', snapshot.labs.length ? 'Try a different lab or search.' : 'No active labs are available in your scope.'));
+  }
+  async function load() {
+    if (!alive || loading) return;
+    loading = true; refresh.disabled = true;
+    try {
+      const result = await api('labs.live'); if (!alive) return;
+      snapshot = result; LF.setServerNow(result.serverNow);
+      const selected = labFilter.value;
+      clear(labFilter).append(h('option', { value: '' }, 'All accessible labs'), ...result.labs.map((l) => h('option', { value: l.labId }, l.name)));
+      labFilter.value = result.labs.some((l) => l.labId === selected) ? selected : '';
+      draw(); message.textContent = 'Updated ' + fmt.time(result.serverNow) + ' · refreshes every ' + result.refreshSeconds + ' seconds';
+      const nextInterval = Math.max(3, result.refreshSeconds) * 1000;
+      if (nextInterval !== intervalMs) {
+        clearInterval(timer); intervalMs = nextInterval;
+        timer = LF.every(intervalMs, () => { if (!blocked) load(); });
+      }
+    } catch (e) {
+      if (!alive) return;
+      snapshot = null; clear(out); // clear identities rather than display an old snapshot after access changes
+      blocked = ['FORBIDDEN', 'NOT_IMPLEMENTED'].includes(e.code);
+      message.textContent = 'Refresh failed. Previous results have been cleared.';
+      out.append(e.code === 'NOT_IMPLEMENTED' && LF.role === 'hod' ? ui.empty('Department access is being configured', 'The live board will be available once department scope is ready.') : ui.errorBox(e));
+    } finally { loading = false; if (alive) refresh.disabled = false; }
+  }
+  LF.onLeave(() => { alive = false; if (timer) clearInterval(timer); snapshot = null; });
+  timer = LF.every(intervalMs, () => { if (!blocked) load(); });
+  load();
+}
+LF.liveLabBoard = liveBoard;
+
 })();
 </script>

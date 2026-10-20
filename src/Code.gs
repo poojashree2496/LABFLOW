@@ -27,8 +27,8 @@ var ROUTES = {
   // dashboards
   'dash.student': { roles: ['student'], fn: function (c) { return Dash.student(c); } },
   'dash.faculty': { roles: ['faculty', 'admin'], fn: function (c) { return Dash.faculty(c); } },
-  'dash.staff': { roles: ['staff', 'admin'], fn: function (c) { return Dash.staff(c); } },
-  'dash.admin': { roles: ['admin'], fn: function (c, p) { return Dash.admin(c, p); } },
+  'dash.staff': { roles: ['staff', 'admin', 'hod'], fn: function (c) { return Dash.staff(c); } },
+  'dash.admin': { roles: ['admin', 'hod'], fn: function (c, p) { return Dash.admin(c, p); } },
 
   // device credentials (student)
   'cred.begin': { roles: ['student'], fn: function (c) { return Creds.beginRegistration(c); } },
@@ -59,7 +59,7 @@ var ROUTES = {
   'scan.submit': { roles: ['user'], rl: [150, 60], fn: function (c, p) { return Attend.phoneScan(c, p); } },
   'scan.photo': { roles: ['kiosk', 'user'], rl: [120, 60], fn: function (c, p) { return Attend.scanPhoto(c, p); } },
   'student.identify': { roles: ['staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Attend.identify(c, p); } },
-  'labs.occupancy': { roles: ['user', 'kiosk'], rl: [90, 60], fn: function () { return Occupancy.list(); } },
+  'labs.occupancy': { roles: ['user', 'kiosk'], rl: [90, 60], fn: function (c) { return Occupancy.list(c); } },
 
   // faculty / sessions
   'sessions.day': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Sessions.listForDay(c, p); } },
@@ -83,7 +83,7 @@ var ROUTES = {
   'events.mine': { roles: ['user'], fn: function (c) { return Events.mine(c); } },
   'events.register': { roles: ['user'], maxBytes: 200000, fn: function (c, p) { return Events.register(c, p); } },
   'events.addGuest': { roles: ['user'], rl: [60, 300], fn: function (c, p) { return Events.addGuest(c, p); } },
-  'events.guests': { roles: ['user'], fn: function (c, p) { return Events.guests(c, p); } },
+  'events.guests': { roles: ['user', 'hod'], fn: function (c, p) { return Events.guests(c, p); } },
   'events.cancel': { roles: ['faculty', 'admin'], fn: function (c, p) { return Events.cancel(c, p); } },
   'classreps.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return ClassReps.list(c, p); } },
   'classreps.set': { roles: ['faculty', 'admin'], fn: function (c, p) { return ClassReps.set(c, p); } },
@@ -117,12 +117,12 @@ var ROUTES = {
   'assets.history': { roles: ['staff', 'admin', 'hod'], fn: function (c, p) { return Assets.history(c, p); } },
   'kits.list': { roles: ['user'], fn: function (c, p) { return Kits.list(c, p); } },
   'kits.upsert': { roles: ['staff', 'admin'], fn: function (c, p) { return Kits.upsert(c, p); } },
-  'groups.list': { roles: ['student', 'faculty', 'staff', 'admin'], fn: function (c, p) { return Groups.list(c, p); } },
+  'groups.list': { roles: ['student', 'faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Groups.list(c, p); } },
   'groups.create': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Groups.create(c, p); } },
   'groups.status': { roles: ['staff', 'admin'], fn: function (c, p) { return Groups.setStatus(c, p); } },
   'loans.issue': { roles: ['staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Loans.issue(c, p); } },
   'loans.return': { roles: ['staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Loans.returnItems(c, p); } },
-  'loans.get': { roles: ['student', 'staff', 'admin'], fn: function (c, p) { return Loans.get(c, p); } },
+  'loans.get': { roles: ['student', 'staff', 'admin', 'hod'], fn: function (c, p) { return Loans.get(c, p); } },
   'loans.mine': { roles: ['student'], fn: function (c) { return Loans.mine(c); } },
   'loans.list': { roles: ['staff', 'admin', 'hod'], fn: function (c, p) { return Loans.list(c, p); } },
   'booking.check': { roles: ['student', 'faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Booking.checkAvailability(c, p); } },
@@ -133,15 +133,15 @@ var ROUTES = {
   'booking.decide': { roles: ['staff', 'admin'], fn: function (c, p) { return Booking.decide(c, p); } },
 
   // reference data (read by everyone with an account, written by admin)
-  'directory.faculty': { roles: ['user'], fn: function () { return Users.facultyDirectory(); } },
+  'directory.faculty': { roles: ['user'], fn: function (c) { return Users.facultyDirectory(c); } },
   'labs.list': { roles: ['user'], fn: function (c, p) { return Labs.list(c, p); } },
-  'courses.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function () { return Courses.list(); } },
+  'courses.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c) { return Courses.list(c); } },
   'timetable.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Timetable.list(c, p); } },
   'facultycourses.list': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return FacultyCourses.list(c, p); } },
 
   // admin configuration
   'labs.upsert': { roles: ['admin'], fn: function (c, p) { return Labs.upsert(c, p); } },
-  'kiosks.list': { roles: ['admin', 'hod'], fn: function () { return Kiosks.list(); } },
+  'kiosks.list': { roles: ['admin', 'hod'], fn: function (c) { return Kiosks.list(c); } },
   'kiosks.upsert': { roles: ['admin'], fn: function (c, p) { return Kiosks.upsert(c, p); } },
   'courses.upsert': { roles: ['admin'], fn: function (c, p) { return Courses.upsert(c, p); } },
   'courses.import': { roles: ['admin'], maxBytes: 400000, fn: function (c, p) { return Courses.import(c, p); } },
@@ -152,7 +152,7 @@ var ROUTES = {
   'facultycourses.remove': { roles: ['admin'], fn: function (c, p) { return FacultyCourses.remove(c, p); } },
   'timetable.upsert': { roles: ['admin'], fn: function (c, p) { return Timetable.upsert(c, p); } },
   'timetable.remove': { roles: ['admin'], fn: function (c, p) { return Timetable.remove(c, p); } },
-  'users.list': { roles: ['admin', 'hod'], fn: function () { return Users.listUsers(); } },
+  'users.list': { roles: ['admin', 'hod'], fn: function (c) { return Users.listUsers(c); } },
   'users.upsert': { roles: ['admin'], fn: function (c, p) { return Users.upsertUser(c, p); } },
   'users.status': { roles: ['admin'], fn: function (c, p) { return Users.setUserStatus(c, p); } },
   'users.import': { roles: ['admin'], maxBytes: 400000, fn: function (c, p) { return Users.importUsers(c, p); } },
@@ -162,7 +162,7 @@ var ROUTES = {
   'audit.verify': { roles: ['admin'], rl: [10, 300], fn: function (c) { return Admin.auditVerify(c); } },
   'system.status': { roles: ['admin'], fn: function () { return Admin.systemStatus(); } },
   'system.quota': { roles: ['admin'], rl: [20, 60], fn: function () { return Admin.quota(); } },
-  'activity.feed': { roles: ['staff', 'admin'], rl: [90, 60], fn: function () { return Dash.activity(); } },
+  'activity.feed': { roles: ['staff', 'admin', 'hod'], rl: [90, 60], fn: function (c) { return Dash.activity(c); } },
   'system.reconcileInventory': { roles: ['admin'], rl: [10, 300], fn: function (c, p) { return Admin.reconcileInventory(c, p); } },
   'system.reconcileSession': { roles: ['admin'], rl: [10, 300], fn: function (c, p) { return Admin.reconcileSession(c, p); } },
 
@@ -264,6 +264,7 @@ function rpc(action, payload, session, apiCall) {
     if (size > (route.maxBytes || 100000)) fail('TOO_LARGE', 'The request is too large.');
     var ctx = Auth.resolve(session, apiCall === true);
     var allowed = route.roles.some(function (r) { return r === 'any' || (r === 'user' && !!ctx.user) || ctx.has(r); });
+    allowed = allowed && (!Auth.hodOnly(ctx) || Auth.HOD_ACTIONS.indexOf(action) >= 0);
     if (!allowed) {
       if (Auth.rateLimit('deny|' + ctx.email, 5, 60)) Audit.tryLog({ actor: ctx.email, role: ctx.roles.join(','), action: 'rpc.denied', entityType: 'Action', entityId: action, result: 'denied', detail: { roles: ctx.roles } });
       fail('FORBIDDEN', 'You do not have permission to do that.');

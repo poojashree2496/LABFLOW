@@ -15,17 +15,18 @@ var Users = {
     return { studentId: p.studentId, rollNo: p.rollNo, name: p.name, department: p.department, section: p.section, year: p.year, joinYear: Users._joinYear(p),
              status: p.status, email: p.email, hasPhoto: !!p.photoFileId };
   },
-  _pubUser: function (u) { return { userId: u.userId, email: u.email, displayName: u.displayName, roles: String(u.roles || '').split(',').filter(Boolean), status: u.status, lastLoginAt: u.lastLoginAt, department: u.department || '' }; },
+  _pubUser: function (u) { return { userId: u.userId, email: u.email, displayName: u.displayName, roles: String(u.roles || '').split(',').filter(Boolean), status: u.status, department: u.department || '', lastLoginAt: u.lastLoginAt }; },
 
   me: function (ctx) {
     var s = Settings.all(), sid = ctx.student ? ctx.student.studentId : null;
     var reps = sid ? Db.where('ClassReps', function (r) { return r.status === 'active' && r.studentId === sid; }).length : 0;
-    var coordinating = Db.where('Events', function (e) { return e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + s.eventCoordinatorGraceMinutes * 60000 >= U.now(); }).length;
+    var eventLabs = Auth.labFilter(ctx);
+    var coordinating = Db.where('Events', function (e) { return eventLabs(e.labId) && e.status === 'active' && e.coordinatorEmail === ctx.email && e.endAt + s.eventCoordinatorGraceMinutes * 60000 >= U.now(); }).length;
     return {
       email: ctx.email,
       userId: ctx.user ? ctx.user.userId : null,
       displayName: ctx.user ? ctx.user.displayName : ctx.email.split('@')[0],
-      roles: ctx.roles,
+      roles: ctx.roles, department: ctx.user ? ctx.user.department || '' : '',
       onboardingRequired: !ctx.user || (ctx.has('student') && !ctx.student),
       consentRequired: !ctx.kiosk && Users.consentRequired(ctx.user),
       profileIncomplete: !!ctx.user && s.requireMobile && !ctx.user.mobile,
@@ -79,11 +80,11 @@ var Users = {
     if (p.consent !== true) fail('CONSENT_REQUIRED', 'Read and accept the privacy notice to continue.');
     var derived = Users.derivedRoll(ctx.email);
     var rollNo = derived || V.rollNo(p.rollNo); // a roll number that comes from the email cannot be typed differently (FR-3)
+    var parsedRoll = U.parseRoll(rollNo);
     var mobile = Settings.get('requireMobile') || p.mobile ? V.mobile(p.mobile) : '';
     var name = V.str(p.name, 'Name', { max: 80, min: 2 });
-    var parsedRoll = U.parseRoll(rollNo);
-    // The department comes from the register number when it matches and the caller gave none (A1).
-    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: parsedRoll ? parsedRoll.dept : 'CSE' });
+    var previous = Db.getBy('Users', 'email', ctx.email);
+    var department = V.str(p.department === undefined ? (previous ? previous.department || '' : (parsedRoll ? parsedRoll.dept : 'CSE')) : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
     var section = V.str(p.section, 'Section', { optional: true, max: 10 });
     var year = V.int(p.year, 'Year', 1, 6, { optional: true, def: null });
     var photo = p.photo ? Users._decodePhoto(p.photo) : null;
@@ -105,8 +106,8 @@ var Users = {
         // Verified automatically when the admin imported this roll number with this email, or when the roll number IS the email.
         var matches = existing.importedEmail ? existing.importedEmail === ctx.email : !!derived;
         out = Db.update('StudentProfiles', existing.studentId, {
-          userId: user.userId, email: ctx.email, name: name, department: department || existing.department, section: section || existing.section,
-          year: year !== null ? year : existing.year, joinYear: parsedRoll ? parsedRoll.joinYear : existing.joinYear, status: matches ? 'verified' : 'pending',
+          userId: user.userId, email: ctx.email, name: name, department: existing.department || department, section: section || existing.section,
+          year: year !== null ? year : existing.year, status: matches ? 'verified' : 'pending',
           verifiedBy: matches ? (existing.importedEmail ? 'import-email-match' : 'email-roll-match') : '', verifiedAt: matches ? now : null, updatedAt: now
         });
       } else {
@@ -178,8 +179,9 @@ var Users = {
     var q = V.str(p.q, 'Search', { optional: true, max: 60 }).toLowerCase();
     var status = V.enumOf(p.status, 'Status', ['imported', 'pending', 'verified', 'rejected', 'disabled'], { optional: true });
     var limit = V.int(p.limit, 'Limit', 1, 500, { optional: true, def: 100 });
-    var batch = V.int(p.batch, 'Batch (join year)', 2000, 2100, { optional: true, def: null });
-    var rows = Db.readAll('StudentProfiles');
+    var batch = V.int(p.batch, 'Batch', 2000, 2100, { optional: true });
+    var studentAllowed = Auth.studentFilter(ctx);
+    var rows = Db.readAll('StudentProfiles').filter(function (x) { return studentAllowed(x.studentId); });
     if (!Auth.canView(ctx)) {
       var allowed = Roster.studentIdsForFaculty(ctx.faculty ? ctx.faculty.facultyId : '');
       rows = rows.filter(function (r) { return allowed[r.studentId]; });
@@ -283,13 +285,15 @@ var Users = {
 
   // ---- administration of accounts ---------------------------------------------------------------------
   /** Names of active faculty, for choosing a research supervisor / group owner. Minimal fields only. */
-  facultyDirectory: function () {
-    return { faculty: Db.where('FacultyProfiles', function (f) { return f.status === 'active'; }).map(function (f) { return { facultyId: f.facultyId, name: f.name, department: f.department }; }).sort(function (a, b) { return a.name < b.name ? -1 : 1; }) };
+  facultyDirectory: function (ctx) {
+    var dept = Auth.scopedHod(ctx) ? Auth.department(ctx) : null;
+    return { faculty: Db.where('FacultyProfiles', function (f) { return f.status === 'active' && (dept === null || !f.department || String(f.department).trim().toUpperCase() === dept); }).map(function (f) { return { facultyId: f.facultyId, name: f.name, department: f.department }; }).sort(function (a, b) { return a.name < b.name ? -1 : 1; }) };
   },
 
-  listUsers: function () {
+  listUsers: function (ctx) {
+    var dept = Auth.scopedHod(ctx) ? Auth.department(ctx) : null, studentAllowed = Auth.studentFilter(ctx);
     var profiles = U.indexBy(Db.readAll('StudentProfiles').filter(function (s) { return s.userId; }), 'userId');
-    return { users: Db.readAll('Users').map(function (u) {
+    return { users: Db.readAll('Users').filter(function (u) { return dept === null || (profiles[u.userId] ? studentAllowed(profiles[u.userId].studentId) : (!u.department || String(u.department).trim().toUpperCase() === dept)); }).map(function (u) {
       var o = Users._pubUser(u); if (profiles[u.userId]) o.rollNo = profiles[u.userId].rollNo; return o;
     }) };
   },
@@ -306,7 +310,8 @@ var Users = {
     var roles = U.uniq(V.arr(p.roles, 'Roles', 5).map(function (r) { return V.enumOf(r, 'Role', Cfg.ROLES); }));
     if (!roles.length) fail('BAD_INPUT', 'Choose at least one role.');
     var displayName = V.str(p.displayName, 'Name', { max: 80, min: 2 });
-    var department = V.str(p.department, 'Department', { optional: true, max: 60, def: 'CSE' }), departmentGiven = p.department !== undefined && p.department !== null && String(p.department).trim() !== '';
+    var previous = Db.getBy('Users', 'email', email);
+    var department = V.str(p.department === undefined ? (previous ? previous.department || '' : 'CSE') : p.department, 'Department', { optional: true, max: 60 }).trim().toUpperCase();
     var employeeCode = V.str(p.employeeCode, 'Employee code', { optional: true, max: 30 });
     var status = V.enumOf(p.status, 'Status', ['active', 'disabled'], { optional: true, def: 'active' });
     return Locks.with(function () {
@@ -315,17 +320,15 @@ var Users = {
       var wasAdmin = ex && ex.status === 'active' && String(ex.roles).split(',').indexOf('admin') >= 0;
       var staysAdmin = roles.indexOf('admin') >= 0 && status === 'active';
       if (wasAdmin && !staysAdmin && Users._activeAdminCount(ex.userId) === 0) fail('LAST_ADMIN', 'This is the only administrator. Add another admin before removing or disabling this one.');
-      // The account's department drives an HOD's lab scope (B3). Kept when an update leaves it out; CSE for a new HOD that names none.
-      var userDept = departmentGiven ? department : ((ex && ex.department) || (roles.indexOf('hod') >= 0 ? department : ''));
-      if (ex) user = Db.update('Users', ex.userId, { displayName: displayName, roles: roles.join(','), status: status, updatedAt: now, department: userDept });
-      else user = Db.insert('Users', { userId: U.id('user'), email: email, displayName: displayName, roles: roles.join(','), status: status, createdAt: now, updatedAt: now, department: userDept });
+      if (ex) user = Db.update('Users', ex.userId, { displayName: displayName, department: department, roles: roles.join(','), status: status, updatedAt: now });
+      else user = Db.insert('Users', { userId: U.id('user'), email: email, displayName: displayName, department: department, roles: roles.join(','), status: status, createdAt: now, updatedAt: now });
       if (roles.indexOf('faculty') >= 0) {
         var fp = Db.getBy('FacultyProfiles', 'userId', user.userId);
         if (fp) Db.update('FacultyProfiles', fp.facultyId, { name: displayName, department: department, employeeCode: employeeCode || fp.employeeCode, email: email, status: status === 'active' ? 'active' : 'disabled' });
         else Db.insert('FacultyProfiles', { facultyId: U.id('faculty'), userId: user.userId, email: email, name: displayName, department: department, employeeCode: employeeCode, status: 'active', createdAt: now });
       }
       Audit.log({ actor: ctx.email, role: 'admin', action: ex ? (before !== roles.join(',') ? 'role.change' : 'user.update') : 'user.create', entityType: 'User', entityId: user.userId,
-                  detail: { email: email, rolesBefore: before, rolesAfter: roles.join(','), status: status, department: userDept } });
+                  detail: { email: email, rolesBefore: before, rolesAfter: roles.join(','), status: status, department: user.department } });
       return { user: Users._pubUser(user) };
     });
   },

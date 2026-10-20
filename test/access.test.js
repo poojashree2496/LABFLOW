@@ -177,9 +177,9 @@ test('HOD: opens every read view and is refused every write (sweep over all rout
   const s = w.session(), student = w.students[0];
   const routes = w.eval("Object.keys(ROUTES).map(function(k){ return { k: k, roles: ROUTES[k].roles }; })");
   // 1. Exactly these routes name the HOD. A new route that grants hod without being added here fails the test.
-  const HOD_READS = ['sessions.day', 'sessions.get', 'attend.studentEvents', 'flags.list', 'events.list', 'classreps.list', 'students.list', 'equipment.list', 'assets.list', 'assets.history',
-    'loans.list', 'booking.check', 'booking.list', 'courses.list', 'timetable.list', 'facultycourses.list', 'kiosks.list', 'roster.list', 'users.list', 'audit.list',
-    'reports.run', 'reports.csv', 'reports.pdf', 'projects.get', 'projects.list', 'labs.live', 'dash.hod'];
+  const HOD_READS = ['sessions.day', 'sessions.get', 'attend.studentEvents', 'flags.list', 'events.list', 'events.guests', 'classreps.list', 'students.list', 'equipment.list', 'assets.list', 'assets.history',
+    'loans.get', 'loans.list', 'booking.check', 'booking.list', 'courses.list', 'timetable.list', 'facultycourses.list', 'kiosks.list', 'roster.list', 'users.list', 'audit.list',
+    'reports.run', 'reports.csv', 'reports.pdf', 'projects.get', 'projects.list', 'labs.live', 'dash.hod', 'dash.admin', 'dash.staff', 'activity.feed', 'groups.list'];
   assert.deepEqual(routes.filter((r) => r.roles.includes('hod')).map((r) => r.k).sort(), HOD_READS.slice().sort());
   // 2. A read route never refuses the HOD for lack of a role.
   const readPayload = {

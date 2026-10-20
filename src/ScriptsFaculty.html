@@ -189,7 +189,7 @@ function newSessionForm() {
     const labs = await api('labs.list'); const isAdmin = LF.me.roles.includes('admin');
     const fac = isAdmin ? await api('directory.faculty') : null;
     if (!labs.labs.length) return ui.empty('No labs configured', 'An administrator must add labs first.');
-    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'research', label: 'Research visit (authorised)' }, { value: 'event', label: 'Extra lab session (no break or coordinator)' }] });
+    const type = ui.field({ name: 'type', label: 'Type', type: 'select', options: [{ value: 'research', label: 'Research visit (authorised)' }, { value: 'event', label: 'Extra lab session (no break or event lead)' }] });
     const title = ui.field({ name: 'title', label: 'Title', required: true, maxlength: 100 });
     const lab = ui.field({ name: 'labId', label: 'Lab', type: 'select', required: true, options: labs.labs.map((l) => ({ value: l.labId, label: l.name })) });
     const date = ui.field({ name: 'date', label: 'Date', type: 'date', required: true, value: fmt.todayIst() });
@@ -291,7 +291,7 @@ LF.eventsView = function () {
     return h('div', { style: { display: 'grid', gap: '10px' } }, r.events.map((e) => {
       const c = e.counts;
       return h('article', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, e.name),
-        h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + '-' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : '') + (e.coordinatorEmail ? ' · coordinator ' + e.coordinatorEmail : ''))),
+        h('div', { class: 'hint' }, e.labName + ' · ' + fmt.date(e.startAt) + ' · ' + fmt.time(e.startAt) + '-' + fmt.time(e.endAt) + (e.breakStart ? ' · break ' + fmt.time(e.breakStart) + '-' + fmt.time(e.breakEnd) : '') + (e.coordinatorEmail ? ' · event lead ' + e.coordinatorEmail : ''))),
         ui.status(e.status === 'cancelled' ? 'cancelled' : e.session ? e.session.status : 'scheduled')),
         h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Registered ' + e.registered, 'info'), ui.badge('Guests ' + e.guests, ''), ui.badge('Capacity ' + e.capacity, ''), c ? ui.badge('Inside ' + c.inside, c.overCapacity ? 'bad' : 'good') : null),
         e.status === 'active' && e.session && e.session.status === 'scheduled' ? h('div', { class: 'toolbar', style: { marginTop: '10px' } }, ui.button('Cancel event', { size: 'sm', onClick: () => ui.formModal({ title: 'Cancel ' + e.name, fields: [{ name: 'reason', label: 'Reason', required: true, maxlength: 200 }], submitLabel: 'Cancel event', onSubmit: async (v) => { await api('events.cancel', { labEventId: e.labEventId, reason: v.reason }); load(); } }) })) : null);

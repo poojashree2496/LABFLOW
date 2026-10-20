@@ -80,6 +80,7 @@ var Booking = {
   },
 
   checkAvailability: function (ctx, p) {
+    Auth.assertLab(ctx, p && p.labId);
     V.obj(p);
     var labId = V.id(p.labId, 'Lab', 'lab'), start = V.int(p.startAt, 'Start', 0, 4102444800000), end = V.int(p.endAt, 'End', 0, 4102444800000);
     if (end <= start) fail('BAD_INPUT', 'End must be after start.');
@@ -261,7 +262,8 @@ var Booking = {
   list: function (ctx, p) {
     p = p || {};
     var status = p.status ? V.enumOf(p.status, 'Status', ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'fulfilled', 'completed', 'waitlisted']) : '';
-    var rows = Db.where('Reservations', function (r) { return (!status || r.status === status) && (!p.labId || r.labId === p.labId); }).reverse();
+    var allowed = Auth.labFilter(ctx);
+    var rows = Db.where('Reservations', function (r) { return allowed(r.labId) && (!status || r.status === status) && (!p.labId || r.labId === p.labId); }).reverse();
     return { reservations: rows.slice(0, 200).map(Booking._view), total: rows.length };
   },
 
@@ -363,7 +365,8 @@ var Requests = {
   list: function (ctx, p) {
     p = p || {};
     var status = V.enumOf(p.status, 'Status', ['pending', 'fulfilled', 'rejected', 'cancelled', 'all'], { optional: true, def: 'pending' });
-    return { requests: Db.where('EquipmentRequests', function (r) { return (status === 'all' || r.status === status) && (!p.labId || r.labId === p.labId); }).slice(-200).reverse().map(Requests._view) };
+    var allowed = Auth.labFilter(ctx);
+    return { requests: Db.where('EquipmentRequests', function (r) { return allowed(r.labId) && (status === 'all' || r.status === status) && (!p.labId || r.labId === p.labId); }).slice(-200).reverse().map(Requests._view) };
   },
   decide: function (ctx, p) {
     V.obj(p);

@@ -54,7 +54,9 @@ var Assets = {
   list: function (ctx, p) {
     p = p || {};
     var q = p.q ? String(p.q).toLowerCase().slice(0, 60) : '';
+    var allowed = Auth.labFilter(ctx);
     var rows = Db.where('Assets', function (a) {
+      if (!allowed(a.labId)) return false;
       if (p.labId && a.labId !== p.labId) return false;
       if (p.categoryId && a.categoryId !== p.categoryId) return false;
       if (p.status && a.status !== p.status) return false;
@@ -71,7 +73,8 @@ var Assets = {
    */
   catalog: function (ctx, p) {
     p = p || {};
-    var labs = Db.where('Labs', function (l) { return l.status === 'active' && (!p.labId || l.labId === p.labId); }), now = U.now(), cats = Db.readAll('Categories');
+    var allowed = Auth.labFilter(ctx);
+    var labs = Db.where('Labs', function (l) { return allowed(l.labId) && l.status === 'active' && (!p.labId || l.labId === p.labId); }), now = U.now(), cats = Db.readAll('Categories');
     return { labs: labs.map(function (lab) {
       var assets = Db.whereEq('Assets', { labId: lab.labId });
       var categories = cats.filter(function (c) { return assets.some(function (a) { return a.categoryId === c.categoryId; }); }).map(function (c) {
@@ -170,6 +173,7 @@ var Assets = {
   history: function (ctx, p) {
     V.obj(p);
     var id = V.id(p.assetId, 'Asset', 'asset');
+    Auth.assertLab(ctx, Db.mustGet('Assets', id, 'Asset').labId);
     return { events: Db.where('AssetEvents', function (e) { return e.assetId === id; }).slice(-100).reverse() };
   },
   _event: function (assetId, loanId, type, delta, by, note, idemKey) {
@@ -251,7 +255,7 @@ var Kits = {
     var comps = Db.whereEq('KitComponents', { kitId: k.kitId }).filter(function (c) { return c.quantity > 0; });
     return { kitId: k.kitId, labId: k.labId, name: k.name, description: k.description, status: k.status, components: comps.map(function (c) { return { componentId: c.componentId, categoryId: c.categoryId, quantity: c.quantity, note: c.note }; }) };
   },
-  list: function (ctx, p) { return { kits: Db.where('Kits', function (k) { return !(p && p.labId) || k.labId === p.labId; }).map(Kits._view) }; },
+  list: function (ctx, p) { var allowed = Auth.labFilter(ctx); return { kits: Db.where('Kits', function (k) { return allowed(k.labId) && (!(p && p.labId) || k.labId === p.labId); }).map(Kits._view) }; },
   upsert: function (ctx, p) {
     V.obj(p);
     var comps = V.arr(p.components, 'Components', 40);
@@ -288,8 +292,8 @@ var Groups = {
       members: members.map(function (m) { var s = profiles[m.studentId]; return { groupMemberId: m.groupMemberId, studentId: m.studentId, name: s ? s.name : '', rollNo: s ? s.rollNo : '', isLeader: m.isLeader }; }) };
   },
   list: function (ctx, p) {
-    var mine = Groups._mineIds(ctx);
-    var rows = Db.where('Groups', function (g) { return g.status === 'active' && (ctx.has('admin') || ctx.has('staff') || ctx.has('faculty') || mine[g.groupId]); });
+    var mine = Groups._mineIds(ctx), allowed = Auth.labFilter(ctx);
+    var rows = Db.where('Groups', function (g) { return g.status === 'active' && allowed(g.labId) && (Auth.canView(ctx) || ctx.has('faculty') || mine[g.groupId]); });
     return { groups: rows.map(Groups._view) };
   },
   _mineIds: function (ctx) {
@@ -345,7 +349,7 @@ var Loans = {
     return o;
   },
   _canSee: function (ctx, l) {
-    if (ctx.has('admin') || ctx.has('staff')) return true;
+    if (Auth.canView(ctx)) return Auth.labFilter(ctx)(l.labId);
     if (!ctx.student) return false;
     if (l.borrowerType === 'student') return l.borrowerId === ctx.student.studentId;
     return !!Groups._mineIds(ctx)[l.borrowerId];
@@ -366,7 +370,9 @@ var Loans = {
     p = p || {};
     var status = p.status ? V.enumOf(p.status, 'Status', ['open', 'partial', 'closed', 'overdue', 'active']) : '';
     var now = U.now(), q = p.q ? String(p.q).toLowerCase().slice(0, 60) : '';
+    var allowed = Auth.labFilter(ctx);
     var rows = Db.where('Loans', function (l) {
+      if (!allowed(l.labId)) return false;
       if (l.status === 'failed') return false;
       if (p.labId && l.labId !== p.labId) return false;
       if (status === 'overdue' && !Loans._isOverdue(l, now)) return false;

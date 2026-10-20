@@ -95,6 +95,7 @@ var Sessions = {
     Sessions.materialize(date);
     Sessions._openLabsDue(date);
     var rows = Db.where('Sessions', function (s) { return s.date === date && s.status !== 'cancelled'; });
+    var allowedLabs = Auth.labFilter(ctx); rows = rows.filter(function(s){return allowedLabs(s.labId);});
     if (!Auth.canView(ctx)) {
       if (!ctx.faculty) return { date: date, sessions: [] };
       rows = rows.filter(function (s) { return s.facultyId === ctx.faculty.facultyId; });
@@ -129,6 +130,7 @@ var Sessions = {
   get: function (ctx, p) {
     var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     if (!(Auth.canView(ctx) || Auth.canOperate(ctx, s))) fail('FORBIDDEN', 'You cannot view this session.');
+    Auth.assertLab(ctx, s.labId);
     return { session: Sessions.pub(s, Sessions._ref()) };
   },
 

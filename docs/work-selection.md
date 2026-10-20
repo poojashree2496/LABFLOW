@@ -1,6 +1,6 @@
 # Project and system selection
 
-Task C3 links visits to [projects](projects.md) and individual workstations. It builds on [daily open lab](openlab.md). Automatic sign-out (C4) releases the current project/system claim at closing; the staff live board (B4) remains open.
+Task C3 links visits to [projects](projects.md) and individual workstations. It builds on [daily open lab](openlab.md). Automatic sign-out (C4) releases the current project/system claim at closing; the [live board](live-board.md) shows current people, projects and systems.
 
 ## Configure systems
 

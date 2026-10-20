@@ -277,14 +277,17 @@ LF.scanLabScreen = scanLabScreen;
 /* ------------------------------------------------------------------ Today */
 LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render(root) {
   const me = LF.me, st = me.student;
-  const stats = h('div', { class: 'grid-stats' }), list = h('div', { style: { display: 'grid', gap: '12px' } });
-  append(root, [h('h1', { class: 't-h1' }, 'Hello, ' + (me.displayName || '').split(' ')[0]), h('p', { class: 't-muted', style: { marginTop: 0 } }, fmt.date(LF.now()) + ' · ' + st.rollNo), deviceGate(me), stats,
+  const stats = h('div', { class: 'grid-stats' }), labStats = h('div', { style: { minWidth: 0 } }), list = h('div', { style: { display: 'grid', gap: '12px' } });
+  append(root, [h('h1', { class: 't-h1' }, 'Hello, ' + (me.displayName || '').split(' ')[0]), h('p', { class: 't-muted', style: { marginTop: 0 } }, fmt.date(LF.now()) + ' · ' + st.rollNo), deviceGate(me), stats, labStats,
     h('h2', { class: 't-h2', style: { marginTop: '8px' } }, 'Live lab count'), ui.occupancy(),
     h('h2', { class: 't-h2', style: { marginTop: '8px' } }, 'Today\'s lab sessions'), list]);
   function append(el, kids) { kids.forEach((k) => { if (k) el.appendChild(k); }); }
   let reload;
   const loadStats = async () => {
     const d = await api('dash.student'); const cred = d.credential;
+    clear(labStats).append(h('h2', { class: 't-h2' }, 'Your lab time (past 90 days)'), ui.table({ caption: 'Your lab time', search: false, rows: d.labAttendance || [],
+      columns: [{ key: 'labName', label: 'Lab' }, { key: 'hours', label: 'Verified hours' }, { key: 'distinctDays', label: 'Days checked in' }, { key: 'visits', label: 'Visits from available events' }],
+      empty: ui.empty('No lab attendance in this period') }).el);
     clear(stats).append(
       ui.stat('Verified time', fmt.mins(d.attendance.verifiedMinutes || 0), (d.attendance.present || 0) + ' sessions present'),
       ui.stat('Days in the lab', String(d.attendance.days || 0), (d.attendance.byLab || []).map((l) => l.labName + ' ' + fmt.mins(l.verifiedMinutes)).join(' · ') || 'No visits yet'),
@@ -536,7 +539,7 @@ LF.register({ role: 'student', id: 'classrep', label: 'Class rep', icon: 'users'
 /* ------------------------------------------------------------------ Event coordinator (any role) */
 function coordinatorView(root) {
   const out = h('div', { style: { display: 'grid', gap: '12px' } });
-  root.append(h('h1', { class: 't-h1' }, 'Events I coordinate'),
+  root.append(h('h1', { class: 't-h1' }, 'Events I lead'),
     h('p', { class: 't-muted', style: { marginTop: 0 } }, 'Your rights cover this event only and end shortly after it. You can open the session, scan participants, add guests without a university account, and watch the count against the lab capacity.'), out);
   const reload = () => ui.loadInto(out, async () => {
     const r = await api('events.mine');
@@ -558,5 +561,6 @@ function coordinatorView(root) {
   reload(); LF.every(10000, () => { if (!document.querySelector('.modal-back')) reload(); });
 }
 ['student', 'faculty', 'staff'].forEach((role) => LF.register({ role, id: 'coordinate', label: 'Events I run', icon: 'calendar', when: (me) => me.coordinating > 0, render: coordinatorView }));
+LF.register({ role: 'student', id: 'reports', label: 'My reports', icon: 'chart', render(root) { root.append(h('h1', { class: 't-h1' }, 'My attendance report'), ui.reports(['student'])); } });
 })();
 </script>
