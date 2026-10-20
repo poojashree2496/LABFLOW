@@ -37,15 +37,6 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### Shared (owner)
 
-- [ ] **S1 Docs** (@?)
-  - README: features, the five role dashboards, a quick start, screenshots.
-  - SECURITY.md: encryption, backups, archive, read-only HOD.
-  - TEST_PLAN: the new flows.
-  - `docs/` pages: architecture; attendance (both modes and the pipeline); data model; deployment; testing and Test Lab; site themes (pick one, what each changes, how to add one: `styles/themes/`, `src/ScriptsThemes.html`, the `uiTheme` setting).
-  - Traceability: R1-R18 and FR-1 to FR-39 mapped to tests.
-  - Copy screenshots from `.build/shots` into `docs/screens/`.
-  - Add a `.gitattributes` (LF line endings).
-  - This absorbs the old "Next up (docs)" list.
 - [ ] **S2 Demo** (@? 22 Oct)
   - A demo script that follows R1-R18 in order: walk-in check-in, the live board from "home", booking + waitlist, project outcome, the register-number and system lookups, the HOD view, backup and encryption.
   - Refresh the e2e screenshots.

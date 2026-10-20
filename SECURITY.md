@@ -6,7 +6,7 @@ Written to be read critically. Each section says what is enforced, what is only 
 
 - **Identity** comes only from `Session.getActiveUser().getEmail()` on the server, restricted to `karunya.edu` and `karunya.edu.in`. Blank means refuse (`NO_IDENTITY`). The browser never supplies an email, role, roll number or student id that the server believes. See README "Authentication" for the deployment blocker this implies.
 - **Authorisation** is in the router (`Code.gs` ROUTES: per-action role list, rate limit, max payload) and again inside services (for example a student can read only their own events; faculty only their own sessions). The UI hiding a button is cosmetic. E2E confirms a student calling an admin action is refused by the server.
-- **Kiosks** are separate Google accounts bound to one lab and can call only `kiosk.ping` and `kiosk.scan`.
+- **Kiosks** are separate Google accounts bound to one lab and can call only the kiosk routes (`kiosk.ping`, `kiosk.display`, `kiosk.scan`).
 - **Setup functions** are not in the router and call `ownerOnly_()`.
 - **Spreadsheet injection:** text columns are stored as plain text; values beginning with `=`, `+`, `-`, `@` are neutralised on CSV export. No data is written to the DOM with `innerHTML`.
 - **Concurrency:** state-changing operations run under `LockService`; loan/booking/attendance writes carry idempotency keys so retries do not duplicate.
@@ -54,17 +54,49 @@ Every sensitive action appends a row with `hash = SHA-256(prev_hash + canonical 
 - **Secrets:** the QR HMAC secret lives in script properties. `Setup.rotateQrSecret` invalidates live QRs.
 - **No passwords** are stored anywhere.
 
-## 5. Third-party code
+## 5. Encryption of personal data
+
+Mobile numbers (`Users.mobile`) are needed when equipment is issued, so they are kept, but never as plain text in the sheet.
+
+- **Cipher:** AES-256-GCM, an authenticated cipher, from the audited `@noble/ciphers` library bundled as `Vendor_AES.gs`. No homemade cipher. Each value uses a fresh 12-byte nonce and is bound to its field name, so a value copied into another column does not open.
+- **Key:** HMAC-SHA256 of the script property `PII_KEY`. The key is created by `setupInitialise` and lives only in script properties, **not in the spreadsheet**. A copy of the sheet, a backup or an archive therefore holds sealed text only.
+- **Tampering:** changing any character of a stored value makes it fail to open (`INTEGRITY`); a different key cannot open it; a missing key fails closed.
+- **Who sees a number:** masked everywhere (`••••••1021`). A student sees their own number in full. A coordinator or super admin can reveal **one number at a time** (20 per 5 minutes), and every reveal is written to the audit log with who asked. Directories, lists and reports carry no numbers; the loan desk shows the masked form with a reveal button.
+- **Migration:** `setupEncryptMobiles` (and the nightly job) seals any plain number left from before encryption. It is idempotent.
+
+Limits, stated plainly: this protects the data in the sheet and its copies. Anyone who can edit the script or read its properties can read `PII_KEY` and decrypt. **Keep a note of `PII_KEY` somewhere separate from the spreadsheet:** without it a restored backup shows phone numbers as sealed text. `Setup.selfTest` checks the encryption round trip on the real runtime.
+
+## 6. Backups and the yearly archive
+
+**Nightly backup.** The 01:00 job copies the whole database spreadsheet into the private Drive folder "LABFLOW Backups", named `LABFLOW backup YYYY-MM-DD`. Rotation keeps the newest 30 days plus the first copy of each of the last 12 months; everything else that carries our name goes to the Drive bin, and files with any other name are never touched. A second run on the same day adds nothing, and rotation runs only after a copy exists, so a failed copy never costs an older backup (the admins are told). **Back up now** (super admin, audited) makes a manual copy. The copies are owned by the script owner and not shared.
+
+**Yearly archive.** The academic year runs 1 June to 31 May (the start month is a setting). Scan-level rows of finished years move to a separate spreadsheet "LABFLOW Archive YYYY-YY" so the live sheet stays fast. Each batch is copied, read back and compared, and only then deleted, under the script lock; a stopped run resumes where it left off and a second run moves nothing twice. A backup of the day is made first. The super admin runs it from Admin > Audit & system; the nightly job also runs it each July for years older than the previous one, only if that day's backup exists.
+
+What stays live: sessions, per-student summaries, loans and the audit log, so history, totals and the audit chain read the same afterwards. An archived session refuses corrections, reconciles and summary rebuilds (`ARCHIVED`), because the scans they would recompute from are no longer there. Known limits: the scoped-HOD audit view cannot map audit rows about archived scans, an asset's history shows fewer events for archived loans, and visit counts for archived sessions are shown as unavailable.
+
+The archive spreadsheets and the backups are only as private as the Drive folders they sit in: keep them owned by the script owner and unshared.
+
+## 7. Read-only HOD access
+
+The HOD role can open the department overview, facilities, live board and reports, and can change nothing:
+
+- **Enforced on the server:** every route has a role list, and the HOD is refused on all business writes by an explicit action policy, including generic user routes. A test sweeps every route as an HOD and expects each write to be refused.
+- **Department scope:** a HOD sees the labs of their own department plus labs with no department (shared labs). A HOD with no department sees shared labs only. Direct record ids, legacy read endpoints, reports and exports are scoped before rows or counts are built; a client-supplied scope is overwritten.
+- **Allowed personal actions:** updating one's own mobile and consent, and marking one's own notifications read. These cannot change roles or department.
+- **Not available to the HOD:** `system.status`, `system.quota`, settings, and the audit log outside its scope. Assigning the role and a department stays with the super admin. See [HOD access](docs/hod-access.md).
+
+## 8. Third-party code
 
 | Component | Use | Licence |
 |---|---|---|
 | @noble/curves 1.9.7 | P-256 ECDSA verification, bundled into `Vendor_P256.gs` (Apps Script has no native ECDSA) | MIT |
+| @noble/ciphers 1.3.0 | AES-256-GCM for personal data at rest, bundled into `Vendor_AES.gs` (Apps Script has no symmetric cipher) | MIT |
 | qrcode-generator 2.0.4 | QR rendering in the browser | MIT |
 | Tailwind CSS 3.4 | build-time only; compiled CSS is in `Styles.html` | MIT |
 | Google Fonts (Anton, Instrument Serif, Inter) | runtime CDN load | SIL OFL |
 
-The signature verifier is third-party code running inside the trust boundary. It is covered by known-answer and tamper tests, and `setupSelfTest()` re-checks it on the real runtime.
+The signature verifier and the cipher are third-party code running inside the trust boundary. They are covered by known-answer and tamper tests (the cipher's output is also opened by Node's own AES-GCM), and `setupSelfTest()` re-checks both on the real runtime.
 
-## 6. Reporting
+## 9. Reporting
 
 Report suspected vulnerabilities privately to the project owner rather than in a public issue.

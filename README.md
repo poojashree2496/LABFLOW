@@ -4,7 +4,54 @@ Multi-laboratory management for a university CSE division: device-bound reverse-
 
 Five role dashboards (student, faculty, coordinator, super admin and HOD) plus a kiosk mode. Every action goes through one `rpc(action, payload)` gateway that checks the role on the server; the UI hides things but never decides.
 
-![admin overview](docs/screens/14-admin-overview.png)
+![admin overview](docs/screens/themes/karunya-admin.png)
+
+## Features
+
+- **Attendance two ways**: kiosk QR with a GPS geofence (the SRS version), or a device-bound signed QR scanned in the room. Rescan windows, faculty spot checks, exit scans and flags back them up. See [Attendance](docs/attendance.md).
+- **Open lab for extra hours**: daily walk-in sessions, project and system selection at the door, automatic sign-out at closing.
+- **Live board**: who is inside each lab, on which system and project, for staff and HOD; head counts only for students.
+- **Equipment**: inventory, kits, group issues, loans and returns on a handshake screen, time-slot bookings with a waitlist, overdue reminders.
+- **Projects**: supervisor approval, timeline and recorded outcomes, linked to the hours students log.
+- **Reports**: daily digest, monthly audit, custom range, per-student and per-system usage, session log and ERP export as CSV or PDF.
+- **Roles**: student, faculty, coordinator, HOD (read-only, department-scoped) and super admin, all enforced on the server.
+- **Data protection**: mobile numbers sealed with AES-256-GCM, a hash-chained audit log, nightly Drive backups, and a yearly archive that keeps the live sheet small. See [SECURITY.md](SECURITY.md).
+- **Ten site themes** chosen by the super admin. See [Themes](docs/themes.md).
+
+## The role dashboards
+
+| Role | Sees | Screenshot |
+|---|---|---|
+| **Student** | Today, Attendance, Device, Equipment, Research visits, Class rep, My reports with days and hours per lab | ![student](docs/screens/themes/karunya-student.png) |
+| **Faculty** | Today, Live roster with who is missing, spot checks, Plan, Students, Equipment, Flags, Reports | ![faculty](docs/screens/themes/karunya-faculty.png) |
+| **Coordinator** (staff) | Desk, Issue / Return, Inventory, Bookings, Students and course rosters, Scan visitors, Flags, Reports | ![coordinator](docs/screens/13-staff-issue.png) |
+| **Super admin** | Overview, People, Academics, Labs, Approvals, Settings, Audit and system (backups, yearly archive), Events, Flags | ![admin](docs/screens/themes/karunya-admin.png) |
+| **HOD** | Read-only department overview, facilities, live board and scoped reports | ![live board](docs/screens/live-board.png) |
+| **Kiosk** (a dedicated account per lab) | The rotating QR in Mode A, a scanner in Mode B | ![kiosk](docs/screens/themes/karunya-kiosk.png) |
+
+## Quick start (on a laptop, no Google account)
+
+```
+npm install
+npm run build        # one time: vendored libraries and compiled CSS
+npm run dev          # http://localhost:8787/  (pick a demo account)
+```
+
+Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: choose a preset, press **Rebuild world**, and try a class, an attack or a theme. `npm run check` runs the lint and all backend tests; `npm run sim` runs the 27 scenarios. To put it on Google, follow [Deployment](docs/deployment.md).
+
+## Documentation
+
+| Page | What is in it |
+|---|---|
+| [Architecture](docs/architecture.md) | Gateway, services, front ends, background jobs |
+| [Attendance](docs/attendance.md) | Both modes, the verification pipelines, the event log, verified time |
+| [Data model](docs/data-model.md) | The 37 sheets and how the schema is defined |
+| [Deployment](docs/deployment.md) | Setup in order, hosted app, secrets to keep |
+| [Testing](docs/testing.md) and [TEST_PLAN](TEST_PLAN.md) | What is tested, how, and what only a deployment can show |
+| [Themes](docs/themes.md) | Pick a theme, what each changes, how to add one |
+| [Traceability](docs/traceability.md) | R1 to R18 and FR-1 to FR-39 mapped to tests |
+| [Requirements](docs/requirements.md), [Tasks](docs/tasks.md), [Progress](docs/progress.md) | The brief, open work, the log |
+| [Open lab](docs/openlab.md), [Work selection](docs/work-selection.md), [Live board](docs/live-board.md), [Projects](docs/projects.md), [Reports](docs/reports.md), [HOD access](docs/hod-access.md), [Unnati demo](docs/unnati-demo.md), [Workflow audit](docs/workflow-audit.md) | Feature pages |
 
 ## Read this first: what is and is not verified
 
@@ -32,7 +79,7 @@ Super admins can assign the HOD role and account/lab departments. HOD accounts h
 
 ## Authentication: the blocker you must check
 
-The manifest is `executeAs: USER_DEPLOYING`, `access: DOMAIN`. In that mode `Session.getActiveUser().getEmail()` returns the visitor's address **only when the visitor is in the same Workspace domain as the deployer**. For anyone else it returns an empty string.
+The manifest is `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS`; the server refuses any call it cannot tie to an allowed Google account. There are two ways in (see [Deployment](docs/deployment.md)): the Apps Script page, which uses `Session.getActiveUser().getEmail()`, and the hosted app, which uses Google sign-in. On the Apps Script page `getActiveUser()` returns the visitor's address **only when the visitor is in the same Workspace domain as the deployer**. For anyone else it returns an empty string.
 
 Consequences for Karunya:
 
@@ -42,17 +89,19 @@ Consequences for Karunya:
 
 How to check, in 5 minutes, before anything else: deploy, then open the web app as one ordinary user from each domain. A user who lands on the "No identity" error screen is affected. `setupSelfTest()` only runs as the owner, so it cannot test other users.
 
-If it fails for one domain, your options are administrative, not code: (a) have IT put both domains in one organisation, or (b) deploy as "execute as user accessing the app". Option (b) was rejected here because it requires every user to have access to the database spreadsheet, which defeats the backend authorisation. Option (b) is a design change, not a flag flip.
+If it fails for one domain, your options are: (a) have IT put both domains in one organisation, (b) use the hosted app, where Google sign-in does not depend on the deployer's domain, or (c) deploy as "execute as user accessing the app". Option (c) was rejected here because it requires every user to have access to the database spreadsheet, which defeats the backend authorisation. Option (c) is a design change, not a flag flip.
 
 ## Deploy
+
+This is the short version. The full steps, including the hosted app and the secrets to keep, are in [docs/deployment.md](docs/deployment.md).
 
 1. Create a Google Apps Script project owned by an account in the Karunya Workspace. Copy everything in `src/` into it (or use `clasp`; `.clasp.json` is git-ignored). `appsscript.json` carries the scopes and web-app settings.
 2. In the editor run, in order:
    - `setupInitialise()`: creates the "LABFLOW Database" spreadsheet, all sheets and headers, and the QR secret. Idempotent; refuses (`SCHEMA_MISMATCH`) rather than altering mismatching sheets.
    - `setupBootstrapAdmin('you@karunya.edu')`: the first admin. Only honoured while no active admin exists.
    - `setupSelfTest()`: checks platform assumptions with real timings (P-256 verify time, lock behaviour, identity). Read its output.
-   - `setupInstallTriggers()`: installs exactly four time-driven triggers (every 5 min session tick, hourly email digest, 01:00 nightly, 08:00 morning).
-3. Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone within the organisation.
+   - `setupInstallTriggers()`: installs exactly five time-driven triggers (every 5 min session tick, hourly email digest, 01:00 nightly, 08:00 morning, 18:00 evening digest).
+3. Deploy > New deployment > Web app. Execute as: Me. Who has access: as `appsscript.json` says (`ANYONE_ANONYMOUS`; the server refuses calls it cannot tie to an allowed account).
 4. Sign in as the bootstrap admin. Add labs, courses, users, rosters and timetable (admin pages). CSV import is available for users and students.
 5. **Kiosks:** Admin > Labs > Kiosks. A kiosk is a dedicated Google account (for example `iot-lab-kiosk@karunya.edu`) mapped to one lab. Sign in with that account on the lab PC/tablet. Kiosk accounts can only call `kiosk.ping` and `kiosk.scan`.
 6. Students open the web app on their phone once, open "My device", run the compatibility check, and register the device. Registration of a second or replacement device requires in-person approval by lab staff.
@@ -106,10 +155,11 @@ The demo lives only in memory. Rebuilding it or restarting the dev server discar
 
 ## Layout
 
-- `src/*.gs`: server (Config, Db, Auth, Users, DeviceCredential, Session, Attendance, Asset, Booking, Lab, Report, Audit, Notification, Trigger, Admin, Setup, Code = router). `Vendor_P256.gs` is a bundled verifier.
+- `src/*.gs`: server (Config, Db, Auth, Users, DeviceCredential, Session, Checkin, Attendance, Asset, Booking, Project, Lab, Event, Flag, Report, Audit, Backup, Notification, Trigger, Admin, Setup, Code = router). `Vendor_P256.gs` and `Vendor_AES.gs` are bundled libraries (signature verification, AES-GCM).
 - `src/Index.html`, `Styles.html` (generated), `SharedComponents.html`, `Scripts*.html`: UI. No `innerHTML` of data anywhere; DOM is built with an `h()` helper.
 - `test/`: backend tests, fixtures, harness; `test/e2e/` browser flow.
-- `docs/screens/`: screenshots produced by the E2E.
+- `docs/`: the pages listed above; `docs/screens/`: screenshots produced by the browser tests.
+- `dev/`: the local server, Test Lab and scenarios. `styles/themes/`: one CSS file per site theme. `web/`, `scripts/build-web.js`, `vercel.json`: the hosted app.
 
 ## Credits, licences, design reference
 
