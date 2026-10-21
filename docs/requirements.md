@@ -31,7 +31,7 @@ The goal is an **attendance-cum-asset tracking system** for lab use **during ext
 | R17 | An innovative, novel solution within these technical limits. |
 | R18 | Register numbers have the form `URK` + 2-digit year + department + serial number, for example `URK24CS1021` (joined 2024, CSE, graduates 2028). |
 
-## 2. Status before v2 work (audit of `main` on 19 Oct)
+## 2. Status (audited 19 Oct, updated 21 Oct)
 
 Evidence is given by symbol; line numbers are only hints and will drift.
 
@@ -39,9 +39,9 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 |---|---|---|---|---|
 | R1 | Done on local fakes | Live counts plus current student, system and project assignments on the Live board (`Occupancy.live`) | Deployment checks | Deployment |
 | R2 | Done on local fakes | Live board lists current visitors; public counts and student system status remain anonymous | Deployment checks | Deployment |
-| R3 | Done for classes, research visits and bookings | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) | Walk-in check-in when nothing is booked | C2 |
+| R3 | Done on local fakes | Kiosk QR + GPS geofence (`Checkin.STEPS_A`) for classes, research visits and bookings; walk-in entry to a daily open lab when nothing is booked (C2, docs/openlab.md) | Real door GPS verification | Deployment |
 | R4 | Done on local fakes | Open-lab automatic OUT at closing, credited time and auto sign-out history; repeat missed exits feed `never_scans_out`. Class missed exits keep their existing policy. | Real trigger/runtime verification | Deployment |
-| R5 | Done | Assets, categories, kits, loans and returns (AssetService.gs) | A flag marking which assets are workstations | S0, B4 |
+| R5 | Done | Assets, categories (with a `workstation` flag), kits, loans and returns (AssetService.gs) | | |
 | R6 | Done | Time-slot bookings with clash checks and no-show release; a taken slot can be waited for (`waitlist: true`): first come first served, promoted to a normal request and the student told when stock frees (cancel, reject, no-show release), position shown, ends when the slot starts (BookingService.gs) | | |
 | R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | Deployment checks | Deployment |
 | R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
@@ -52,7 +52,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
 | R14 | Done | Nightly backup copies with rotation (30 daily + 12 monthly), manual backup and an admin panel (A3); yearly archive to a per-year spreadsheet, manual or automatic each July, with an admin panel (A4, built 21 Oct) | None | - |
 | R15 | Done on local fakes | Role-checked RPC gateway, rate limits, hash-chained audit log. A2 done: `Users.mobile` is sealed with AES-256-GCM (`Crypt`), shown masked to everyone but its owner, revealed to a coordinator or super admin one student at a time with an audit entry | Run `setupEncryptMobiles` on the real sheet; deployment checks | Deployment |
-| R16 | Partial | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff` | Deployment checks | Deployment |
+| R16 | Done on local fakes | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff` | Deployment checks | Deployment |
 | R17 | Done | Device-bound signed QR, two check-in modes, tamper-evident audit chain, Test Lab with attack scenarios | Keep it in the pitch | S2 |
 | R18 | Done on local fakes | `U.parseRoll`; join year and department filled on import and onboarding; batch filter on `students.list`; `V.rollNo` still accepts other formats | | A1 |
 

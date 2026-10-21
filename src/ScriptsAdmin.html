@@ -348,7 +348,7 @@ LF.register({ role: 'admin', id: 'flags', label: 'Flags', icon: 'flag', render(r
 
 /* ------------------------------------------------------------------ reuse staff views */
 function reuse(id, label, iconName) { const v = (LF.routes.staff || []).find((x) => x.id === id); if (v) LF.register(Object.assign({}, v, { role: 'admin', label: label || v.label, icon: iconName || v.icon })); }
-reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan'); reuse('board', 'Live board');
+reuse('queue', 'Desk queues'); reuse('desk', 'Issue / Return'); reuse('inventory'); reuse('bookings'); reuse('scan');
 
 /* ------------------------------------------------------------------ HOD: read-only department views */
 LF.register({ role: 'hod', id: 'overview', label: 'Overview', icon: 'home', render(root) {

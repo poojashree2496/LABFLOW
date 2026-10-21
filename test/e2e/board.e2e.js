@@ -38,7 +38,7 @@ const { start } = require('../../dev/server');
     student = await browser.newPage({ viewport: { width: 390, height: 844 } });
     for (const page of [staff, faculty, student]) page.on('pageerror', (e) => errors.push(e.message));
 
-    await open(staff, w.staff); await staff.evaluate(() => LF.go('board'));
+    await open(staff, w.staff); await staff.evaluate(() => LF.go('lab-board'));
     const cardOf = (page) => page.getByRole('region', { name: w.lab.name, exact: true });
     const tableOf = (page) => page.getByRole('table', { name: 'Students inside ' + w.lab.name });
     await tableOf(staff).waitFor();
@@ -49,13 +49,13 @@ const { start } = require('../../dev/server');
     check('the lab card shows the head count and system availability', await cardOf(staff).getByText('2 in use', { exact: true }).count() === 1 && await cardOf(staff).getByText('1 free', { exact: true }).count() === 1);
     check('the project description is never shown on the board', !(await staff.locator('main').innerText()).includes('Private description'));
 
-    await open(faculty, w.faculty); await faculty.evaluate(() => LF.go('board'));
+    await open(faculty, w.faculty); await faculty.evaluate(() => LF.go('lab-board'));
     await tableOf(faculty).waitFor();
     check('faculty can open the live board from a phone', await tableOf(faculty).getByRole('row').filter({ hasText: 'Board student a' }).count() === 1);
     check('the board fits a 390px phone without horizontal page scroll', await faculty.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
     await open(student, people[0].email);
-    check('students have no live board screen', await student.evaluate(() => !(LF.routes.student || []).some((v) => v.id === 'board')));
+    check('students have no live board screen', await student.evaluate(() => !(LF.routes.student || []).some((v) => v.id === 'lab-board')));
 
     // A departure leaves the board on the next refresh.
     dev.lab.clock.set(w.eval('U.now()') + 20 * 60000); dev.lab.sync();

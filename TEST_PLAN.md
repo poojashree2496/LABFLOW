@@ -1,13 +1,13 @@
 # LABFLOW test plan and results
 
-Latest local run (2026-10-21): `npm run check` passed 314 backend tests and `npm run sim` passed 27/27 scenarios. The browser counts were last run on 2026-10-19: Brave/Chromium passed 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
+Latest local run (2026-10-21): `npm run check` passed 313 backend tests and `npm run sim` passed 27/27 scenarios. The browser counts were last run on 2026-10-19: Brave/Chromium passed 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: access (18), api (9), archive (8), attendance (31), checkin (21), contracts (3), crypt (11), dev-world (3), foundation (16), hod (4), inventory (23), jobs (40), openlab (16), platform (14), projects (14), reports (16), roll (4), scanning (14), work-selection (19), workflow-audit (29), plus one empty placeholder file (`zz_dbg.test.js`, safe to delete) | `npm test` | **314 pass, 0 fail** |
+| Backend and Test Lab seed: access (18), api (9), archive (8), attendance (31), checkin (21), contracts (3), crypt (11), dev-world (3), foundation (16), hod (4), inventory (23), jobs (40), openlab (16), platform (14), projects (14), reports (16), roll (4), scanning (14), work-selection (19), workflow-audit (29) | `npm test` | **313 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **85 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |

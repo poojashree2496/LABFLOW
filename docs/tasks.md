@@ -21,10 +21,9 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - **WS-B**: roles, dashboards, live board and reports. Mixed.
   - **WS-C**: extra-hours check-in and projects. UI-heavy; this is the demo story.
 - One branch per workstream: `ws-a-data`, `ws-b-roles`, `ws-c-extrahours`. Open small PRs into `main`, and keep `npm run check` green before each merge. Rebase on `main` before opening a PR.
-- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` with its final roles, and every schema column exists. Unfinished routes call a stub method in their service that answers `NOT_IMPLEMENTED` with its task id (search for `notBuilt_('B4')`, for example). Replace only your own stubs. C1 projects, C2 daily open lab, C3 project/system selection and C4 automatic sign-out are implemented; see docs/projects.md, docs/openlab.md, docs/work-selection.md and the progress log. You should not need to edit `Code.gs` ROUTES, `Config.gs` SCHEMA_SRC or the load lists; `test/contracts.test.js` fails if a contract drifts.
+- **The contracts are in the code (S0, done 19 Oct).** Every v2 route is in `ROUTES` and every schema column exists; all A, B and C1-C4 stubs are now replaced (no `notBuilt_` calls remain). `test/contracts.test.js` fails if a contract drifts.
 - Need a contract changed? Open a PR that edits requirements.md section 4 and get all three people to agree.
 - Test counts in README, TEST_PLAN and progress.md: whoever merges last on a given day updates them.
-- A4 moves one read inside `Attend.rebuildSummary`. Automatic open-lab closure already calls it under an outer script lock; preserve that recovery path.
 
 ### Timeline
 
@@ -37,13 +36,10 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 ### Shared (owner)
 
-- [ ] **S2 Demo** (@? 22 Oct)
-  - A demo script that follows R1-R18 in order: walk-in check-in, the live board from "home", booking + waitlist, project outcome, the register-number and system lookups, the HOD view, backup and encryption.
-  - Refresh the e2e screenshots.
-
-### WS-A Data, security and queue (@?)
-
-### WS-B Roles, dashboards, live board and reports (@?)
+- [~] **S2 Demo** (@kukyos 22 Oct)
+  - Script written: [demo.md](demo.md). Rehearse it once end to end on the dev server.
+  - Refresh the e2e screenshots in `docs/screens`.
+  - Swap the Unnati placeholders in the script for the real details when C5 lands.
 
 ### WS-C Extra-hours check-in and projects (@?)
 
@@ -89,11 +85,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 - [ ] v2: `setupEncryptMobiles` on the real sheet, then confirm no plain numbers remain (A2).
 - [ ] v2: GPS geofence at the Intel Unnati AI Lab door with the real coordinates (C5).
 
-## 2. Next up (docs)
-
-Folded into **S1** above.
-
-## 3. Build (after the demo)
+## 2. Build (after the demo)
 
 - [ ] Benchmark return recovery with a large AssetEvents ledger; consider indexing pending return plans to avoid scanning the complete ledger under the lock on each inventory mutation.
 - [ ] Theme CSS ships for all ten themes on every page load (Styles.html is about 270 KB). Split it per theme if load time on the campus network is a problem.
@@ -103,7 +95,7 @@ Folded into **S1** above.
 - [ ] Hardening: set `EMAIL_TRANSPORT=mail` and drop the broad Gmail scope from `appsscript.json`.
 - [ ] Department rollout: scope the generic lists (not only the HOD views) by `Auth.labScope` once a second department joins.
 
-## 4. Backlog / ideas
+## 3. Backlog / ideas
 
 Add ideas here before they become tasks.
 

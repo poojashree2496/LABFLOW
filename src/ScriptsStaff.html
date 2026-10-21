@@ -166,7 +166,6 @@ function liveBoard(root) {
   load(true);
 }
 LF.liveBoard = liveBoard;
-['staff', 'faculty'].forEach((role) => LF.register({ role, id: 'board', label: 'Live board', icon: 'users', render(root) { return liveBoard(root); } }));
 
 /* A borrower's phone number is shown masked (last four digits). Reveal asks the server for the full number: one student at a time,
    rate-limited and written to the audit trail with the reason (A2). The full number goes away again after a minute. */
