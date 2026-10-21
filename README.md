@@ -51,7 +51,7 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 | [Themes](docs/themes.md) | Pick a theme, what each changes, how to add one |
 | [Traceability](docs/traceability.md) | R1 to R18 and FR-1 to FR-39 mapped to tests |
 | [Requirements](docs/requirements.md), [Tasks](docs/tasks.md), [Progress](docs/progress.md) | The brief, open work, the log |
-| [Open lab](docs/openlab.md), [Work selection](docs/work-selection.md), [Live board](docs/live-board.md), [Projects](docs/projects.md), [Reports](docs/reports.md), [HOD access](docs/hod-access.md), [Unnati demo](docs/unnati-demo.md), [Workflow audit](docs/workflow-audit.md) | Feature pages |
+| [Open lab](docs/openlab.md), [Work selection](docs/work-selection.md), [Live board](docs/live-board.md), [Projects](docs/projects.md), [Reports](docs/reports.md), [HOD access](docs/hod-access.md), [Unnati demo](docs/unnati-demo.md), [Presenting](docs/presenting.md), [Workflow audit](docs/workflow-audit.md) | Feature pages |
 
 ## Read this first: what is and is not verified
 

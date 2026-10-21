@@ -4,6 +4,8 @@ A 15-minute walk through R1-R18 ([requirements.md](requirements.md)) on the loca
 
 The Intel Unnati AI Lab building, room, GPS point, hours and inventory are **placeholders** until C5 lands ([unnati-demo.md](unnati-demo.md)). Say so if asked.
 
+For the run on the live site, with the IBM Big Data Software CoE (DBMS Lab), the preparation, talking points and expected questions, see [presenting.md](presenting.md).
+
 ## Before you start
 
 1. `npm install`, `npm run build`, `npm run dev`.

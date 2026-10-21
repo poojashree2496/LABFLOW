@@ -8,7 +8,7 @@ The record of finished work, newest first, and the current state of the project.
 
 - Latest local checks: **313 backend tests pass**, **27 of 27 scenarios pass**; lint passes. The general browser suite passes **85 checks**, the focused issue suite **33**, the project suite **27**, the open-lab suite **15**, work-selection **23**, automatic sign-out **15**, live-board **26**, reports **17**, and HOD **22** (Brave/Chromium against local fakes). See [workflow-audit.md](workflow-audit.md) for the earlier backend audit.
 - Code is in `poojashree2496/LABFLOW` on `main`.
-- Never run against a live Google account.
+- Live since 21 Oct on the IBM CoE (DBMS) lab; see Deployment results for what has been checked there.
 - The SRS is `docs/SRS - Real-Time Lab Monitoring & Attendance System (Team NULL).pdf`.
 
 ## Deployment results
@@ -17,6 +17,7 @@ Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | Check | Result |
 |---|---|---|
+| 2026-10-21 | Live data check (evening, read-only as super admin). One lab, `IBMCOE` IBM Big Data Software CoE (DBMS Lab): CSE, capacity 60, mode AB, radius 40 m, **no door GPS, no opening hours, open lab off**. Kiosk `CoE door screen` registered, never seen. Course `DBMSLAB` with a roster of 60 and a Wednesday 11:00-12:40 slot. 61 students imported, 3 verified. 3 asset categories, 36 assets. No projects, no HOD account, no backup copy yet. All 5 triggers installed. The 21 Oct class opened at 12:36 and closed at 13:10 with 0 of 60 marked. Three transient "Service Spreadsheets failed" errors (09:01, 12:18). | Read through the app's own list calls; nothing changed. Prep list and live script in [presenting.md](presenting.md). |
 | 2026-10-21 | v2 on the live deployment: owner ran `setupThisDeployment` and `setupEncryptMobiles`; Apps Script deployment version 4 and the Vercel build published. | /exec answers; the hosted Overview loads with the HOD/coordinator tiles; `system.backups` (Drive folder created), `system.archive`, `labs.live` and `projects.list` return ok as super admin. The live database has no labs yet, so nothing beyond these reads was exercised. |
 
 ## What is built

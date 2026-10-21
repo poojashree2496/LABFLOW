@@ -13,7 +13,7 @@ Which tests cover which requirement. "R" numbers are the course teacher's brief 
 | R5 | Asset tracking | `inventory`: individual and counted assets, loans, kits, returns; `work-selection`: workstation flags | `e2e:issue` | |
 | R6 | Queue by time | `inventory`: advance booking, capacity, waitlist (2 cases), no-show release | `e2e` (advance booking) | |
 | R7 | Project, timeline, outcome | `projects` (14 cases); `reports`: project and system time | `e2e:projects` | |
-| R8 | Intel Unnati AI Lab first | `dev-world`: Unnati seed in all three presets, visits close and reopen | Test Lab | Real location, hours, inventory (C5) |
+| R8 | Intel Unnati AI Lab first | `dev-world`: Unnati seed in all three presets, visits close and reopen | Test Lab; live site runs the IBM CoE (DBMS) lab | Unnati location, hours, inventory (C5) |
 | R9 | Students using the lab now | `checkin`: occupancy moves on IN and OUT | | |
 | R10 | Register number: days and hours | `reports`: student totals, per-lab hours, re-entry, voids | `e2e:reports` | |
 | R11 | System: people and purpose | `reports`: work changes partition system and project time; report roles | `e2e:reports` | |

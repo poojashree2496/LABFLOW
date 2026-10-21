@@ -44,7 +44,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R5 | Done | Assets, categories (with a `workstation` flag), kits, loans and returns (AssetService.gs) | | |
 | R6 | Done | Time-slot bookings with clash checks and no-show release; a taken slot can be waited for (`waitlist: true`): first come first served, promoted to a normal request and the student told when stock frees (cancel, reject, no-show release), position shown, ends when the slot starts (BookingService.gs) | | |
 | R7 | Done on local fakes | Project lifecycle, outcome review and reports with supervisor/timeline/status/outcome/verified hours | Deployment checks | Deployment |
-| R8 | Demo ready | Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Confirmed location, hours and inventory; real door GPS verification | C5, Deployment |
+| R8 | Demo ready | Live site: the IBM Big Data Software CoE (DBMS Lab) with its real course (DBMSLAB, roster of 60), Wednesday timetable, kiosk and 36 assets. Test Lab: Intel Unnati AI Lab seed with marked placeholder systems/equipment, projects and current visits | Unnati location, hours and inventory; door GPS and opening hours for the CoE lab on the live site | C5, Deployment |
 | R9 | Done | Same as R1 counts | | |
 | R10 | Done on local fakes | Student report totals and per-lab hours/days/visits/automatic sign-outs; student home has a 90-day per-lab view | Deployment checks | Deployment |
 | R11 | Done on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | Deployment checks | Deployment |

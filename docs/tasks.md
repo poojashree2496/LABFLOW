@@ -37,7 +37,8 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 ### Shared (owner)
 
 - [~] **S2 Demo** (@kukyos 22 Oct)
-  - Script written: [demo.md](demo.md). Rehearse it once end to end on the dev server.
+  - Script written: [demo.md](demo.md) (Test Lab) and [presenting.md](presenting.md) (live site, IBM CoE / DBMS lab, with prep list and expected questions). Rehearse both once end to end.
+  - Live prep from presenting.md: door GPS and opening hours with walk-ins for the CoE lab, a timetable slot on the demo day, an HOD account, the kiosk signed in at the door, one approved project, a first backup, and two real phone check-ins (one inside, one refused outside).
   - E2E screenshots refreshed 21 Oct. `03-faculty-today`, `05-kiosk-accepted` and `11-staff-issue` in `docs/screens` are no longer produced by any suite and nothing links them; delete or keep.
   - Swap the Unnati placeholders in the script for the real details when C5 lands.
 
@@ -47,6 +48,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
   - The demo seed is implemented; see [Unnati demo](unnati-demo.md). It has 30 marked demo workstations, sample equipment/projects and current visits in every preset.
   - Replace the placeholder building, room, synthetic GPS/radius, capacity, hours and inventory with confirmed details in `dev/world.js`; update seed assertions and the demo notes.
   - Verify the real geofence at the lab door during deployment. No real location or asset list has been supplied yet.
+  - Meanwhile the live site runs on the IBM Big Data Software CoE (DBMS Lab), set up by the owner on 21 Oct. Adding Unnati live is one lab row, a kiosk and its assets from the admin screens.
 
 HOD read/write policy and department scoping are implemented; see [HOD access](hod-access.md).
 
@@ -84,6 +86,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 - [ ] v2: a nightly backup lands in Drive and rotation trashes old copies (A3).
 - [ ] v2: `setupEncryptMobiles` on the real sheet, then confirm no plain numbers remain (A2).
 - [ ] v2: GPS geofence at the Intel Unnati AI Lab door with the real coordinates (C5).
+- [ ] Live: set the IBM CoE (DBMS) lab door GPS from a phone in the room, then one check-in inside (passes) and one more than 80 m away (refused). The 21 Oct class closed with 0 of 60 marked, so no live check-in has succeeded yet.
 
 ## 2. Build (after the demo)
 
