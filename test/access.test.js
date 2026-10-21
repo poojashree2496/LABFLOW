@@ -223,3 +223,14 @@ test('roles: up to five roles per account, and labels shown to people', () => {
   assert.equal(u.user.roles.length, 5);
   assert.equal(w.err(w.admin, 'users.upsert', { email: 'multi2@karunya.edu', displayName: 'Six', roles: ['student', 'faculty', 'staff', 'hod', 'admin', 'admin'] }).code, 'BAD_INPUT');
 });
+
+test('first claim of an imported roll number is verified without a desk check; a second claim is refused; the setting can turn it off', () => {
+  const w = world({ students: 0 });
+  w.ok(w.admin, 'students.import', { rows: [{ rollNo: 'URK24CS1021', name: 'Imported One' }, { rollNo: 'URK24CS1022', name: 'Imported Two' }] });
+  const p = w.ok('one@karunya.edu', 'onboard', { rollNo: 'URK24CS1021', name: 'Imported One', consent: true, mobile: '9876500001' }).student;
+  assert.equal(p.status, 'verified');
+  assert.equal(w.err('impostor@karunya.edu', 'onboard', { rollNo: 'URK24CS1021', name: 'Someone', consent: true, mobile: '9876500002' }).code, 'ROLL_TAKEN');
+  assert.ok(w.ok(w.admin, 'audit.list', {}).events.some((e) => e.action === 'student.onboard' && e.actor === 'one@karunya.edu'));
+  w.ok(w.admin, 'settings.set', { values: { studentAutoVerify: false } });
+  assert.equal(w.ok('two@karunya.edu', 'onboard', { rollNo: 'URK24CS1022', name: 'Imported Two', consent: true, mobile: '9876500003' }).student.status, 'pending');
+});

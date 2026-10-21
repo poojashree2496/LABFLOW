@@ -123,7 +123,7 @@ These names are frozen so the three workstreams can work in parallel. **Change t
 | Users | `department` |
 | StudentProfiles | `joinYear:n` |
 | Categories | `workstation:b` |
-| Sessions | `archivedAt:n` |
+| Sessions | `archivedAt:n checkinMode` (checkinMode added 21 Oct: the mode the faculty chose at opening) |
 | AttendanceEvents | `projectId assetId` |
 | Reservations | `projectId waitlistedAt:n` |
 

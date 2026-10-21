@@ -104,11 +104,13 @@ var Users = {
         if (existing.userId && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
         if (existing.status !== 'imported' && existing.status !== 'rejected' && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
         // Verified automatically when the admin imported this roll number with this email, or when the roll number IS the email.
-        var matches = existing.importedEmail ? existing.importedEmail === ctx.email : !!derived;
+        // Otherwise, with studentAutoVerify, the first claim of an imported roll number that carries no email is trusted.
+        var firstClaim = !existing.importedEmail && !derived && Settings.get('studentAutoVerify');
+        var matches = existing.importedEmail ? existing.importedEmail === ctx.email : (!!derived || firstClaim);
         out = Db.update('StudentProfiles', existing.studentId, {
           userId: user.userId, email: ctx.email, name: name, department: existing.department || department, section: section || existing.section,
           year: year !== null ? year : existing.year, status: matches ? 'verified' : 'pending',
-          verifiedBy: matches ? (existing.importedEmail ? 'import-email-match' : 'email-roll-match') : '', verifiedAt: matches ? now : null, updatedAt: now
+          verifiedBy: matches ? (existing.importedEmail ? 'import-email-match' : derived ? 'email-roll-match' : 'first-claim') : '', verifiedAt: matches ? now : null, updatedAt: now
         });
       } else {
         out = Db.insert('StudentProfiles', { studentId: U.id('student'), userId: user.userId, email: ctx.email, importedEmail: '', rollNo: rollNo, name: name,

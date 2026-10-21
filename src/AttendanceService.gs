@@ -225,7 +225,7 @@ var Attend = {
     var purpose = V.enumOf(p.purpose, 'Action', ['in', 'out', 'rescan']);
     var session = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
     var lab = Db.cachedGet('Labs', 'labId', session.labId, 120);
-    if (!Labs.allows(lab, 'B')) fail('MODE_DISABLED', 'This lab uses the kiosk QR. Scan the code on the lab screen with your phone camera.');
+    if (!Sessions.allows(session, lab, 'B')) fail('MODE_DISABLED', 'This session uses the kiosk QR. Scan the code on the lab screen with your phone camera.');
     var cred = Creds.get(V.id(p.credentialId, 'Device', 'cred'));
     if (!cred || cred.studentId !== st.studentId) fail('NO_DEVICE', 'This device is not registered to you.');
     if (cred.status !== 'active') fail('DEVICE_INACTIVE', cred.status === 'pending_approval' ? 'This device is waiting for approval at the lab desk.' : 'This device has been revoked. Register it again.');
@@ -297,7 +297,7 @@ var Attend = {
     { id: 'mode_enabled', label: 'The lab accepts device QR check-in', run: function (c) {
       c.lab = Db.cachedGet('Labs', 'labId', c.labId, 120);
       if (!c.lab) fail('BAD_TOKEN', 'Unknown lab.');
-      if (!Labs.allows(c.lab, 'B')) fail('MODE_DISABLED', 'This lab uses the kiosk QR + GPS check-in.');
+      if (!Sessions.allows(Db.get('Sessions', c.sessionId), c.lab, 'B')) fail('MODE_DISABLED', 'This session uses the kiosk QR + GPS check-in.');
     } },
     { id: 'scanner_allowed', label: 'The scanner may scan for this session', run: function (c) { Attend._authorizeScanner(c); } },
     { id: 'rate_limit', label: 'Per-student scan rate limit', run: function (c) {
@@ -331,7 +331,7 @@ var Attend = {
       Attend._nonceFresh(c); Attend._qrFresh(c);
       c.student = Attend._verifiedStudent(c.studentId);
       c.lab = Db.get('Labs', c.labId);
-      if (!c.lab || c.lab.status !== 'active' || !Labs.allows(c.lab, 'B')) fail('MODE_DISABLED', 'This lab no longer accepts device QR check-in.');
+      if (!c.lab || c.lab.status !== 'active' || !Sessions.allows(Db.get('Sessions', c.sessionId), c.lab, 'B')) fail('MODE_DISABLED', 'This session no longer accepts device QR check-in.');
       if (c.scanner.kind === 'kiosk') {
         var kiosk = Db.get('Kiosks', c.scanner.kiosk.kioskId);
         if (!kiosk || kiosk.status !== 'active' || kiosk.authorizedEmail !== c.scannedBy) fail('KIOSK_INACTIVE', 'This kiosk is not active.');

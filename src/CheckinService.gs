@@ -140,6 +140,7 @@ var Checkin = {
     var cands = [];
     here.forEach(function (s) {
       if (s.status === 'closed') return;
+      if (!Sessions.allows(s, lab, 'A')) return; // the faculty chose device QR only for this session
       if (s.type === 'openlab' && !Sessions.openLabAvailable(s, now)) return;
       var eligible = Roster.isEligible(s, sid);
       if (s.type === 'research' && !eligible) return; // someone else's research visit
@@ -179,7 +180,10 @@ var Checkin = {
     { id: 'rate_limit', label: 'Per-student check-in rate limit', run: function (c) {
       if (!Auth.rateLimit('acheck|' + c.studentId, 10, 60)) fail('RATE_LIMITED', 'Too many attempts. Wait a moment.');
     } },
-    { id: 'target', label: 'Session chosen and entry reason matches it (FR-13)', run: function (c) { Checkin._resolveTarget(c); } },
+    { id: 'target', label: 'Session chosen and entry reason matches it (FR-13)', run: function (c) {
+      Checkin._resolveTarget(c);
+      if (c.session && !Sessions.allows(c.session, c.lab, 'A')) fail('MODE_DISABLED', 'This session uses device QR. Open LABFLOW and show your QR to the scanner.');
+    } },
     { id: 'work', label: 'Project and workstation choices are valid', run: function (c) {
       if (c.purpose === 'in') Work.validate(c.studentId, c.session, c.projectId, c.assetId, c.session.type === 'openlab');
     } },

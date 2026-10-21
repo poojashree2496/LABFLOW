@@ -245,7 +245,7 @@ test('rescan window: answered keeps credit; missed caps verified time and flags'
 
 test('random rescans are planned and fire from the tick job', async () => {
   const w = await ready(1); const [s] = w.students;
-  const o = open(w).session;
+  const o = w.ok(w.faculty, 'sessions.open', { sessionId: w.sid, rescanMode: 'random' }).session;
   assert.ok(o.nextRescanAt > o.openedAt && o.nextRescanAt < o.scheduledEnd);
   w.scan(await w.qr(s, w.sid, 'in'));
   w.setTime = null; w.e.setTime(o.nextRescanAt + 1000);
@@ -440,4 +440,35 @@ test('automatic OUT credits only open lab through closing and leaves class misse
   const cls = compute('class', [entry]);
   assert.equal(cls.status, 'unverified_exit'); assert.equal(cls.verifiedMinutes, 0); assert.ok(!cls.flags.includes('auto_out'));
   assert.ok(!compute('class', [entry, out]).flags.includes('auto_out'));
+});
+
+test('rescans are off unless the faculty calls one; the faculty still can', async () => {
+  const w = await ready(1); const [s] = w.students;
+  const o = open(w).session;
+  assert.equal(o.rescanMode, 'off'); assert.equal(o.nextRescanAt, null);
+  w.scan(await w.qr(s, w.sid, 'in'));
+  w.advance(60 * 60000); assert.equal(w.eval('Attend.tickRescans()').started, 0);
+  w.ok(w.faculty, 'attend.openRescan', { sessionId: w.sid });
+  assert.equal(w.scan(await w.qr(s, w.sid, 'rescan')).ok, true);
+});
+
+test('the faculty picks the check-in mode when opening; the other mode is refused for that session', async () => {
+  const w = world({ students: 2, mode: 'AB' }); const [a, b] = w.students; await w.registerDevice(b);
+  w.sid = w.session().sessionId;
+  const o = w.ok(w.faculty, 'sessions.open', { sessionId: w.sid, checkinMode: 'A' }).session;
+  assert.equal(o.labMode, 'A');
+  assert.equal(w.checkin(a).ok, true, 'kiosk QR + GPS works');
+  assert.equal(w.err(b.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: w.devices[b.studentId].credentialId }).code, 'MODE_DISABLED');
+  w.ok(w.faculty, 'sessions.close', { sessionId: w.sid });
+
+  const w2 = world({ students: 2, mode: 'AB' }); const [c, d] = w2.students; await w2.registerDevice(d);
+  w2.sid = w2.session().sessionId;
+  w2.ok(w2.faculty, 'sessions.open', { sessionId: w2.sid, checkinMode: 'B' });
+  assert.equal(w2.scan(await w2.qr(d, w2.sid, 'in')).ok, true, 'device QR works');
+  const op = w2.ok(c.email, 'checkin.open', { code: w2.kioskCode() });
+  assert.ok(!op.candidates.some((x) => x.sessionId === w2.sid), 'the kiosk does not offer a device-QR-only session');
+  assert.equal(w2.call(c.email, 'checkin.submit', { pass: op.pass, action: 'in', sessionId: w2.sid, geo: w2.at(3, 12) }).error.code, 'MODE_DISABLED');
+
+  const w3 = world({ students: 1, mode: 'A' }); w3.sid = w3.session().sessionId;
+  assert.equal(w3.err(w3.faculty, 'sessions.open', { sessionId: w3.sid, checkinMode: 'B' }).code, 'MODE_DISABLED', 'a lab without device QR cannot be switched to it');
 });

@@ -21,7 +21,7 @@
   .track { position: absolute; left: 0; right: 0; top: 26px; height: 12px; background: #e9edf3; border-radius: 6px; }
   .tick { position: absolute; top: 42px; font-size: 12px; color: var(--muted); transform: translateX(-50%); }
   .win { position: absolute; top: 18px; height: 28px; min-width: 8px; border-radius: 5px; transform: translateX(-50%); }
-  .win.random { background: var(--warn); } .win.manual { background: var(--blue); }
+  .win { background: var(--warn); }
   .winlbl { position: absolute; top: 0; font-size: 12px; font-weight: 600; white-space: nowrap; transform: translateX(-50%); }
   .cursor { position: absolute; top: 14px; width: 3px; height: 36px; background: var(--ink); border-radius: 2px; transition: left .25s linear; }
   .grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; }
@@ -62,7 +62,7 @@
 <body>
 <div class="wrap">
   <h1>Is the student still in the lab?</h1>
-  <p class="sub">One class, 10:00 to 12:00, run through LABFLOW's real attendance engine. Each accept, refusal and credited minute comes from the server code. Press Restart to run it again with a new, unpredictable rescan time.</p>
+  <p class="sub">One class, 10:00 to 12:00, run through LABFLOW's real attendance engine. Each accept, refusal and credited minute comes from the server code. The teacher calls the rescans; Restart runs it again with different times.</p>
   <div class="bar">
     <button class="primary" id="play">Play</button>
     <button id="step">Next step</button>
@@ -87,7 +87,7 @@
     <strong>What the teacher's report says at 12:00</strong>
     <table><thead><tr><th>Student</th><th>What happened</th><th>Status</th><th>Credited time</th></tr></thead><tbody id="rows"></tbody></table>
   </div>
-  <div class="key"><span><i style="background:var(--warn)"></i>Random rescan (time chosen by the server, unknown to all)</span><span><i style="background:var(--blue)"></i>Teacher's rescan</span><span>Confirming = scanning the door screen again with GPS inside the lab, within 90 s</span></div>
+  <div class="key"><span><i style="background:var(--warn)"></i>Rescan called by the teacher (students are not warned)</span><span>Confirming = scanning the door screen again with GPS inside the lab, within 90 s</span></div>
 </div>
 <script>
 (function () {
@@ -126,8 +126,8 @@
     $('clock').textContent = hhmm(f.at); $('cursor').style.left = pct(f.at) + '%'; $('text').textContent = f.text;
     const tl = $('timeline');
     data.windows.forEach((w, n) => { if (f.at >= w.from && !tl.querySelector('[data-w="' + n + '"]')) {
-      const b = el('div', { className: 'win ' + w.kind }); b.dataset.w = n; b.style.left = pct((w.from + w.to) / 2) + '%'; b.style.width = Math.max(0.8, pct(w.to) - pct(w.from)) + '%';
-      const l = el('div', { className: 'winlbl', textContent: (w.kind === 'random' ? 'Random rescan ' : "Teacher's rescan ") + hhmm(w.from) }); l.dataset.w = n; l.style.left = pct(w.from) + '%';
+      const b = el('div', { className: 'win' }); b.dataset.w = n; b.style.left = pct((w.from + w.to) / 2) + '%'; b.style.width = Math.max(0.8, pct(w.to) - pct(w.from)) + '%';
+      const l = el('div', { className: 'winlbl', textContent: 'Rescan ' + hhmm(w.from) }); l.dataset.w = n; l.style.left = pct(w.from) + '%';
       tl.append(b, l);
     } });
     const atDoor = f.students.filter((s) => s.place === 'door').map((s) => s.key);

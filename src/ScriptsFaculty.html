@@ -33,15 +33,16 @@ LF.sessionCard = function (s, reload) {
     actions.length ? h('div', { class: 'toolbar', style: { marginTop: '12px' } }, actions) : null);
 };
 function openFlow(s, reload, override) {
-  const mode = ui.field({ name: 'rescanMode', label: 'Mid-session presence rescans', type: 'select', value: s.rescanMode || 'random', options: [{ value: 'random', label: 'Random (recommended)' }, { value: 'off', label: 'Off' }], hint: 'A random rescan asks everyone inside to scan again within a short window.' });
+  const labMode = s.labMode || 'A', modes = [{ value: 'A', label: 'Kiosk QR + GPS (recommended)' }, { value: 'B', label: 'Device QR, scanned in the room' }, { value: 'AB', label: 'Both' }].filter((x) => x.value.split('').every((c) => labMode.includes(c)));
+  const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence rescan at any time from the Live roster.' }) : null;
   const isAdmin = LF.me.roles.includes('admin');
   const ov = isAdmin ? ui.field({ name: 'override', label: 'Admin override (outside the time window or lab busy)', type: 'checkbox', value: !!override }) : null;
   const msg = h('div', { class: 'err', role: 'alert', hidden: true });
   let m; const go = ui.button('Open session', { kind: 'primary', onClick: async () => {
-    try { await api('sessions.open', { sessionId: s.sessionId, rescanMode: mode.get(), override: ov ? ov.get() : false }); m.close(); LF.toast('Session opened. Students can check in now.', 'good'); reload(); }
+    try { await api('sessions.open', { sessionId: s.sessionId, rescanMode: 'off', checkinMode: mode ? mode.get() : undefined, override: ov ? ov.get() : false }); m.close(); LF.toast('Session opened. Students can check in now.', 'good'); reload(); }
     catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
   } });
-  m = LF.modal('Open ' + s.title, h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, s.labName + ' · ' + times(s)), mode.el, ov ? ov.el : null, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), go)));
+  m = LF.modal('Open ' + s.title, h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, s.labName + ' · ' + times(s)), mode ? mode.el : null, ov ? ov.el : null, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), go)));
 }
 async function closeFlow(s, reload) {
   if (!await LF.confirm({ title: 'Close this session?', message: 'Students inside can still scan out for the exit grace period. Attendance records are not changed by closing.', confirmLabel: 'Close session' })) return;

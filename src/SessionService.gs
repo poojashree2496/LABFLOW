@@ -19,7 +19,7 @@ var Sessions = {
     return { sessionId: s.sessionId, type: s.type, labId: s.labId, labName: lab.name, labCode: lab.code, courseId: s.courseId, courseCode: course.code, courseName: course.name,
       facultyId: s.facultyId, facultyName: fac.name, title: s.title, section: s.section, date: s.date, scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd, status: s.status,
       openedAt: s.openedAt, closedAt: s.closedAt, openToAll: s.openToAll, rescanMode: s.rescanMode, nextRescanAt: s.nextRescanAt, rescansDone: s.rescansDone, notes: s.notes,
-      labEventId: s.labEventId || '', breakStart: s.breakStart, breakEnd: s.breakEnd, archived: !!s.archivedAt, selfWork: String(s.slotKey || '').indexOf('rsv|') === 0, labMode: lab.labId ? Labs.modeOf(lab) : '' };
+      labEventId: s.labEventId || '', breakStart: s.breakStart, breakEnd: s.breakEnd, archived: !!s.archivedAt, selfWork: String(s.slotKey || '').indexOf('rsv|') === 0, labMode: lab.labId ? Sessions.modeOf(s, lab) : '' };
   },
   _ref: function () {
     return { labs: U.indexBy(Db.readAll('Labs'), 'labId'), courses: U.indexBy(Db.readAll('Courses'), 'courseId'), fac: U.indexBy(Db.readAll('FacultyProfiles'), 'facultyId') };
@@ -222,7 +222,10 @@ var Sessions = {
       }
       var mode = p.rescanMode ? V.enumOf(p.rescanMode, 'Rescan mode', ['off', 'random']) : s.rescanMode;
       if (s.type === 'openlab') mode = 'off';
-      var next = Db.update('Sessions', s.sessionId, { status: 'open', openedAt: now, openedBy: ctx.email, rescanMode: mode, rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, s.scheduledEnd) : null });
+      var cm = p.checkinMode ? V.enumOf(p.checkinMode, 'Check-in mode', ['A', 'B', 'AB']) : (s.checkinMode || '');
+      var labMode = Labs.modeOf(Db.get('Labs', s.labId));
+      if (cm && !Sessions._within(cm, labMode)) fail('MODE_DISABLED', 'This lab is set up for ' + labMode + ' only. Ask an admin to change the check-in mode of the lab.');
+      var next = Db.update('Sessions', s.sessionId, { status: 'open', openedAt: now, openedBy: ctx.email, rescanMode: mode, rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, s.scheduledEnd) : null, checkinMode: cm });
       Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: overrides.length ? 'session.open.override' : 'session.open', entityType: 'Session', entityId: s.sessionId, detail: { overrides: overrides, rescanMode: mode } });
       Occupancy.invalidate(s.labId);
       return { session: Sessions.pub(next, Sessions._ref()) };
@@ -230,6 +233,15 @@ var Sessions = {
   },
 
   /** Random time between minFraction and maxFraction of the remaining session; null if the session is too short. */
+  /** Check-in mode in force for a session: the one its faculty chose at opening (A kiosk QR + GPS, B device QR, AB both),
+   *  else the lab's. A choice the lab no longer supports falls back to the lab's mode. */
+  modeOf: function (s, lab) {
+    var labMode = Labs.modeOf(lab);
+    return s && s.checkinMode && Sessions._within(s.checkinMode, labMode) ? s.checkinMode : labMode;
+  },
+  allows: function (s, lab, mode) { return !!lab && Sessions.modeOf(s, lab).indexOf(mode) >= 0; },
+  _within: function (mode, labMode) { return String(mode).split('').every(function (m) { return labMode.indexOf(m) >= 0; }); },
+
   _planRescan: function (openedAt, scheduledEnd) {
     var span = scheduledEnd - openedAt, win = Settings.get('rescanWindowSeconds') * 1000;
     if (span < 3 * win) return null;

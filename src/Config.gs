@@ -31,7 +31,7 @@ var Cfg = (function () {
     Timetable: 'slotId labId courseId facultyId section dayOfWeek:n startTime endTime validFrom validTo status createdAt:n',
     Events: 'labEventId name labId coordinatorEmail:s:c startAt:n endAt:n breakStart:n breakEnd:n capacity:n sessionId status description createdBy createdAt:n',
     EventGuests: 'guestId labEventId name organisation addedBy addedAt:n',
-    Sessions: 'sessionId type labId courseId facultyId title slotId slotKey:s:u section date scheduledStart:n scheduledEnd:n status openedAt:n openedBy closedAt:n closedBy closeReason openToAll:b rescanMode nextRescanAt:n rescansDone:n requestedBy approvedBy approvedAt:n notes createdBy createdAt:n labEventId breakStart:n breakEnd:n archivedAt:n',
+    Sessions: 'sessionId type labId courseId facultyId title slotId slotKey:s:u section date scheduledStart:n scheduledEnd:n status openedAt:n openedBy closedAt:n closedBy closeReason openToAll:b rescanMode nextRescanAt:n rescansDone:n requestedBy approvedBy approvedAt:n notes createdBy createdAt:n labEventId breakStart:n breakEnd:n archivedAt:n checkinMode',
     AttendanceEvents: 'eventId sessionId labId studentId type source kioskId credentialId nonce at:n recordedBy reason approvalStatus approvedBy ref createdAt:n mode method scannedBy scannerRole geofence distanceM:n accuracyM:n entryReason assurance projectId assetId',
     AttendanceSummaries: 'sumId sessionId studentId status firstIn:n lastOut:n verifiedUntil:n verifiedMinutes:n flags:j computedAt:n',
     SpotChecks: 'checkId sessionId studentId requestedBy requestedAt:n outcome resolvedBy resolvedAt:n note',
@@ -85,7 +85,7 @@ var Cfg = (function () {
     minScanGapSeconds: { group: 'Attendance', type: 'int', def: 120, min: 0, max: 1800, desc: 'Minimum time between check-in and check-out, so an accidental double scan does not check a student out.' },
     exitGraceMinutes: { group: 'Attendance', type: 'int', def: 15, min: 0, max: 120, desc: 'Exit scans are still accepted this long after a session is closed.' },
     autoCloseGraceMinutes: { group: 'Attendance', type: 'int', def: 30, min: 5, max: 240, desc: 'Open sessions are auto-closed this long after their scheduled end.' },
-    rescanMode: { group: 'Attendance', type: 'enum', def: 'random', values: ['off', 'random'], desc: 'Default mid-session rescan policy for new sessions.' },
+    rescanMode: { group: 'Attendance', type: 'enum', def: 'off', values: ['off', 'random'], desc: 'Default mid-session rescan policy for new sessions. Off = rescans only when the faculty (or a class rep) calls one; random = the server also plans one at an unannounced time.' },
     rescanWindowSeconds: { group: 'Attendance', type: 'int', def: 90, min: 30, max: 3600, desc: 'How long a rescan window stays open (the SRS uses 90 seconds).' },
     rescanMinFraction: { group: 'Attendance', type: 'int', def: 25, min: 5, max: 90, desc: 'Earliest random rescan, as % of the session length.' },
     rescanMaxFraction: { group: 'Attendance', type: 'int', def: 85, min: 10, max: 95, desc: 'Latest random rescan, as % of the session length.' },
@@ -130,6 +130,7 @@ var Cfg = (function () {
 
     // profiles
     requireMobile: { group: 'Profiles', type: 'bool', def: true, desc: 'First login asks for a mobile number (FR-2).' },
+    studentAutoVerify: { group: 'Profiles', type: 'bool', def: true, desc: 'A student who claims an imported roll number at first sign-in is verified at once, without a desk check. The claim is audited and the roll number cannot be claimed twice. A phone change still needs desk approval. Off = staff verify each claim.' },
     rollFromEmail: { group: 'Profiles', type: 'bool', def: true, desc: 'Take the roll number from the student\'s email address when it matches the pattern below, and lock it (FR-3).' },
     rollEmailPattern: { group: 'Profiles', type: 'str', def: '^[a-z]{3}[0-9]{2}[a-z]{2}[0-9]{4}$', desc: 'Regular expression for the part of a student email before @ that IS the roll number.' },
 

@@ -45,7 +45,7 @@ Schema changes are **additive**. `setupInitialise` creates missing sheets, adds 
 | `Sessions` | Every class, event, open-lab day and research visit; `archivedAt` is set after the yearly archive |
 | `AttendanceEvents` | Append-only log of scans, corrections, voids and work changes |
 | `AttendanceSummaries` | One derived row per student per session; rebuildable |
-| `RescanWindows`, `SpotChecks` | Random rescan windows and photo spot checks |
+| `RescanWindows`, `SpotChecks` | Rescan windows and photo spot checks |
 | `Redemptions` | Used QR nonces; the source of truth for "used once" |
 | `Flags` | Review queue for suspicious activity |
 

@@ -3,8 +3,8 @@
  * fakes, to show that LABFLOW keeps checking who is still in the room. The script decides where each student's
  * phone is; every accept or refuse, status and credited minute comes from the real rpc() gateway.
  *
- *   - Random rescan: planned by the server when the class opens, at an unknown time between 25% and 85% of it.
- *   - Teacher's rescan: the faculty opens one more window later, at a time of their choosing.
+ *   - Rescans happen only when the faculty calls one (Live roster > Request rescan now). Students are not warned.
+ *     The demo's teacher calls two, at times that change on every run.
  *   - Each window is 90 s. Confirming means scanning the door screen again with GPS inside the geofence.
  *
  * Served by dev/server.js at /presence; test/presence.test.js asserts the outcomes.
@@ -46,33 +46,32 @@ function run() {
   };
   const move = (key, place, text) => { S[key].place = place; S[key].shown = place; snap(text); };
 
-  const opened = w.ok(w.faculty, 'sessions.open', { sessionId: sid }).session;
-  const randomAt = opened.nextRescanAt;
-  snap('10:00. The teacher opens the class. The server secretly picks a time for a random rescan. Nobody, not even the teacher, is told when.');
+  w.ok(w.faculty, 'sessions.open', { sessionId: sid, checkinMode: 'A' });
+  snap('10:00. The teacher opens the class with kiosk QR + GPS. During the class the teacher can call a presence rescan at any moment. Students are never told when.');
 
   const inLab = (k) => S[k].place === 'door' || S[k].place === 'desk';
   const enter = (k, text) => { S[k].place = 'door'; S[k].shown = 'door'; scan(k, 'in', null, text); S[k].place = 'desk'; S[k].shown = 'desk'; };
   const leave = (k, text) => { S[k].shown = 'door'; scan(k, 'out', 'door', text); S[k].place = 'away'; S[k].shown = 'away'; };
   let ravisTry = false;
   const rescan = (kind) => {
-    if (kind === 'random') w.e.run('trg_tickSessions()'); else w.ok(w.faculty, 'attend.openRescan', { sessionId: sid });
+    w.ok(w.faculty, 'attend.openRescan', { sessionId: sid });
     const from = at(), closesAt = from + 90 * 1000;
     windows.push({ kind, from, to: closesAt });
-    snap(kind === 'random'
-      ? 'RANDOM RESCAN. Every phone still marked inside must scan the door screen again within 90 seconds, with GPS inside the lab.'
-      : 'The teacher calls another rescan from the Live roster. Same rule: 90 seconds, at the door, inside the geofence.');
+    snap(kind === 'first'
+      ? 'RESCAN. The teacher presses "Request rescan now" in the Live roster. Every phone still marked inside must scan the door screen again within 90 seconds, with GPS inside the lab.'
+      : 'Later the teacher calls another rescan. Same rule: 90 seconds, at the door, inside the geofence.');
     w.advance(20 * 1000);
     ['asha', 'karthik', 'divya'].filter(inLab).forEach((k) => { S[k].shown = 'door'; scan(k, 'rescan', 'door', S[k].name + ' walks to the door screen and confirms. Proven present at this moment.'); S[k].shown = 'desk'; });
     if (S.ravi.place === 'canteen' && !ravisTry) { ravisTry = true; w.advance(10 * 1000); scan('ravi', 'rescan', 'canteen', 'Ravi sees the alert and tries to confirm from the canteen. Refused: his phone is 300 m from the lab.'); }
     goTo(closesAt + 1000);
     w.e.run('trg_tickSessions()');
-    snap(kind === 'random'
-      ? 'The window closes. Meena never confirmed: she cannot see the door screen from the hostel, and nobody could know the time in advance. Ravi is outside. Anyone who did not confirm is now "missed rescan", and their time stops at their last proof.'
+    snap(kind === 'first'
+      ? 'The window closes. Meena never confirmed: she cannot see the door screen from the hostel, and nobody knew the time in advance. Ravi is outside. Anyone who did not confirm is now "missed rescan", and their time stops at their last proof.'
       : 'The second window closes. Everyone in the room has proved presence twice; Ravi and Meena still have nothing after their first scan.');
   };
 
-  // The teacher's extra rescan comes after the random one (a rescan opened earlier would replace the random one).
-  const manualAt = Math.min(randomAt + 20 * MIN, start + 112 * MIN);
+  // The teacher picks the moments; they change on every run so nobody can learn them.
+  const firstAt = start + (33 + Math.floor(Math.random() * 22)) * MIN, secondAt = start + (75 + Math.floor(Math.random() * 30)) * MIN;
   const agenda = [
     [start + 2 * MIN, () => {
       ['asha', 'ravi', 'karthik'].forEach((k) => enter(k, S[k].name + ' scans the door screen. GPS puts the phone inside the lab: marked in.'));
@@ -82,8 +81,8 @@ function run() {
     [start + 20 * MIN, () => enter('divya', 'Divya arrives 20 minutes late and scans in.')],
     [start + 27 * MIN, () => move('ravi', 'canteen', 'Ravi walks out to the canteen without scanning out. On paper he is still in the lab.')],
     [start + 60 * MIN, () => leave('karthik', 'Karthik has to leave at 11:00. He scans out at the door, so his time is credited.')],
-    [randomAt, () => rescan('random')],
-    [manualAt, () => rescan('manual')],
+    [firstAt, () => rescan('first')],
+    [secondAt, () => rescan('second')],
     [start + 115 * MIN, () => ['asha', 'divya'].forEach((k) => leave(k, S[k].name + ' scans out at the end of class.'))],
     [start + 120 * MIN, () => { w.ok(w.faculty, 'sessions.close', { sessionId: sid }); snap('12:00. The class closes. Time is credited only between an entry and a later proof of presence: a rescan, a spot check or an exit scan.'); }]
   ];

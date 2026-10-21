@@ -11,7 +11,7 @@ Attendance is a log of what happened plus a summary worked out from the log. The
 | `openlab` | The daily extra-hours session, created from the lab's opening hours | Any verified student, no booking or roster needed |
 | `research` | Student asks, the supervisor approves | The requesting student |
 
-A lab uses one of three modes (lab setting `checkinMode`, with `defaultCheckinMode` as the fallback):
+A lab supports one of three modes (lab setting `checkinMode`, with `defaultCheckinMode` as the fallback). When the faculty opens a session they choose the mode for that session from the ones the lab supports; kiosk QR + GPS is preselected. A session without a choice (opened by the timetable or a class rep) uses the lab's mode. The choice is stored in `Sessions.checkinMode`, and the other mode is refused for that session.
 
 | Mode | How a student checks in |
 |---|---|
@@ -74,7 +74,7 @@ Corrections to sessions older than `correctionApprovalAfterHours` (24) need admi
 
 Cryptography proves the key signed, not where the phone is. These controls add cost for a cheater and evidence for a reviewer:
 
-- **Rescan windows** - random, `rescanWindowSeconds` (90) long. A missed one caps credited time and flags the student.
+- **Rescan windows** - called by the faculty or a class rep at any time (Live roster > Request rescan now), `rescanWindowSeconds` (90) long, with no warning to students. A missed one caps credited time and flags the student. Automatic random rescans (`rescanMode: random`) remain available as a setting but are off by default.
 - **Spot checks** - faculty pick students and compare the photo on file with the person; a failure flags the student.
 - **Exit scans**, **back-to-back scan detection** (one phone scanning two students too fast), **mock-location heuristics**, **impossible travel** between labs.
 - **Flags** go to a review queue (`Flags`); resolving one is audited.
