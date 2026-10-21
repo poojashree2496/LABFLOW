@@ -26,7 +26,7 @@ LF.sessionCard = function (s, reload) {
   if (s.status === 'closed') actions.push(ui.button('View roster', { icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }));
   return h('article', { class: 'card', 'aria-label': s.title },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
-      h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + times(s) + (s.section ? ' · Section ' + s.section : '') + (s.facultyName ? ' · ' + s.facultyName : ''))),
+      h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + times(s) + (s.section ? ' · Batch ' + s.section : '') + (s.facultyName ? ' · ' + s.facultyName : ''))),
       h('div', { class: 'pill-row' }, ui.badge(TYPE_LABEL[s.type] || s.type, ''), s.labMode ? ui.badge(s.labMode === 'A' ? 'kiosk QR + GPS' : s.labMode === 'B' ? 'device QR' : 'both modes', 'info') : null, ui.status(s.status))),
     c ? h('div', { class: 'pill-row', style: { marginTop: '10px' } }, ui.badge('Inside ' + c.inside + (c.capacity ? ' / ' + c.capacity : ''), c.overCapacity ? 'bad' : 'good'), c.onBreak ? ui.badge('on break', 'warn') : null, ui.badge('Left ' + c.left, ''), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : ui.badge('Open to all', 'info'), c.absent !== null ? ui.badge('Absent ' + c.absent, c.absent ? 'warn' : '') : null, c.unverifiedExits ? ui.badge('Exit not scanned ' + c.unverifiedExits, 'warn') : null, c.flagged ? ui.badge('Flagged ' + c.flagged, 'bad') : null) : null,
     s.notes ? h('div', { class: 'hint', style: { marginTop: '6px' } }, s.notes) : null,
@@ -252,7 +252,7 @@ LF.register({ role: 'faculty', id: 'students', label: 'Students', icon: 'inbox',
     { id: 'list', label: 'Students', render: (p) => { ui.loadInto(p, async () => {
       const r = await api('students.list', { limit: 500 });
       return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', rows: r.students, pageSize: 30, empty: ui.empty('No students yet', 'Students appear once an administrator maps you to a course roster.'),
-        columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'year', label: 'Year' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }] }).el;
+        columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Batch' }, { key: 'year', label: 'Year' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }] }).el;
     }); } },
     { id: 'reps', label: 'Class representatives', render: (p) => { p.appendChild(LF.classRepsView()); } }]));
 } });
@@ -267,7 +267,7 @@ LF.classRepsView = function () {
       const courses = isAdmin ? (await api('courses.list')).courses.filter((c) => c.status === 'active').map((c) => ({ value: c.courseId + '|', label: c.code + ' ' + c.name })) : maps.mappings.map((m) => ({ value: m.courseId + '|' + (m.section || ''), label: m.courseCode + ' ' + m.courseName + (m.section ? ' · section ' + m.section : '') }));
       if (!courses.length) throw new LF.ApiError('NOT_FOUND', 'You are not mapped to any course yet.');
       ui.formModal({ title: 'Assign a class representative', intro: 'At most two per section. They can run the class session and, in device-QR labs, scan classmates while it is open.',
-        fields: [{ name: 'course', label: 'Course', type: 'select', options: courses }, { name: 'section', label: 'Section (if not fixed above)', maxlength: 10 }, { name: 'roll', label: 'Student roll number', required: true, maxlength: 20 }], submitLabel: 'Assign',
+        fields: [{ name: 'course', label: 'Course', type: 'select', options: courses }, { name: 'section', label: 'Batch (if not fixed above)', maxlength: 10 }, { name: 'roll', label: 'Student roll number', required: true, maxlength: 20 }], submitLabel: 'Assign',
         onSubmit: async (v) => {
           const parts = v.course.split('|'), section = parts[1] || v.section || '';
           const found = await api('students.list', { q: v.roll.trim(), limit: 5 }), st = found.students.find((x) => x.rollNo.toLowerCase() === v.roll.trim().toLowerCase());
@@ -276,7 +276,7 @@ LF.classRepsView = function () {
         } });
     } });
     return ui.table({ caption: 'Class representatives', rows: reps.reps, search: false, toolbar: add, empty: ui.empty('None assigned', 'A class representative helps run the session; they never record attendance outside it.'),
-      columns: [{ key: 'courseCode', label: 'Course' }, { key: 'section', label: 'Section' }, { key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'assignedAt', label: 'Since', render: (x) => fmt.date(x.assignedAt) },
+      columns: [{ key: 'courseCode', label: 'Course' }, { key: 'section', label: 'Batch' }, { key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'assignedAt', label: 'Since', render: (x) => fmt.date(x.assignedAt) },
         { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove ' + x.name + '?', message: 'They lose class representative rights at once.', confirmLabel: 'Remove', danger: true })) return; await api('classreps.remove', { repId: x.repId }); load(); } }) }] }).el;
   });
   load(); return box;

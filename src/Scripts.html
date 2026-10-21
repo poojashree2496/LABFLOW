@@ -187,8 +187,14 @@ LF.ui.skeleton = skeleton; LF.ui.empty = empty; LF.ui.errorBox = errorBox;
 function loadInto(root, fn, rows) {
   const run = async () => {
     clear(root).appendChild(skeleton(rows));
-    try { const out = await fn(); clear(root); if (out) append(root, [out]); }
-    catch (e) { clear(root).appendChild(errorBox(e, run)); }
+    // Loaders only read, so a dropped connection or a momentary Sheets failure is retried quietly before showing an error.
+    for (let i = 1; ; i++) {
+      try { const out = await fn(); clear(root); if (out) append(root, [out]); return; }
+      catch (e) {
+        if (i < 3 && ['NETWORK', 'BUSY', 'INTERNAL'].includes(e.code)) { await new Promise((r) => setTimeout(r, 800 * i)); continue; }
+        clear(root).appendChild(errorBox(e, run)); return;
+      }
+    }
   };
   run(); return run;
 }
@@ -603,7 +609,7 @@ function onboarding() {
   const mobile = h('input', { class: 'input', id: 'ob-mobile', inputmode: 'tel', autocomplete: 'tel', maxlength: 16, placeholder: '10-digit mobile number', required: !!me.settings.requireMobile });
   const consent = h('input', { type: 'checkbox', id: 'ob-consent', style: { width: '20px', height: '20px' } });
   const name = h('input', { class: 'input', id: 'ob-name', required: true, value: me.displayName && !/@/.test(me.displayName) ? me.displayName : '', autocomplete: 'name' });
-  const dept = h('input', { class: 'input', id: 'ob-dept', value: 'CSE' }), section = h('input', { class: 'input', id: 'ob-sec', maxlength: 10, placeholder: 'A' });
+  const dept = h('input', { class: 'input', id: 'ob-dept', value: 'CSE' }), section = h('select', { class: 'input', id: 'ob-sec' }, h('option', { value: '' }, '-'), ['1', '2', '3', '4', '5', '6'].map((b) => h('option', { value: b }, b)));
   const year = h('select', { class: 'input', id: 'ob-year' }, [1, 2, 3, 4].map((y) => h('option', { value: y, selected: y === 2 }, 'Year ' + y)));
   const prev = h('img', { alt: 'Your photo preview', style: { width: '96px', height: '96px', objectFit: 'cover', borderRadius: '12px', border: '1px solid var(--line)' }, hidden: true });
   const file = h('input', { type: 'file', accept: 'image/*', capture: 'user', id: 'ob-photo', class: 'input', onchange: async (e) => { try { photo = await LF.util.photoFromFile(e.target.files[0]); prev.src = photo; prev.hidden = false; } catch (x) { fail(x); } } });
@@ -622,7 +628,7 @@ function onboarding() {
     h('div', { class: 'field' }, h('label', { for: 'ob-roll' }, 'Roll number *'), roll, h('div', { class: 'hint' }, me.derivedRollNo ? 'Taken from your university email and locked, so nobody can claim someone else\'s roll number.' : 'Exactly as printed on your ID card.')),
     h('div', { class: 'field' }, h('label', { for: 'ob-name' }, 'Full name *'), name),
     h('div', { class: 'field' }, h('label', { for: 'ob-mobile' }, 'Mobile number' + (me.settings.requireMobile ? ' *' : '')), mobile),
-    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' } }, h('div', { class: 'field' }, h('label', { for: 'ob-dept' }, 'Department'), dept), h('div', { class: 'field' }, h('label', { for: 'ob-sec' }, 'Section'), section), h('div', { class: 'field' }, h('label', { for: 'ob-year' }, 'Year'), year)),
+    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' } }, h('div', { class: 'field' }, h('label', { for: 'ob-dept' }, 'Department'), dept), h('div', { class: 'field' }, h('label', { for: 'ob-sec' }, 'Batch'), section), h('div', { class: 'field' }, h('label', { for: 'ob-year' }, 'Year'), year)),
     h('div', { class: 'field' }, h('label', { for: 'ob-photo' }, 'Photo (optional, used only for lab spot checks)'), file, prev),
     LF.privacyNotice(),
     h('label', { for: 'ob-consent', style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 600 } }, consent, 'I have read the privacy notice'),
@@ -696,13 +702,23 @@ LF.ui.scanner = (opts) => {
   input.addEventListener('paste', () => setTimeout(() => { const v = input.value; if (v.length > 30 && (v.indexOf('~') > 0 || v.indexOf('?') > 0 || /^k1\./.test(v))) { input.value = ''; submit(v); } }, 0));
   const camBtn = button('Use camera', { icon: 'camera', onClick: async () => { if (camStream) return stopCam(); await startCam(); } });
   async function startCam() {
-    if (!('BarcodeDetector' in window)) { toast('This browser cannot read QR codes from the camera. Use a scanner, or the phone camera app to open the code\'s link.', 'bad'); return; }
+    if (!('BarcodeDetector' in window) && !window.jsQR) { toast('This browser cannot read QR codes from the camera. Use a scanner, or the phone camera app to open the code\'s link.', 'bad'); return; }
     if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { toast('Camera access is not available here.', 'bad'); return; }
     try {
-      const det = new window.BarcodeDetector({ formats: ['qr_code'] });
+      // The native detector where it exists (Android, macOS, ChromeOS); jsQR on a canvas frame everywhere else (Windows laptops).
+      const det = 'BarcodeDetector' in window ? new window.BarcodeDetector({ formats: ['qr_code'] }) : null;
+      const canvas = det ? null : document.createElement('canvas'), ctx = canvas && canvas.getContext('2d', { willReadFrequently: true });
+      const read = async () => {
+        if (det) { const r = await det.detect(video); return r.length ? r[0].rawValue : ''; }
+        const w = video.videoWidth, hgt = video.videoHeight; if (!w || !hgt) return '';
+        const scale = Math.min(1, 640 / w); canvas.width = Math.round(w * scale); canvas.height = Math.round(hgt * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const r = window.jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, { inversionAttempts: 'dontInvert' });
+        return r ? r.data : '';
+      };
       camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
       video.srcObject = camStream; video.hidden = false; await video.play(); camBtn.lastChild.textContent = 'Stop camera';
-      camTimer = setInterval(async () => { try { const r = await det.detect(video); if (r.length) submit(r[0].rawValue); } catch (e) { /* frame not ready */ } }, 300);
+      camTimer = setInterval(async () => { try { const code = await read(); if (code) submit(code); } catch (e) { /* frame not ready */ } }, 300);
     } catch (e) { stopCam(); toast(e && e.name === 'NotAllowedError' ? 'Camera permission was denied.' : 'Could not start the camera.', 'bad'); }
   }
   function stopCam() { clearInterval(camTimer); if (camStream) camStream.getTracks().forEach((t) => t.stop()); camStream = null; video.hidden = true; camBtn.lastChild.textContent = 'Use camera'; }
