@@ -33,7 +33,61 @@ Do these in order. Steps 1 and 8 have to be done in the room.
 6. **One project.** As a student (`URK24CS1021`), go to My projects and create one with `amohamed` as supervisor. Approve it as faculty, so check-in has a project to pick.
 7. **Backup.** Admin > Audit & system > System health > **Back up now**, then open the Drive folder. Check the next morning that the nightly copy is there.
 8. **Rehearse twice on a real phone.** Do one check-in at the door, which must pass. Then do one from another block or the road outside, which must be refused (radius 40 m plus up to 30 m of forgiven GPS error, so go more than about 80 m away). Without this rehearsal the demo is the first live check-in ever.
-9. **On the day.** Charge the phones. Before the presentation starts, sign in on every phone once and allow camera and location. Have a phone hotspot ready for "from home". Open the local Test Lab (`npm run dev`, demo preset, **Rebuild world**) in a second window.
+9. **Phones for device QR (reverse scanning).** On each demo student's phone: Device > **Run check** (all OK) > **Register this phone**. A first phone is active straight away. Add a photo on the same page, because the kiosk shows it after a scan. Keep one spare phone unregistered for the "new phone needs approval" step.
+10. **On the day.** Charge the phones. Before the presentation starts, sign in on every phone once and allow camera and location. Have a phone hotspot ready for "from home". Open the local Test Lab (`npm run dev`, demo preset, **Rebuild world**) in a second window.
+
+## Showing both check-in modes
+
+The CoE lab accepts both modes (AB), so the door screen shows the rotating QR and, beside it, a scanner. Both need an open session: the open lab (prep step 2) or the class slot (prep step 3).
+
+**Mode A: the student scans the lab (the brief's flow).**
+1. Phone camera at the door screen, then tap the link (or in the app, Today > **Scan the lab screen**).
+2. LABFLOW opens with a 2-minute pass. Pick the session, a project and a system, and allow location.
+3. The phone shows "Checked in". The door screen's "Latest check-ins" list updates and the head count goes up.
+4. Scan again later and choose **Check out**.
+
+*Say:* "The screen proves you were at the door in the last few seconds; the GPS proves you are still in the room. Both go through 15 checks on the server, and any one of them can refuse."
+
+**Mode B: the lab scans the student (reverse scanning).**
+1. Student: Today > open-lab card > **Show my QR**. The QR is signed by a key that never leaves the phone and redraws every 3 seconds.
+2. Scan it in any of these three ways:
+   - **Door screen.** Press **Use camera** on the kiosk scanner panel and hold the phone up to the laptop webcam. A USB barcode scanner also works.
+   - **Coordinator phone.** **Scan visitors** > **Open scanner**.
+   - **Faculty phone.** During their own class: Today > **Scan students**. A phone's normal camera app also works, because the QR is a link.
+3. The scanner flashes green with the name, roll number and photo. Faculty and coordinator scans count as high assurance.
+
+*Say:* "No GPS here. Presence is proven because someone in the room scanned a phone that only that student holds."
+
+**Attacks to run live (each one is refused, and the message names the reason):**
+
+| Try | What happens | Shows |
+|---|---|---|
+| Screenshot a student's QR, wait 20 s, scan the screenshot | Refused: the code is too old. Signed timestamps go stale after 15 s | Screenshots are useless |
+| Scan a student's live QR (accepted), then scan a screenshot taken a moment earlier | Refused: this code was already used | Replay protection |
+| A student opens the in-app scanner and scans a friend | Refused: only the teacher, lab staff, event lead or class rep can scan | Server-side permissions |
+| Register the spare phone as a second device | Goes to "waiting for approval". Coordinator > Desk approves it and the old phone stops working | Identity can't be moved between phones at will |
+| Mode A from more than 80 m away | Refused with the distance band | Geofence (needs prep step 1) |
+
+*Answer before they ask:* a friend streaming live video of the phone can still beat Mode B. Setting `scanLivenessReads` to 2 makes the scanner read twice with a new timestamp, so a photo never passes. Random rescans and photo spot checks catch the rest.
+
+## Everything else, if there is time
+
+Each of these takes about a minute. All of them run on the live site.
+
+| Feature | Where | One line to say |
+|---|---|---|
+| Rescan | Faculty > Live roster > **Request rescan now** (or a class rep: **Call a rescan**) | Everyone inside must confirm again within a short window, which catches people who checked in and left |
+| Spot check | Faculty > Live roster > **Random spot check** | Picks random students and shows their photo to compare against the face in the room |
+| Flags | Faculty or Coordinator > Flags | Suspicious patterns (never scanning out, two students on one phone, impossible travel) are flagged for review; they never change attendance on their own |
+| Corrections | Faculty > Live roster, on a student | A manual fix is a new row with a reason; the original stays, and old corrections need admin approval |
+| Class rep | Faculty > Students > **Assign a class representative** | A student who can scan classmates during their own class |
+| Events and guests | Student or faculty > Events I run > **Add a guest** | Extra sessions with an event lead and outside guests |
+| Research visit | Student > Research | Ask for lab time outside class; the supervisor approves |
+| Loans and kits | Coordinator > Issue / Return, Inventory > **Add kit** | Issue a kit as one item; the return records what came back and in what condition |
+| Reports | Reports > any type > PDF or CSV | Every report exports; CSV is safe against spreadsheet formula injection |
+| Audit chain | Admin > Audit & system > Audit trail > **Verify chain integrity** | Re-checks every hash link and shows where a break is |
+| Themes | Admin > Settings, site theme | Ten looks for the whole site, chosen by the admin |
+| Installable app | Phone browser menu > Add to Home screen | It opens like an app, with the Karunya icon |
 
 ## Run order (about 12 minutes)
 
@@ -41,7 +95,7 @@ For each step: **Do** what is on screen; **Say** the line for the audience; **No
 
 **1. Sign-in (R13, R16).** *Do:* open the site and sign in with Google. *Say:* "No passwords. Google proves who you are and the server decides your role; the browser is never trusted with an email or a role." *Note:* sign in on every device before the presentation starts. A first login asks for a phone number.
 
-**2. Kiosk QR + GPS check-in (R3).** *Do:* the door screen shows the QR. A student scans it with the phone camera, the page opens, the student picks the open lab, a project and a system, and is marked in. *Say:* "The code changes every 7 seconds and is signed by the server. The phone's location is checked against the lab, and the coordinates are thrown away right after the check." *Note:* if the GPS fix is slow, wait for "accurate to about N m". The student has 2 minutes after scanning.
+**2. Kiosk QR + GPS check-in (R3).** For the full version with reverse scanning and live attacks, use "Showing both check-in modes" above. *Do:* the door screen shows the QR. A student scans it with the phone camera, the page opens, the student picks the open lab, a project and a system, and is marked in. *Say:* "The code changes every 7 seconds and is signed by the server. The phone's location is checked against the lab, and the coordinates are thrown away right after the check." *Note:* if the GPS fix is slow, wait for "accurate to about N m". The student has 2 minutes after scanning.
 
 **3. Refusal from outside (R3).** *Do:* have a second student, who has already walked out of range, try the same thing. Show the message "Your phone places you ... from the lab". *Note:* this works only after prep step 1. If GPS is not set, skip this step and explain it instead.
 
