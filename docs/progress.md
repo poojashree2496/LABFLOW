@@ -13,10 +13,11 @@ The record of finished work, newest first, and the current state of the project.
 
 ## Deployment results
 
-None yet. Record each check from tasks.md section 1 here with date and outcome.
+Record each check from tasks.md section 1 here with date and outcome.
 
 | Date | Check | Result |
 |---|---|---|
+| 2026-10-21 | v2 on the live deployment: owner ran `setupThisDeployment` and `setupEncryptMobiles`; Apps Script deployment version 4 and the Vercel build published. | /exec answers; the hosted Overview loads with the HOD/coordinator tiles; `system.backups` (Drive folder created), `system.archive`, `labs.live` and `projects.list` return ok as super admin. The live database has no labs yet, so nothing beyond these reads was exercised. |
 
 ## What is built
 
