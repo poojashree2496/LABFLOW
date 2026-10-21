@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence checks</title>
+<style>
+  :root { --ink: #14213d; --muted: #5b6475; --line: #dde2ea; --bg: #f5f7fb; --card: #fff; --good: #1f8a4c; --bad: #c0392b; --warn: #c27c0e; --blue: #2457c5; --lab: #e8f1ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  button, select { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .clock { margin-left: auto; font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .timeline { position: relative; height: 64px; margin-bottom: 14px; }
+  .track { position: absolute; left: 0; right: 0; top: 26px; height: 12px; background: #e9edf3; border-radius: 6px; }
+  .tick { position: absolute; top: 42px; font-size: 12px; color: var(--muted); transform: translateX(-50%); }
+  .win { position: absolute; top: 18px; height: 28px; min-width: 8px; border-radius: 5px; transform: translateX(-50%); }
+  .win.random { background: var(--warn); } .win.manual { background: var(--blue); }
+  .winlbl { position: absolute; top: 0; font-size: 12px; font-weight: 600; white-space: nowrap; transform: translateX(-50%); }
+  .cursor { position: absolute; top: 14px; width: 3px; height: 36px; background: var(--ink); border-radius: 2px; transition: left .25s linear; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .clock { font-size: 26px; } }
+  .map { position: relative; height: 430px; overflow: hidden; }
+  .zone { position: absolute; border-radius: 12px; display: flex; align-items: flex-start; justify-content: center; padding-top: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .lab { left: 4%; top: 6%; width: 50%; height: 74%; border-radius: 50%; background: var(--lab); border: 2px dashed var(--blue); color: var(--blue); padding-top: 14px; }
+  .door { position: absolute; left: 22%; top: 76%; width: 14%; height: 26px; background: var(--ink); color: #fff; border-radius: 6px; font-size: 12px; display: grid; place-items: center; }
+  .canteen { right: 3%; top: 6%; width: 36%; height: 26%; background: #fff4e5; border: 1px solid #f1d3a4; }
+  .hostel { right: 3%; top: 38%; width: 36%; height: 26%; background: #fdecec; border: 1px solid #f2c1c1; }
+  .away { right: 3%; top: 70%; width: 36%; height: 26%; background: #eef0f4; border: 1px solid var(--line); }
+  .zone small { display: block; font-weight: 400; }
+  .note { position: absolute; left: 6%; bottom: 6px; font-size: 12px; color: var(--muted); }
+  .dot { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 17px; box-shadow: 0 2px 6px rgba(0,0,0,.2); transition: left 1s ease, top 1s ease, box-shadow .3s; z-index: 2; }
+  .dot span { position: absolute; top: 47px; font-size: 12px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .dot.ping { box-shadow: 0 0 0 8px rgba(36,87,197,.25); }
+  .dot.refused { box-shadow: 0 0 0 8px rgba(192,57,43,.3); }
+  .people { display: grid; gap: 8px; }
+  .person { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  .av { width: 36px; height: 36px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
+  .who strong { display: block; } .who small { color: var(--muted); }
+  .meta { text-align: right; font-size: 13px; color: var(--muted); }
+  .meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eef0f4; color: var(--muted); }
+  .badge.present { background: #e3f4ea; color: var(--good); } .badge.missed_rescan, .badge.unverified_exit { background: #fbe5e2; color: var(--bad); }
+  .story { margin-top: 14px; display: grid; gap: 8px; }
+  .story p { margin: 0; font-size: 19px; line-height: 1.45; }
+  .verdict { font-size: 14px; padding: 6px 10px; border-radius: 8px; justify-self: start; }
+  .verdict.ok { background: #e3f4ea; color: var(--good); } .verdict.no { background: #fbe5e2; color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .final[hidden] { display: none; }
+  .key { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Is the student still in the lab?</h1>
+  <p class="sub">One class, 10:00 to 12:00, run through LABFLOW's real attendance engine. Each accept, refusal and credited minute comes from the server code. Press Restart to run it again with a new, unpredictable rescan time.</p>
+  <div class="bar">
+    <button class="primary" id="play">Play</button>
+    <button id="step">Next step</button>
+    <button id="restart">Restart</button>
+    <select id="speed" aria-label="Speed"><option value="1.6">Slow</option><option value="1" selected>Normal</option><option value="0.5">Fast</option></select>
+    <div class="clock" id="clock">--:--</div>
+  </div>
+  <div class="card timeline" id="timeline"><div class="track"></div><div class="cursor" id="cursor"></div></div>
+  <div class="grid">
+    <div class="card map" id="map">
+      <div class="zone lab">Lab (geofence 20 m)</div>
+      <div class="door">Door screen</div>
+      <div class="zone canteen"><div>Canteen<small>300 m away</small></div></div>
+      <div class="zone hostel"><div>Hostel<small>1.2 km away</small></div></div>
+      <div class="zone away"><div>Not here / gone</div></div>
+      <div class="note">Not to scale</div>
+    </div>
+    <div class="people" id="people"></div>
+  </div>
+  <div class="card story"><p id="text">Loading the class...</p><div class="verdict" id="verdict" hidden></div></div>
+  <div class="card final" id="final" hidden style="margin-top:14px">
+    <strong>What the teacher's report says at 12:00</strong>
+    <table><thead><tr><th>Student</th><th>What happened</th><th>Status</th><th>Credited time</th></tr></thead><tbody id="rows"></tbody></table>
+  </div>
+  <div class="key"><span><i style="background:var(--warn)"></i>Random rescan (time chosen by the server, unknown to all)</span><span><i style="background:var(--blue)"></i>Teacher's rescan</span><span>Confirming = scanning the door screen again with GPS inside the lab, within 90 s</span></div>
+</div>
+<script>
+(function () {
+  const COLORS = { asha: '#1f8a4c', ravi: '#c27c0e', meena: '#c0392b', karthik: '#6c4ab6', divya: '#2457c5' };
+  const STATUS = { present: 'Present', absent: 'Not in', missed_rescan: 'Missed rescan', unverified_exit: 'Exit not scanned' };
+  // Spots in % of the map box. The lab circle spans left 4-54%, top 6-80%.
+  const DESKS = { asha: [18, 30], ravi: [30, 24], meena: [42, 32], karthik: [20, 52], divya: [38, 54] };
+  const AWAY = { asha: [66, 84], ravi: [72.5, 84], meena: [79, 84], karthik: [85.5, 84], divya: [92, 84] };
+  const spot = (k, place, i) => place === 'desk' ? DESKS[k] : place === 'door' ? [24 + i * 3, 70] : place === 'canteen' ? [79, 22] : place === 'hostel' ? [79, 54] : AWAY[k];
+  const $ = (id) => document.getElementById(id);
+  const hhmm = (t) => new Date(t + 330 * 60000).toISOString().slice(11, 16);
+  let data = null, idx = -1, timer = null, playing = false, dots = {}, cards = {};
+
+  function el(tag, props, ...kids) { const e = document.createElement(tag); Object.assign(e, props || {}); kids.forEach((k) => e.append(k)); return e; }
+  const pct = (t) => ((t - data.start) / (data.end - data.start)) * 100;
+
+  function build() {
+    const tl = $('timeline'); tl.querySelectorAll('.tick, .win, .winlbl').forEach((n) => n.remove());
+    for (let m = 0; m <= 120; m += 20) tl.append(el('div', { className: 'tick', textContent: hhmm(data.start + m * 60000) }, ));
+    tl.querySelectorAll('.tick').forEach((n, i) => { n.style.left = (i * 20 / 120 * 100) + '%'; });
+    const map = $('map'), people = $('people');
+    map.querySelectorAll('.dot').forEach((n) => n.remove()); people.textContent = '';
+    data.cast.forEach((c) => {
+      const d = el('div', { className: 'dot', textContent: c.name[0] }, el('span', { textContent: c.name }));
+      d.style.background = COLORS[c.key]; map.append(d); dots[c.key] = d;
+      const badge = el('span', { className: 'badge' }), last = el('b'), mins = el('b');
+      const card = el('div', { className: 'person' }, el('div', { className: 'av', textContent: c.name[0] }), el('div', { className: 'who' }, el('strong', { textContent: c.name + ' · ' + c.rollNo }), el('small', { textContent: c.role })),
+        el('div', { className: 'meta' }, badge, el('div', null, 'Last proven here ', last), el('div', null, 'Credited ', mins)));
+      card.firstChild.style.background = COLORS[c.key]; people.append(card); cards[c.key] = { badge, last, mins };
+    });
+    $('final').hidden = true; $('verdict').hidden = true;
+  }
+
+  function show(i) {
+    const f = data.frames[i]; idx = i;
+    $('clock').textContent = hhmm(f.at); $('cursor').style.left = pct(f.at) + '%'; $('text').textContent = f.text;
+    const tl = $('timeline');
+    data.windows.forEach((w, n) => { if (f.at >= w.from && !tl.querySelector('[data-w="' + n + '"]')) {
+      const b = el('div', { className: 'win ' + w.kind }); b.dataset.w = n; b.style.left = pct((w.from + w.to) / 2) + '%'; b.style.width = Math.max(0.8, pct(w.to) - pct(w.from)) + '%';
+      const l = el('div', { className: 'winlbl', textContent: (w.kind === 'random' ? 'Random rescan ' : "Teacher's rescan ") + hhmm(w.from) }); l.dataset.w = n; l.style.left = pct(w.from) + '%';
+      tl.append(b, l);
+    } });
+    const atDoor = f.students.filter((s) => s.place === 'door').map((s) => s.key);
+    f.students.forEach((s) => {
+      const [x, y] = spot(s.key, s.place, atDoor.indexOf(s.key)); const d = dots[s.key];
+      d.style.left = x + '%'; d.style.top = y + '%';
+      d.classList.toggle('ping', !!(f.result && f.result.ok && data.cast.find((c) => c.key === s.key).name === f.result.who));
+      d.classList.toggle('refused', !!(f.result && !f.result.ok && data.cast.find((c) => c.key === s.key).name === f.result.who));
+      const c = cards[s.key]; c.badge.className = 'badge ' + s.status; c.badge.textContent = STATUS[s.status] || s.status;
+      c.last.textContent = s.lastProof ? hhmm(s.lastProof) : '-'; c.mins.textContent = Math.round(s.minutes) + ' min';
+    });
+    const v = $('verdict');
+    if (f.result) { v.hidden = false; v.className = 'verdict ' + (f.result.ok ? 'ok' : 'no'); v.textContent = 'Server: ' + (f.result.ok ? 'accepted' : 'refused, ' + f.result.code + '. "' + f.result.message + '"'); }
+    else v.hidden = true;
+    if (i === data.frames.length - 1) finish();
+  }
+
+  function finish() {
+    stop(); $('step').disabled = true;
+    const rows = $('rows'); rows.textContent = '';
+    data.cast.forEach((c) => rows.append(el('tr', null, el('td', { textContent: c.name }), el('td', { textContent: c.role }),
+      el('td', null, el('span', { className: 'badge ' + c.status, textContent: STATUS[c.status] || c.status })), el('td', { textContent: Math.round(c.minutes) + ' min' }))));
+    $('final').hidden = false;
+  }
+
+  const hold = (f) => Math.max(2200, f.text.length * 42) * Number($('speed').value);
+  function tick() { if (idx + 1 >= data.frames.length) return finish(); show(idx + 1); timer = setTimeout(tick, hold(data.frames[idx])); }
+  function stop() { playing = false; clearTimeout(timer); $('play').textContent = 'Play'; }
+  $('play').onclick = () => { if (playing) return stop(); if (!data || idx >= data.frames.length - 1) return; playing = true; $('play').textContent = 'Pause'; tick(); };
+  $('step').onclick = () => { stop(); if (data && idx + 1 < data.frames.length) show(idx + 1); };
+  $('restart').onclick = load;
+
+  async function load() {
+    stop(); $('text').textContent = 'Running the class on the server...'; $('step').disabled = false;
+    const r = await fetch('/dev/api/presence', { method: 'POST' }); data = await r.json();
+    if (data.error) { $('text').textContent = 'Could not run: ' + data.error; return; }
+    build(); show(0);
+  }
+  load();
+})();
+</script>
+</body>
+</html>

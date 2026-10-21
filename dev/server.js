@@ -5,6 +5,7 @@
  *   npm run dev            http://localhost:8787/lab   (Test Lab)
  *                          http://localhost:8787/   (local demo account picker)
  *                          http://localhost:8787/app   (the hosted-app build: sign-in screen, fetch transport, doPost)
+ *                          http://localhost:8787/presence   (one class with rescans, animated, on the real engine)
  *
  * The app pages are the real src/Index.html + Scripts*.html with a mock google.script.run that calls the real server
  * code (src/*.gs) running on in-memory Apps Script fakes. `?as=` picks the identity here only; production has no such
@@ -17,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { createLab, describePipelines, runJob, PRESETS } = require('./world');
 const scenarios = require('./scenarios');
+const presence = require('./presence');
 const { render, page: hostedPage } = require('../scripts/build-web');
 
 const LAB_DIR = path.join(__dirname, 'lab');
@@ -87,7 +89,7 @@ function devScript(as, hosted) {
 function send(res, code, body, type) { res.writeHead(code, { 'content-type': type || 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); }
 function readRaw(req) { return new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; if (b.length > 2e6) req.destroy(); }); req.on('end', () => resolve(b)); }); }
 function readBody(req) { return new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; if (b.length > 2e6) req.destroy(); }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch (e) { resolve({}); } }); }); }
-const STATIC = { '/lab': 'index.html', '/lab/': 'index.html', '/lab/lab.js': 'lab.js', '/lab/lab.css': 'lab.css' };
+const STATIC = { '/presence': 'presence.html', '/lab': 'index.html', '/lab/': 'index.html', '/lab/lab.js': 'lab.js', '/lab/lab.css': 'lab.css' };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
 function start(port, opts) {
@@ -199,6 +201,7 @@ function start(port, opts) {
         for (const id of ids) results.push(await scenarios.run(id, { faults: lab.faults, latencyMs: body.latency ? lab.latencyMs : 0 }));
         return send(res, 200, { results });
       }
+      case 'presence': return send(res, 200, presence.run());
       case 'kioskcode': {
         const k = String(url.searchParams.get('kiosk') || 'kiosk1@karunya.edu'); const r = lab.w.call(k, 'kiosk.display', {});
         return send(res, 200, r.ok ? { code: r.data.code, url: r.data.url, mode: r.data.mode } : { error: r.error });
@@ -221,6 +224,7 @@ if (require.main === module) {
   start(port, { preset }).then(({ lab }) => {
     console.log('LABFLOW Test Lab   http://localhost:' + port + '/lab');
     console.log('The app            http://localhost:' + port + '/   (local demo account picker; ?as=email is a testing shortcut)');
+    console.log('Presence checks    http://localhost:' + port + '/presence');
     console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 10:06 IST.');
   });
 }
