@@ -1,6 +1,6 @@
 # LABFLOW test plan and results
 
-Latest local run (2026-10-21): `npm run check` passed 313 backend tests and `npm run sim` passed 27/27 scenarios. The browser counts were last run on 2026-10-19: Brave/Chromium passed 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
+Latest local run (2026-10-21): `npm run check` passed 313 backend tests and `npm run sim` passed 27/27 scenarios. The browser suites were rerun on 2026-10-21 in Chrome: 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
 

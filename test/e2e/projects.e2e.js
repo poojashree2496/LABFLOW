@@ -11,7 +11,7 @@ const { start } = require('../../dev/server');
   let browser, student, passed = 0;
   const errors = [];
   const check = (name, condition) => { assert.ok(condition, name); passed++; console.log('PASS ' + name); };
-  const projectRows = () => w.eval("Db.readAll('Projects')");
+  const projectRows = () => w.eval("Db.readAll('Projects')").filter((p) => !p.title.endsWith(' (demo)')); // skip the Unnati seed's own projects
   async function open(page, email, role) {
     await page.goto(base + '/?as=' + encodeURIComponent(email));
     await page.waitForFunction(() => window.LF && LF.me && LF.role);

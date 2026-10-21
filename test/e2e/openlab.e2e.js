@@ -54,7 +54,7 @@ const { start } = require('../../dev/server');
 
     setTime('15:00');
     await student.goto(base + '/?as=' + email);
-    const visit = student.getByRole('article', { name: 'Open lab', exact: true });
+    const visit = student.getByRole('article', { name: 'Open lab', exact: true }).filter({ hasText: 'IoT Lab' });
     await visit.getByText('Walk in during opening hours; no advance booking needed.', { exact: true }).waitFor();
     check('a student without a roster or booking sees the daily open-lab session', w.eval(`Db.whereEq('Rosters',{studentId:${JSON.stringify(profile.studentId)}}).length`) === 0 &&
       w.ok(email, 'booking.mine').reservations.length === 0);
@@ -89,7 +89,7 @@ const { start } = require('../../dev/server');
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await student.reload();
     await student.waitForFunction(() => { const main = document.querySelector('#main'); return main && (main.querySelector('article') || main.textContent.includes('No lab sessions today')); });
-    check('open lab disappears from Today outside opening hours', await student.getByRole('article', { name: 'Open lab', exact: true }).count() === 0);
+    check('open lab disappears from Today outside opening hours', await student.getByRole('article', { name: 'Open lab', exact: true }).filter({ hasText: 'IoT Lab' }).count() === 0);
 
     await labRow().getByRole('button', { name: 'Edit', exact: true }).click();
     editor = admin.getByRole('dialog');

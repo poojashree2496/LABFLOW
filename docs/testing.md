@@ -13,7 +13,7 @@ Everything here runs on a laptop with no Google account. The tests load the **re
 | `npm run check` | `lint` then `test` (run this before every commit) |
 | `npm run sim` | The scripted scenarios in `dev/scenarios.js` (27 of them) |
 | `npm run dev` | The local server at `http://localhost:8787/` with the Test Lab at `/lab` |
-| `npm run e2e`, `e2e:issue`, `e2e:projects`, `e2e:openlab`, `e2e:work`, `e2e:hod`, `e2e:reports`, `e2e:live`, `e2e:autoclose`, `e2e:board` | Playwright browser suites (need Chrome or Chromium; set `CHROMIUM_PATH` to use another browser). Screenshots go to `.build/shots` |
+| `npm run e2e`, `e2e:issue`, `e2e:projects`, `e2e:openlab`, `e2e:work`, `e2e:hod`, `e2e:reports`, `e2e:live`, `e2e:autoclose` | Playwright browser suites (need Chrome or Chromium; set `CHROMIUM_PATH` to use another browser). Screenshots go to `.build/shots` |
 
 ## How the backend tests work
 

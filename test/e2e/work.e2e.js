@@ -11,8 +11,8 @@ const { start } = require('../../dev/server');
   const errors = [];
   const check = (name, condition) => { assert.ok(condition, name); passed++; console.log('PASS ' + name); };
   const events = () => w.eval("Db.readAll('AttendanceEvents')");
-  const card = (page) => page.getByRole('article', { name: 'Open lab', exact: true });
-  const state = (person) => w.ok(person.email, 'sessions.mine').sessions.find((s) => s.type === 'openlab').mine;
+  const card = (page) => page.getByRole('article', { name: 'Open lab', exact: true }).filter({ hasText: 'IoT Lab' });
+  const state = (person) => w.ok(person.email, 'sessions.mine').sessions.find((s) => s.type === 'openlab' && s.labId === w.lab.labId).mine;
   async function open(page, email) {
     await page.goto(base + '/?as=' + email);
     await page.waitForFunction(() => window.LF && LF.me && LF.role);

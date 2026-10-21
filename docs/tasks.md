@@ -38,7 +38,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 - [~] **S2 Demo** (@kukyos 22 Oct)
   - Script written: [demo.md](demo.md). Rehearse it once end to end on the dev server.
-  - Refresh the e2e screenshots in `docs/screens`.
+  - E2E screenshots refreshed 21 Oct. `03-faculty-today`, `05-kiosk-accepted` and `11-staff-issue` in `docs/screens` are no longer produced by any suite and nothing links them; delete or keep.
   - Swap the Unnati placeholders in the script for the real details when C5 lands.
 
 ### WS-C Extra-hours check-in and projects (@?)
