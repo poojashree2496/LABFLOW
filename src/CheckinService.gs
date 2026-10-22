@@ -127,6 +127,7 @@ var Checkin = {
     });
     var graceExit = null;
     for (var i = 0; i < here.length; i++) {
+      if (!Sessions.allows(here[i], lab, 'A')) continue;
       var st = here[i].status === 'scheduled' ? null : Attend.studentState(here[i], sid);
       if (!st || st.state !== 'in') continue;
       var inside = { sessionId: here[i].sessionId, title: here[i].title, since: st.lastIn || st.firstIn, rescan: st.rescan, closed: here[i].status === 'closed' };
@@ -226,6 +227,7 @@ var Checkin = {
     { id: 'session_open', locked: true, label: 'Session is open in this lab (or inside the exit grace)', run: function (c) {
       c.session = Db.get('Sessions', c.session.sessionId);
       if (!c.session || c.session.labId !== c.labId) fail('SESSION_NOT_FOUND', 'Session not found.');
+      if (!Sessions.allows(c.session, c.lab, 'A')) fail('MODE_DISABLED', 'This session uses device QR. Open LABFLOW and show your QR to the scanner.');
       c.now = U.now();
       Attend._sessionGate(c.session, c.purpose, c.now);
     } },
