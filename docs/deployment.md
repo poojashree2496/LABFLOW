@@ -58,6 +58,16 @@ Sign in as the bootstrap admin, then in the admin pages:
 3. **Users and roles**, courses, rosters and the timetable. CSV import is available for users and students (`URK24CS1021`-style roll numbers fill join year and department).
 4. **Settings**: allowed values are listed with limits in Admin > Settings; set `reportRecipients`, `hodEmail` and `academicYearStartMonth`, and choose a site theme ([themes.md](themes.md)).
 5. Students open the app on their phone, open "My device", run the compatibility check and register the device. A second or replacement device needs in-person approval by staff.
+6. **Phone app (tier 3)**: set each lab's GPS and radius (step 1), review Settings > Phone app (tier 3), and share the APK with students. Install and setup: [phone-app.md](phone-app.md).
+
+## Updating a live deployment
+
+```
+npx @google/clasp push --force                        # src/ to the script project
+# editor: setupInitialise()                            # adds new sheets and appended columns (tier 3: PresencePings, BioChecks)
+npx @google/clasp create-deployment -i <deployment id> # new version on the same /exec URL
+npx vercel deploy --prod --yes                         # the hosted site
+```
 
 ## 6. Backups and the archive
 

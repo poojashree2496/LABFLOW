@@ -61,6 +61,7 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 | 323 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
 | 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
+| Phone app (tier 3): 6 backend tests and 11 browser checks with the app simulated in Node (same keys, messages and `/exec` calls); the APK builds and its signature format passes a unit test | The APK on a real Android phone: background reports with the screen locked, fingerprint prompt, battery killers, the Apps Script redirect from the app |
 
 Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
 
@@ -104,12 +105,38 @@ This is the short version. The full steps, including the hosted app and the secr
    - `setupInstallTriggers()`: installs exactly five time-driven triggers (every 5 min session tick, hourly email digest, 01:00 nightly, 08:00 morning, 18:00 evening digest).
 3. Deploy > New deployment > Web app. Execute as: Me. Who has access: as `appsscript.json` says (`ANYONE_ANONYMOUS`; the server refuses calls it cannot tie to an allowed account).
 4. Sign in as the bootstrap admin. Add labs, courses, users, rosters and timetable (admin pages). CSV import is available for users and students.
-5. **Kiosks:** Admin > Labs > Kiosks. A kiosk is a dedicated Google account (for example `iot-lab-kiosk@karunya.edu`) mapped to one lab. Sign in with that account on the lab PC/tablet. Kiosk accounts can only call `kiosk.ping` and `kiosk.scan`.
-6. Students open the web app on their phone once, open "My device", run the compatibility check, and register the device. Registration of a second or replacement device requires in-person approval by lab staff.
+5. **Labs:** Admin > Labs & kiosks > Edit. Set the lab's GPS (stand in the room and press **Use this device's location**), the geofence radius (20 to 30 m) and the check-in mode (A, B or AB; the phone app needs A). See [Set up a lab's location](#set-up-a-labs-location).
+6. **Kiosks:** Admin > Labs > Kiosks. A kiosk is a dedicated Google account (for example `iot-lab-kiosk@karunya.edu`) mapped to one lab. Sign in with that account on the lab PC/tablet. Kiosk accounts can only call `kiosk.ping` and `kiosk.scan`.
+7. Students open the web app on their phone once, open "My device", run the compatibility check, and register the device. Registration of a second or replacement device requires in-person approval by lab staff. For phone-app sessions they also install the Android app; see [The phone app](#the-phone-app-tier-3).
+
+### Updating a live deployment
+
+After pulling new code (for example the phone app, which adds two sheets and four columns):
+
+```
+npx @google/clasp push --force                        # copies src/ to the Apps Script project
+# in the Apps Script editor: run setupInitialise()     # adds new sheets and appended columns; never touches existing data
+npx @google/clasp create-deployment -i <deployment id> # new version, same /exec URL
+npx vercel deploy --prod --yes                         # the hosted site (sign-in, link-code screen)
+```
+
+Then open the site once as admin and check Settings shows the "Phone app (tier 3)" group.
 
 Setup functions are not routed through `rpc`, and `ownerOnly_()` also rejects anyone but the script owner.
 
 ## How attendance works (short version)
+
+There are three tiers of proxy protection; the faculty pick one when they open a session (Today > Open > "How students check in"):
+
+| Tier | Check-in | After check-in |
+|---|---|---|
+| 1 | Scan the rotating code on the lab screen with the phone camera; the browser sends a GPS reading | While the LABFLOW page stays open, it reports the location at random times (5 to 15 minutes apart); the faculty can call a rescan |
+| 2 | The phone shows a QR signed by its registered key; the kiosk or a teacher's phone scans it | Rescans and photo spot checks called by the faculty |
+| 3 | The LABFLOW Android app scans the lab screen | The app reports the location every 2 minutes until the end, also with the screen locked, and asks for a fingerprint twice at random times |
+
+**Nobody is refused for a location problem.** A check-in from outside the lab, with a faked or impossible location, or with an old forwarded code is recorded and flagged; a flagged student is not counted as present until the faculty decide (dismiss the flag, or Live roster > Actions > Override the result). Students without the app (iPhones) check in through tier 1 or 2 in a tier-3 session and are flagged "no app".
+
+Tier 2 in more detail:
 
 1. The student's phone holds a non-extractable ECDSA P-256 key (WebCrypto, stored in IndexedDB). The public key is registered after a server challenge.
 2. To check in, the phone asks the server for a challenge bound to student, credential, session and lab, signs it, and shows a QR for about 60 seconds.
@@ -118,6 +145,66 @@ Setup functions are not routed through `rpc`, and `ownerOnly_()` also rejects an
 5. Physical controls complement the crypto: unannounced rescan windows called by the faculty, faculty spot checks against the photo on file, exit scans, "exit not scanned" flags, audited manual corrections (older than 24 h need admin approval), per-user rate limits.
 
 The residual risks (live QR relay, device compromise, collusion) are stated in [SECURITY.md](SECURITY.md). Do not describe this as "proof of presence".
+
+## The phone app (tier 3)
+
+The Android app in `android/` confirms a student stays in the lab for the whole session. Full guide: [docs/phone-app.md](docs/phone-app.md).
+
+**What it does.** One phone per student (a later phone needs a teacher's approval). The student checks in by scanning the lab screen; the scan counts only when the code is fresh, the phone is at the lab and the location is not faked. A foreground service with the notification "Attendance tracking is on" then reports the location every 2 minutes until the session ends, with the screen locked or in other apps, and queues reports while offline. Twice per session, at times the student cannot predict (never near the start or end, well apart), it asks for a fingerprint, to be answered within 2 minutes; a PIN is not accepted. The teacher can also send a fingerprint check to the whole class at any time.
+
+**Results** for a phone-app session: **Present** (checked in, at the lab for 75 % of the session, every fingerprint check passed, nothing suspicious), **Partial** (a fingerprint check missed, or at the lab for less than 75 %), **Absent** (never checked in, or at the lab for less than 40 %), **Flagged** (something looked faked; the teacher decides). The teacher can override any result; overrides are audited.
+
+**What the teacher sees.** Live roster: check-in time, last report and distance, at the lab now or away, share of the session at the lab, each fingerprint check and any flags, plus the buttons **Fingerprint check now** and Actions > **Override the result**. Phone switches are approved on Today > **Phone switch requests**.
+
+### Install the app on a phone
+
+Requirements: Android 11 or newer, Google Play services, a fingerprint set up on the phone, and a deployment that includes this code (see [Updating a live deployment](#updating-a-live-deployment)).
+
+1. **Get the APK.** Build it (below) or take `labflow-tier3.apk` from the team.
+2. **Install.** Send the APK to the phone (WhatsApp, Drive or USB) and open it. Allow "Install unknown apps" for that app once, then Install. If Play Protect warns about an unknown developer, choose *Install anyway*. With a cable: `adb install app-debug.apk`.
+3. **Link.** Open LABFLOW, tap **Sign in to link this phone**, sign in with the college Google account in the browser, then tap **Open the LABFLOW app** and confirm with the fingerprint. On a laptop the page shows a QR instead: tap **Scan a link code shown on a laptop** in the app.
+4. **Location.** The app explains why it needs location, then asks. Choose *While using the app* and *Precise*, and allow notifications.
+5. **Battery.** Tap *Allow* so Android does not stop the app. On Xiaomi, Redmi, POCO, Oppo, Realme, Vivo, OnePlus and Samsung phones also open *App settings > Battery*, choose *No restrictions*, and turn on *Autostart* if present.
+6. **In the lab:** **Check in: scan the lab screen**. Keep the phone with you. **Check out** at the end, or leave when the session closes (tracking stops by itself).
+
+To try it against the local dev server: in the app, *Server settings*, API `http://<laptop IP>:8787/exec`, website `http://<laptop IP>:8787/app` (phone and laptop on the same Wi-Fi, `npm run dev` running).
+
+### Build the APK
+
+Needs JDK 17 or newer and the Android SDK (platform 35, build-tools 35). Android Studio installs both; or the command-line tools from developer.android.com.
+
+```
+cd android
+echo sdk.dir=C:/path/to/Android/Sdk > local.properties   # where the SDK is
+gradlew assembleDebug        # APK: android/app/build/outputs/apk/debug/app-debug.apk
+gradlew testDebugUnitTest    # signature-format unit test
+```
+
+The app talks to the live API and site set in `android/app/build.gradle.kts` (`API_URL`, `WEB_URL`); both can also be changed in the app. It is distributed as an APK because the Play Store needs a paid developer account.
+
+### Set up a lab's location
+
+No code changes. As super admin:
+
+1. Stand inside the lab, ideally mid-room, with a phone that has a good location fix.
+2. **Labs & kiosks** > the lab > **Edit** > **Use this device's location** (or type the latitude and longitude from Google Maps). Set **Geofence radius (m)** to about half the room's longest side, 20 to 30 m. Check-in mode must include A (kiosk QR), because the app scans the lab screen. Save.
+3. Rehearse: one check-in at the door (passes) and one from outside the building (recorded and flagged on the Live roster).
+
+How loose the check is, and the other tier-3 numbers, are under **Settings > Phone app (tier 3)**:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `appRadiusSlackM` | 30 m | Added to the lab radius for the app; just outside the door still counts |
+| `appPingSeconds` | 120 | How often the app reports |
+| `bioChecksPerSession` | 2 | Random fingerprint checks per student (0 to 2) |
+| `bioResponseSeconds` | 120 | Time to answer a fingerprint check |
+| `presentCoveragePct`, `absentCoveragePct` | 75, 40 | Share of the session at the lab for Present, and below which it is Absent |
+| `frozenPings` | 6 | Identical readings in a row that count as a faked location |
+| `webPingMinSeconds`, `webPingMaxSeconds` | 300, 900 | Tier 1: gap between random location checks of an open page |
+
+Shared with tier 1: `gpsAccuracyAllowanceM` (GPS error forgiven) and `maxTravelSpeedKmh` (what counts as an impossible jump).
+
+**Limits.** Android only; iPhone students are flagged, not tracked. A rooted phone can fake what the app reports (detecting it needs Play Integrity, which needs a paid Play Console account). A fingerprint check reaches the phone with its next report, so up to 2 minutes late (no push service). Open-lab visits that need a project are done on the web page. The app has not yet been run on a real phone; see [TEST_PLAN.md](TEST_PLAN.md).
 
 ## Device and camera compatibility
 
@@ -138,6 +225,7 @@ npm run e2e:projects # project lifecycle and phone navigation (same browser setu
 npm run e2e:openlab # lab settings and walk-in QR/GPS attendance (same browser setup)
 npm run e2e:work   # project/system entry and mid-visit changes (same browser setup)
 npm run e2e:tier3  # phone-app linking, live roster, fingerprint check and override (the app simulated)
+cd android && gradlew assembleDebug   # the Android app (see "Build the APK")
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.
