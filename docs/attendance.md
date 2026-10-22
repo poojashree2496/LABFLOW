@@ -88,3 +88,7 @@ At check-in the student can pick a project and a workstation. In the open lab a 
 ## Archived sessions
 
 After the yearly archive moves a session's scan rows to the archive spreadsheet, the session is marked `archivedAt`. Its summaries stay live, so history and totals do not change. Corrections, reconcile and summary rebuilds refuse it with `ARCHIVED`. See [SECURITY.md](../SECURITY.md) and [requirements.md](requirements.md) (R14).
+
+## Session workflow regression coverage
+
+The [22 Oct audit](session-workflow-audit.md) covers session-mode selection, final-lock mode enforcement, supported kiosk actions, faculty-called rescans and verification credit in both modes. Opening a session from the faculty UI preserves its rescan policy; default-off sessions still support manual rescans.
