@@ -38,7 +38,7 @@ What and why: [requirements.md](requirements.md) (R1-R18, the decisions, and the
 
 - [~] **S2 Demo** (@kukyos 22 Oct)
   - Script written: [demo.md](demo.md) (Test Lab) and [presenting.md](presenting.md) (live site, IBM CoE / DBMS lab, with prep list and expected questions). Rehearse both once end to end.
-  - Live prep from presenting.md: door GPS and opening hours with walk-ins for the CoE lab, a timetable slot on the demo day, an HOD account, the kiosk signed in at the door, one approved project, a first backup, and two real phone check-ins (one inside, one refused outside).
+  - Live prep from presenting.md: door GPS and opening hours with walk-ins for the CoE lab, a timetable slot on the demo day, an HOD account, the kiosk signed in at the door, one approved project, a first backup, and two real phone check-ins (one inside, one outside that is recorded and flagged).
   - E2E screenshots refreshed 21 Oct. `03-faculty-today`, `05-kiosk-accepted` and `11-staff-issue` in `docs/screens` are no longer produced by any suite and nothing links them; delete or keep.
   - Swap the Unnati placeholders in the script for the real details when C5 lands.
 
@@ -87,7 +87,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 - [ ] v2: `setupEncryptMobiles` on the real sheet, then confirm no plain numbers remain (A2).
 - [ ] v2: GPS geofence at the Intel Unnati AI Lab door with the real coordinates (C5).
 - [ ] **Tier 3 phone app** (branch `tier3-app`, see [phone-app.md](phone-app.md)): merge, `clasp push`, run `setupInitialise` (adds PresencePings, BioChecks and four appended columns), new deployment version, Vercel deploy (the web link-code screen). Then on a real Android phone: install the APK, link, check in, lock the screen for 20 minutes and confirm reports keep arriving, answer a fingerprint check, try a mock-location app, try airplane mode and reconnect. Check the Apps Script redirect from `/exec` works from the app's HTTP client. Try one Xiaomi/Oppo/Vivo phone for battery killing.
-- [ ] Live: set the IBM CoE (DBMS) lab door GPS from a phone in the room, then one check-in inside (passes) and one more than 80 m away (refused). The 21 Oct class closed with 0 of 60 marked, so no live check-in has succeeded yet.
+- [ ] Live: set the IBM CoE (DBMS) lab door GPS from a phone in the room, then one check-in inside (passes) and one more than 80 m away (recorded and flagged, not counted as present). The 21 Oct class closed with 0 of 60 marked, so no live check-in has succeeded yet.
 
 ## 2. Build (after the demo)
 

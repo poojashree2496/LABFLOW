@@ -48,7 +48,7 @@ Schema changes are **additive**. `setupInitialise` creates missing sheets, adds 
 | `RescanWindows`, `SpotChecks` | Rescan windows and photo spot checks |
 | `Redemptions` | Used QR nonces; the source of truth for "used once" |
 | `Flags` | Review queue for suspicious activity |
-| `PresencePings` | Location reports: from the phone app every few minutes (tier 3) and the random checks of an open page (tier 1). Distance to the lab, accuracy and a reading hash; never coordinates |
+| `PresencePings` | Location reports: from the phone app every few minutes (tier 3) and the random checks of an open page (tier 1). Distance to the lab, accuracy and a keyed reading hash; never coordinates |
 | `BioChecks` | Fingerprint checks of the phone app: when each was delivered and answered, and the outcome. A row with student `*` is a check the faculty sent to the whole class |
 
 **Assets and bookings**

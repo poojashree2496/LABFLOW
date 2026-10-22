@@ -89,7 +89,7 @@ How loose the check is, without code (super admin > **Settings** > *Phone app (t
 
 ## Privacy
 
-Location is read only from check-in to the end of that session, with a notification showing the whole time. The server keeps the distance to the lab, the reported accuracy and a 12-character hash of each reading (to spot a location that never changes); never latitude or longitude.
+Location is read only from check-in to the end of that session, with a notification showing the whole time. The server keeps the distance to the lab, the reported accuracy and a 12-character keyed hash of each reading (to spot a location that never changes; keyed with a server secret, so the sheet cannot be searched back to a position); never latitude or longitude.
 
 ## Limits
 

@@ -39,7 +39,7 @@ Which tests cover which requirement. "R" numbers are the course teacher's brief 
 | 8 | Scan opens the web app with the token | `checkin`: happy path |
 | 9 | Token checked at open; two minutes to finish | `checkin`: happy path, code age and pass expiry |
 | 10 | Token used once per student | `checkin`: one code serves the class (FR-10); `attendance`: 60-student rush |
-| 11, 12 | Haversine geofence with accuracy allowance | `checkin`: geofence (FR-11/12) |
+| 11, 12 | Haversine geofence with accuracy allowance; outside is recorded and flagged, not refused (22 Oct) | `checkin`: geofence (FR-11/12) |
 | 13 | One entry reason | `checkin`: entry reason must match the session |
 | 14 | Course pre-filled from the timetable | `openlab`: class prefill; `jobs`: sessions follow the timetable |
 | 15 | Check-out with a minimum gap | `checkin`: minimum gap (FR-15) |
@@ -57,7 +57,7 @@ Which tests cover which requirement. "R" numbers are the course teacher's brief 
 | 27 | Reused token rejected | `attendance`: replay, replay after cache wipe, double submit race |
 | 28 | Writes under a lock | `foundation`: locks; `attendance`: 60-student rush; `inventory`: lock contention fails closed |
 | 29 | Impossible travel | `checkin`: impossible travel (FR-29) |
-| 30 | Mock-location heuristics | `checkin`: mock-location (FR-30) |
+| 30 | Mock-location heuristics; tier 3 adds the phone's mock flag, jumps and frozen readings | `checkin`: mock-location (FR-30); `tier3`: reports |
 | 31 | No raw coordinates stored | `checkin`: geofence test asserts none stored |
 | 32 | Hash-chained audit log | `foundation`: audit (4 cases); `jobs`: tamper, truncation, head rewrite; `attendance`: chain stays valid |
 | 33 | Kiosk account can only display QR codes | `access`: kiosk accounts only reach kiosk routes; `attendance`: revoked kiosk |

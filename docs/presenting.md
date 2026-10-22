@@ -9,7 +9,7 @@ Last updated: 2026-10-21
 | Item | State |
 |---|---|
 | Lab | `IBMCOE`, IBM Big Data Software CoE (DBMS Lab), CSE, capacity 60, both check-in modes (AB), radius 40 m |
-| Door GPS | **Not set.** Until it is, every kiosk check-in passes as "location not available" and no one can be refused for being outside |
+| Door GPS | **Not set.** Until it is, every kiosk check-in passes as "location not available" and no one can be flagged for being outside |
 | Opening hours / open lab | **Not set / off.** No walk-in sessions are created, so outside a timetabled class a student has nothing to check in to |
 | Kiosk | `CoE door screen`, account `cleoch4ria@gmail.com`; has never signed in at the door |
 | Course and timetable | `DBMSLAB` (Ms. Denisha), roster of 60, Wednesdays 11:00 to 12:40 from 21 Oct to 31 Dec |
@@ -32,7 +32,7 @@ Do these in order. Steps 1 and 8 have to be done in the room.
 5. **Kiosk.** Sign in as `cleoch4ria@gmail.com` on the laptop or tablet at the door and leave the kiosk screen open. The Kiosks table should now show a "last seen" time.
 6. **One project.** As a student (`URK24CS1021`), go to My projects and create one with `amohamed` as supervisor. Approve it as faculty, so check-in has a project to pick.
 7. **Backup.** Admin > Audit & system > System health > **Back up now**, then open the Drive folder. Check the next morning that the nightly copy is there.
-8. **Rehearse twice on a real phone.** Do one check-in at the door, which must pass. Then do one from another block or the road outside, which must be refused (radius 40 m plus up to 30 m of forgiven GPS error, so go more than about 80 m away). Without this rehearsal the demo is the first live check-in ever.
+8. **Rehearse twice on a real phone.** Do one check-in at the door, which must pass. Then do one from another block or the road outside, which must show "Recorded, but your phone places you outside the lab" and appear as flagged on the Live roster (radius 40 m plus up to 30 m of forgiven GPS error, so go more than about 80 m away). The deployed version before the `tier3-app` branch refuses it instead. Without this rehearsal the demo is the first live check-in ever.
 9. **Phones for device QR (reverse scanning).** On each demo student's phone: Device > **Run check** (all OK) > **Register this phone**. A first phone is active straight away. Add a photo on the same page, because the kiosk shows it after a scan. Keep one spare phone unregistered for the "new phone needs approval" step.
 10. **On the day.** Charge the phones. Before the presentation starts, sign in on every phone once and allow camera and location. Have a phone hotspot ready for "from home". Open the local Test Lab (`npm run dev`, demo preset, **Rebuild world**) in a second window.
 
@@ -66,7 +66,7 @@ The CoE lab accepts both modes (AB), so the door screen shows the rotating QR an
 | Scan a student's live QR (accepted), then scan a screenshot taken a moment earlier | Refused: this code was already used | Replay protection |
 | A student opens the in-app scanner and scans a friend | Refused: only the teacher, lab staff, event lead or class rep can scan | Server-side permissions |
 | Register the spare phone as a second device | Goes to "waiting for approval". Coordinator > Desk approves it and the old phone stops working | Identity can't be moved between phones at will |
-| Mode A from more than 80 m away | Refused with the distance band | Geofence (needs prep step 1) |
+| Mode A from more than 80 m away | Recorded, flagged with the distance band, not counted as present until the faculty decide | Geofence (needs prep step 1) |
 
 *Answer before they ask:* a friend streaming live video of the phone can still beat Mode B. Setting `scanLivenessReads` to 2 makes the scanner read twice with a new timestamp, so a photo never passes. Random rescans and photo spot checks catch the rest.
 
@@ -148,6 +148,7 @@ A browser cannot read any of them. Only a native app could, and the brief asks f
 Yes, whenever the teacher wants. During a class the teacher (or a class rep) presses **Request rescan now**, and students get no warning. Automatic random rescans exist but are off by default: the teacher decides. Everyone marked inside must scan the door screen again within 90 seconds with GPS inside the lab, or show their device QR to the scanner. Anyone who doesn't is marked "missed rescan", and their credited time stops at their last proof. Spot checks compare the student's photo with the face in the room, and an exit scan closes the visit. Following a phone continuously isn't possible from a web page, because the browser pauses the page when the screen locks, and it would drain the battery and track students' locations all day. Show `/presence`.
 
 **Indoors GPS is poor. Will genuine students be refused?**
+No student is refused for location: a check-in outside the geofence is recorded and flagged, and the faculty decide.
 The phone reports its own error margin. We forgive up to 30 m of it (a setting) on top of the radius. The phone keeps reading for up to 12 seconds and keeps the best fix. If there is no location at all (location turned off, a desktop), the default is to accept the check-in and raise a flag for the faculty. It can be set to refuse instead.
 
 **Do you store students' locations?**

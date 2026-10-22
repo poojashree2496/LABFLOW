@@ -25,8 +25,9 @@
  *   Flagged  an open flag; the faculty decide
  * The faculty can override any result (an OVERRIDE event, audited).
  *
- * Privacy (FR-31): reports keep the distance to the lab, the reported accuracy and a short hash of the exact reading
- * (to spot a location that never changes). Latitude and longitude are never stored.
+ * Privacy (FR-31): reports keep the distance to the lab, the reported accuracy and a short keyed hash of the exact
+ * reading (to spot a location that never changes; keyed with the server secret, so it cannot be searched back to a
+ * position). Latitude and longitude are never stored.
  */
 var Presence = {
   PAIR_MINUTES: 5,
@@ -147,11 +148,12 @@ var Presence = {
     var f = String(m).split('|');
     return f.length === n && f[0] === kind ? f : null;
   },
-  _reading: function (lat, lng, acc) {
+  /** Parsed reading. `key` is a keyed hash (server secret + session), so it can only be compared, not reversed. */
+  _reading: function (lat, lng, acc, sessionId) {
     if (lat === '' || lng === '') return null;
     var a = Number(lat), b = Number(lng), r = Number(acc);
     if (!isFinite(a) || !isFinite(b) || !isFinite(r) || a < -90 || a > 90 || b < -180 || b > 180 || r < 0) return null;
-    return { lat: a, lng: b, acc: r, key: U.sha256Hex(lat + '|' + lng + '|' + acc).slice(0, 12) };
+    return { lat: a, lng: b, acc: r, key: U.hmacB64u(Tokens._secret(), 'pos|' + (sessionId || '') + '|' + lat + '|' + lng + '|' + acc).slice(0, 12) };
   },
 
   // ---- presence reports from the app --------------------------------------------------------------------------
@@ -169,7 +171,7 @@ var Presence = {
       var m = x && typeof x.m === 'string' && x.m.length <= 300 ? x.m : '', f = Presence._fields(m, 'p1', 8);
       var sessionId = f && /^SES-[0-9A-F]{12}$/.test(f[1]) ? f[1] : '';
       if (!f || !sessionId || typeof x.sig !== 'string' || !Creds.verifySignature(a.cred.publicKey, m, x.sig)) { raise('tampered_report', sessionId, { what: 'presence report' }); return; }
-      (bySession[sessionId] = bySession[sessionId] || []).push({ seq: Number(f[2]), at: Number(f[3]), reading: Presence._reading(f[4], f[5], f[6]), mock: f[7] === '1' });
+      (bySession[sessionId] = bySession[sessionId] || []).push({ seq: Number(f[2]), at: Number(f[3]), reading: Presence._reading(f[4], f[5], f[6], sessionId), mock: f[7] === '1' });
     });
     var stored = 0, rebuild = [], track = false, challenge = null;
     Object.keys(bySession).forEach(function (sessionId) {

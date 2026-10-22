@@ -136,9 +136,9 @@ var Reports = {
     return U.groupBy(Db.where('AttendanceSummaries', function (x) { return set[x.sessionId]; }), function (x) { return x.sessionId; });
   },
   _counts: function (sums) {
-    var c = { enrolled: sums.length, present: 0, absent: 0, unverified: 0, flagged: 0, minutes: 0 };
+    var c = { enrolled: sums.length, present: 0, absent: 0, unverified: 0, partial: 0, flagged: 0, minutes: 0 };
     sums.forEach(function (x) {
-      if (x.status === 'present') c.present++; else if (x.status === 'absent') c.absent++; else if (x.status === 'unverified_exit') c.unverified++; else c.flagged++;
+      if (x.status === 'present') c.present++; else if (x.status === 'absent') c.absent++; else if (x.status === 'unverified_exit') c.unverified++; else if (x.status === 'partial') c.partial++; else c.flagged++;
       c.minutes += x.verifiedMinutes || 0;
     });
     return c;
@@ -249,14 +249,14 @@ var Reports = {
     var by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; }));
     var sesRows = sessions.map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []);
-      return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, s.type, Reports._hhmm(s.scheduledStart) + '-' + Reports._hhmm(s.scheduledEnd), c.enrolled, c.present, c.absent, c.unverified, c.flagged, Reports._r1(c.minutes / 60)];
+      return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, s.type, Reports._hhmm(s.scheduledStart) + '-' + Reports._hhmm(s.scheduledEnd), c.enrolled, c.present, c.absent, c.unverified, c.partial, c.flagged, Reports._r1(c.minutes / 60)];
     });
     var per = {}, profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
     Object.keys(by).forEach(function (k) { by[k].forEach(function (x) { var a = per[x.studentId] || (per[x.studentId] = { sessions: 0, attended: 0, minutes: 0 }); a.sessions++; if (x.status !== 'absent') a.attended++; a.minutes += x.verifiedMinutes || 0; }); });
     var stuRows = Object.keys(per).map(function (sid) { var a = per[sid], pr = profiles[sid] || {}; return [pr.rollNo || sid, pr.name || '', a.sessions, a.attended, Reports._r1(a.minutes / 60)]; })
       .sort(function (x, y) { return String(x[0]) < String(y[0]) ? -1 : 1; });
     return { title: 'Attendance ' + r.from + ' to ' + r.to, sections: [
-      { title: 'Sessions', columns: ['Date', 'Lab', 'Session', 'Type', 'Time', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Flagged', 'Verified hours'], rows: sesRows },
+      { title: 'Sessions', columns: ['Date', 'Lab', 'Session', 'Type', 'Time', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Partial (phone app)', 'Flagged', 'Verified hours'], rows: sesRows },
       { title: 'Verified hours per student', columns: ['Roll no', 'Name', 'Sessions', 'Attended', 'Verified hours'], rows: stuRows }
     ], meta: { from: r.from, to: r.to, labId: labId } };
   },
@@ -310,9 +310,9 @@ var Reports = {
     var sessions = Reports._sessionsIn(r, null, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; })), ref = Sessions._ref();
     var rows = sessions.sort(function (a, b) { return a.scheduledStart - b.scheduledStart; }).map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []), lab = ref.labs[s.labId] || {}, fac = ref.fac[s.facultyId] || {};
-      return [lab.code || '', s.title, fac.name || '', s.type, s.status, Reports._hhmm(s.scheduledStart) + '-' + Reports._hhmm(s.scheduledEnd), c.enrolled, c.present, c.absent, c.unverified, c.flagged, Reports._r1(c.minutes / 60)];
+      return [lab.code || '', s.title, fac.name || '', s.type, s.status, Reports._hhmm(s.scheduledStart) + '-' + Reports._hhmm(s.scheduledEnd), c.enrolled, c.present, c.absent, c.unverified, c.partial, c.flagged, Reports._r1(c.minutes / 60)];
     });
-    return { title: 'Daily lab report - ' + date, columns: ['Lab', 'Session', 'Faculty', 'Type', 'Status', 'Time', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Flagged', 'Verified hours'], rows: rows,
+    return { title: 'Daily lab report - ' + date, columns: ['Lab', 'Session', 'Faculty', 'Type', 'Status', 'Time', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Partial (phone app)', 'Flagged', 'Verified hours'], rows: rows,
       meta: { date: date, sessions: sessions.length, totalPresent: rows.reduce(function (a, x) { return a + x[7]; }, 0) } };
   },
 
@@ -335,9 +335,9 @@ var Reports = {
     var sessions = Reports._sessionsIn(r, function (s) { return s.facultyId === f.facultyId; }, p), by = Reports._sumsBySession(sessions.map(function (s) { return s.sessionId; }));
     var rows = sessions.sort(function (a, b) { return a.scheduledStart - b.scheduledStart; }).map(function (s) {
       var c = Reports._counts(by[s.sessionId] || []);
-      return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, s.status, Reports._hhmm(s.openedAt), Reports._hhmm(s.closedAt), c.enrolled, c.present, c.absent, c.unverified, c.flagged];
+      return [s.date, (ref.labs[s.labId] || {}).code || '', s.title, s.status, Reports._hhmm(s.openedAt), Reports._hhmm(s.closedAt), c.enrolled, c.present, c.absent, c.unverified, c.partial, c.flagged];
     });
-    return { title: 'Faculty report - ' + f.name + ' (' + r.from + ' to ' + r.to + ')', columns: ['Date', 'Lab', 'Session', 'Status', 'Opened', 'Closed', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Flagged'], rows: rows, meta: { faculty: f.name, from: r.from, to: r.to } };
+    return { title: 'Faculty report - ' + f.name + ' (' + r.from + ' to ' + r.to + ')', columns: ['Date', 'Lab', 'Session', 'Status', 'Opened', 'Closed', 'Roster', 'Present', 'Absent', 'Unverified exit', 'Partial (phone app)', 'Flagged'], rows: rows, meta: { faculty: f.name, from: r.from, to: r.to } };
   },
 
   /** Fresh event derivation for live/current records, with stored summaries as the historical fallback. */

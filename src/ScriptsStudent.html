@@ -355,7 +355,7 @@ LF.register({ role: 'student', id: 'history', label: 'Attendance', icon: 'calend
   const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Attendance history'), out);
   ui.loadInto(out, async () => {
     const r = await api('attend.history', { limit: 200 }), t = r.totals;
-    const tbl = ui.table({ caption: 'Attendance history', searchPlaceholder: 'Search sessions', filters: [{ label: 'Status', options: ['present', 'absent', 'unverified_exit', 'missed_rescan', 'flagged'], get: (x) => x.status }],
+    const tbl = ui.table({ caption: 'Attendance history', searchPlaceholder: 'Search sessions', filters: [{ label: 'Status', options: ['present', 'partial', 'absent', 'unverified_exit', 'missed_rescan', 'flagged'], get: (x) => x.status }],
       columns: [
         { key: 'date', label: 'Date', text: (x) => x.date || '' }, { key: 'title', label: 'Session' }, { key: 'labName', label: 'Lab' },
         { key: 'status', label: 'Status', render: (x) => ui.status(x.status), text: (x) => x.status },

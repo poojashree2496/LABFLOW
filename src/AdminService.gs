@@ -208,7 +208,7 @@ var Dash = {
     var byId = {}; sessions.forEach(function (s) { byId[s.sessionId] = s; });
     var perDay = {}; for (var i = 0; i < days; i++) perDay[U.addDays(from, i)] = { sessions: 0, present: 0 };
     sessions.forEach(function (s) { perDay[s.date].sessions++; });
-    Db.where('AttendanceSummaries', function (x) { return byId[x.sessionId] && (x.status === 'present' || x.status === 'unverified_exit' || x.status === 'missed_rescan' || x.status === 'flagged'); }).forEach(function (x) { perDay[byId[x.sessionId].date].present++; });
+    Db.where('AttendanceSummaries', function (x) { return byId[x.sessionId] && (x.status === 'present' || x.status === 'partial' || x.status === 'unverified_exit' || x.status === 'missed_rescan' || x.status === 'flagged'); }).forEach(function (x) { perDay[byId[x.sessionId].date].present++; });
     var labs = Db.readAll('Labs'), openNow = Db.where('Sessions', function (s) { return s.status === 'open'; });
     var assets = Db.readAll('Assets'), stock = { individual: 0, onLoan: 0, quantityUnits: 0, quantityOut: 0, damaged: 0, missing: 0 };
     assets.forEach(function (a) {

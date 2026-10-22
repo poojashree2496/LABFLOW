@@ -770,7 +770,7 @@ var Attend = {
     rows = rows.map(function (r) { var s = sessions[r.sessionId] || {}; return { sessionId: r.sessionId, title: s.title, date: s.date, labName: (labs[s.labId] || {}).name, status: r.status, firstIn: r.firstIn, lastOut: r.lastOut, verifiedMinutes: r.verifiedMinutes, flags: r.flags || [], scheduledStart: s.scheduledStart, scheduledEnd: s.scheduledEnd }; })
       .sort(function (a, b) { return (b.scheduledStart || 0) - (a.scheduledStart || 0); });
     var totals = { sessions: rows.length, present: 0, absent: 0, unverifiedExits: 0, autoSignOuts: 0, flagged: 0, verifiedMinutes: 0 };
-    rows.forEach(function (r) { if ((r.flags || []).indexOf('auto_out') >= 0) totals.autoSignOuts++; if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
+    rows.forEach(function (r) { if ((r.flags || []).indexOf('auto_out') >= 0) totals.autoSignOuts++; if (r.status === 'present') totals.present++; if (r.status === 'absent') totals.absent++; if (r.status === 'unverified_exit') totals.unverifiedExits++; if (r.status === 'partial') totals.partial = (totals.partial || 0) + 1; if (r.status === 'flagged' || r.status === 'missed_rescan') totals.flagged++; totals.verifiedMinutes += r.verifiedMinutes || 0; });
     totals.verifiedMinutes = Math.round(totals.verifiedMinutes);
     // Days used and time per lab for the student home (R10): a day counts when the student actually entered a lab.
     var usedDays = {}, perLab = {};
