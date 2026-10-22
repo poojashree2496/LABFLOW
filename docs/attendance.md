@@ -2,6 +2,16 @@
 
 Attendance is a log of what happened plus a summary worked out from the log. The log is never edited.
 
+## Three tiers of proxy protection
+
+| Tier | Mode | Check-in | Presence after check-in |
+|---|---|---|---|
+| 1 | A | Kiosk QR + browser GPS | Random location checks while the page is open (`presence.webPing`), faculty-called rescans |
+| 2 | B | Device-signed student QR, scanned in the room | Faculty-called rescans, spot checks |
+| 3 | C | The LABFLOW Android app scans the kiosk QR | Signed location reports every 2 minutes until the end, 2 random fingerprint checks, a result of Present / Partial / Absent / Flagged |
+
+Nobody is refused for a location problem in any tier: a check-in from outside the geofence, with an impossible accuracy, a mock location or an old kiosk code is recorded with assurance `flagged`, raises a flag, and is not counted as present until the faculty decide. Students without the app can check in to a tier-3 session through tier 1 or 2 and are flagged `no_app`. Tier 3 is described in [phone-app.md](phone-app.md).
+
 ## Where attendance happens
 
 | Session type | Opened by | Who can check in |
@@ -18,6 +28,7 @@ A lab supports one of three modes (lab setting `checkinMode`, with `defaultCheck
 | **A** (the SRS) | The lab kiosk shows a QR that changes every ~7 s. The student scans it with the phone camera, the web app opens, and the phone's GPS is checked against the lab geofence |
 | **B** (device-signed) | The student's registered phone shows a QR signed with its own key. A kiosk scanner, or the phone of the faculty, staff, event lead or class representative, scans it |
 | **AB** | Both are accepted |
+| **C** (tier 3, chosen per session, needs a lab with A) | The LABFLOW phone app scans the kiosk QR (`Presence.STEPS_C`). A and B check-ins are still accepted, flagged `no_app` |
 
 ## Mode A pipeline (`Checkin.STEPS_A`)
 
@@ -31,8 +42,8 @@ A lab supports one of three modes (lab setting `checkinMode`, with `defaultCheck
 6. `target` - a session is chosen and the entry reason matches it
 7. `work` - project and workstation choices are valid
 8. `geo_reading` - a location reading arrived (or policy allows none)
-9. `geo_plausible` - the reading is physically possible
-10. `geofence` - inside the lab radius (haversine, with the reported accuracy allowed for)
+9. `geo_plausible` - the reading is physically possible; an impossible one is recorded and flagged, not refused
+10. `geofence` - inside the lab radius (haversine, with the reported accuracy allowed for); outside is recorded and flagged, not refused
 
 Steps 11 to 15 run under the script lock: `code_once` (this student has not used this kiosk code), `session_open`, `enrolment`, `attendance_state` (no double entry, minimum gap, one rescan) and `record` (append the event). Latitude and longitude are never stored, only pass/fail, distance and accuracy. One kiosk code serves a whole class, but each student can use it once.
 
@@ -68,7 +79,10 @@ Corrections to sessions older than `correctionApprovalAfterHours` (24) need admi
 - Time counts only between an entry and a verified end: an exit scan, or, when the exit scan is missing, the last rescan or spot check in that stint. A missing exit scan never credits the full session.
 - An event's lunch break is never counted.
 - Open lab: time counts to the scheduled closing time, and anyone still inside is signed out automatically (`method: auto`, flag `auto_out`). Three automatic departures raise one `never_scans_out` flag. A class keeps the stricter rule: a missing exit stays `unverified_exit` for the faculty to review.
-- Status is one of `present`, `absent`, `missed_rescan`, `unverified_exit`, `flagged`. Flags add `late`, `corrected`, `spot_check_failed`, `auto_out`.
+- Status is one of `present`, `absent`, `missed_rescan`, `unverified_exit`, `flagged`, and in a tier-3 session `partial`. Flags add `late`, `corrected`, `spot_check_failed`, `auto_out`, `location_flagged`, `overridden`.
+- A check-in or rescan recorded with assurance `flagged` makes the status `flagged`, and a flagged rescan proves no time.
+- In a tier-3 session the status is the phone-app result (`Presence.decorate`): Present, Partial, Absent or Flagged, from the share of the session at the lab, the fingerprint checks and open flags.
+- `OVERRIDE` (`attend.override`, the session's faculty): the faculty's final result for a student, with a reason, audited. It wins over the computed status.
 
 ## Physical controls
 

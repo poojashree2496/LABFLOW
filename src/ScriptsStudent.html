@@ -251,7 +251,8 @@ LF.kioskCheckin = (code) => {
         const r = await api('checkin.submit', { pass: op.pass, action, sessionId: action === 'in' ? c.sessionId || undefined : (op.inside ? op.inside.sessionId : undefined), reservationId: action === 'in' ? c.reservationId || undefined : undefined, reason: action === 'in' ? c.reason : undefined, geo: geo || undefined, ...work });
         clearInterval(timer);
         clear(body).append(h('div', { style: { display: 'grid', justifyItems: 'center', gap: '10px', textAlign: 'center' } }, h('div', { class: 'ok-big' }, icon('check')), h('div', { class: 't-h2' }, LF.SCAN_LABEL[r.type] || r.type),
-          h('div', null, r.session.title + ' · ' + fmt.time(r.at)), r.geofence === 'na' ? h('div', { class: 'card warn' }, 'Recorded without a location check. Your faculty may verify you in person.') : h('div', { class: 'hint' }, 'Location check passed.'),
+          h('div', null, r.session.title + ' · ' + fmt.time(r.at)), r.assurance === 'flagged' ? h('div', { class: 'card bad', role: 'alert' }, r.geofence === 'fail' ? 'Recorded, but your phone places you outside the lab. Your teacher will review this check-in; until then it does not count as present.' : 'Recorded, but your location looked impossible for a phone. Your teacher will review this check-in.')
+            : r.geofence === 'na' ? h('div', { class: 'card warn' }, 'Recorded without a location check. Your faculty may verify you in person.') : h('div', { class: 'hint' }, 'Location check passed.'),
           ui.button('Done', { kind: 'primary', onClick: () => { m.close(); if (LF.current && LF.current.id === 'today') LF.go('today'); } })));
       } catch (e) {
         status.textContent = '';
@@ -343,7 +344,7 @@ function randomLocationChecks(sessionId) {
 /* Tier 3: the signed-in web app makes a single-use code; the LABFLOW Android app opens with it and links this account. */
 LF.linkPhoneApp = async () => {
   const r = await api('app.pairCode');
-  const qr = h('div', { class: 'qr-frame', style: { maxWidth: '220px', margin: '0 auto' } }, LF.util.qrSvg(r.link));
+  const qr = h('div', { class: 'qr-frame' }, LF.util.qrSvg(r.link));
   LF.modal('Link the LABFLOW phone app', h('div', { style: { display: 'grid', gap: '12px' } },
     h('p', { style: { margin: 0 } }, 'On the phone with the LABFLOW app: tap the button. On a laptop: open the app on your phone and scan this code. It works once and expires at ' + fmt.time(r.expiresAt) + '.'),
     h('a', { class: 'btn btn-primary', href: r.link, style: { justifyContent: 'center' } }, 'Open the LABFLOW app'), qr,

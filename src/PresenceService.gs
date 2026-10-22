@@ -63,6 +63,14 @@ var Presence = {
       var st = Attend._verifiedStudent(parts[1]), user = Db.get('Users', st.userId);
       var mine = Db.whereEq('DeviceCredentials', { studentId: st.studentId }).filter(function (c) { return c.kind === 'app'; });
       var active = mine.filter(function (c) { return c.status === 'active'; }), now = U.now();
+      // The same phone signing in again (its sign-in expired, or the app was reopened): same keys, no new approval.
+      var same = mine.filter(function (c) { return c.publicKey === publicKey && c.bioPublicKey === bioPublicKey && (c.status === 'active' || c.status === 'pending_approval'); })[0];
+      if (same) {
+        Tokens.redeem(parts[2], 'P', st.studentId, '', '', same.credentialId);
+        Audit.log({ actor: user.email, role: 'student', action: 'app.signin', entityType: 'DeviceCredential', entityId: same.credentialId, detail: { studentId: st.studentId } });
+        var again = Auth._issueSession(user.email);
+        return { session: again.session, email: user.email, expiresAt: again.expiresAt, credentialId: same.credentialId, status: same.status, student: { name: st.name, rollNo: st.rollNo } };
+      }
       // A newer request replaces an older pending one (a reinstall makes new keys).
       mine.forEach(function (c) { if (c.status === 'pending_approval') Db.update('DeviceCredentials', c.credentialId, { status: 'revoked', revokedAt: now, revokedBy: user.email, revokeReason: 'superseded by a newer link request' }); });
       var needsApproval = mine.length > 0;

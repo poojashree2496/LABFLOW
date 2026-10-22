@@ -1,6 +1,6 @@
 # Data model
 
-All data lives in one Google Sheets file, "LABFLOW Database", created by `setupInitialise`. There are **37 sheets**. The single source of truth for every column is `Cfg.SCHEMA_SRC` in `src/Config.gs`; this page explains what the tables are for. [requirements.md](requirements.md) section 4 lists the columns added for the v2 work.
+All data lives in one Google Sheets file, "LABFLOW Database", created by `setupInitialise`. There are **39 sheets**. The single source of truth for every column is `Cfg.SCHEMA_SRC` in `src/Config.gs`; this page explains what the tables are for. [requirements.md](requirements.md) section 4 lists the columns added for the v2 work.
 
 ## How tables are defined
 
@@ -48,6 +48,8 @@ Schema changes are **additive**. `setupInitialise` creates missing sheets, adds 
 | `RescanWindows`, `SpotChecks` | Rescan windows and photo spot checks |
 | `Redemptions` | Used QR nonces; the source of truth for "used once" |
 | `Flags` | Review queue for suspicious activity |
+| `PresencePings` | Location reports: from the phone app every few minutes (tier 3) and the random checks of an open page (tier 1). Distance to the lab, accuracy and a reading hash; never coordinates |
+| `BioChecks` | Fingerprint checks of the phone app: when each was delivered and answered, and the outcome. A row with student `*` is a check the faculty sent to the whole class |
 
 **Assets and bookings**
 

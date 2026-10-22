@@ -139,7 +139,8 @@ function seed(lab, preset) {
   lab.demoSessionId = todaySession.sessionId;
   w.ok(w.students[0].email, 'equipment.request', { labId: w.lab.labId, resourceType: 'category', resourceId: esp.categoryId, quantity: 1, note: 'Board for the LED blink exercise' });
   w.ok(A, 'spot.start', { sessionId: todaySession.sessionId, studentId: w.students[0].studentId });
-  w.checkin(w.students[2], { sessionId: todaySession.sessionId, geo: w.at(1, 0.5) });
+  // a location-faking check-in: recorded (nobody is refused), flagged for the faculty and not counted as present
+  w.checkin(w.students[11], { sessionId: todaySession.sessionId, geo: w.at(1, 0.5) });
   w.ok(w.faculty, 'events.register', { labEventId: demoEvent.labEventId, rollNos: [w.students[3].rollNo, w.students[4].rollNo] });
   w.ok(w.faculty, 'events.addGuest', { labEventId: demoEvent.labEventId, name: 'Demo Guest', organisation: 'Karunya Innovation Centre' });
   w.ok(w.students[8].email, 'research.request', { labId: w.lab2.labId, facultyId: w.facultyId, date: '2026-10-15', startTime: '14:00', endTime: '16:00', purpose: 'IoT sensor calibration research' });

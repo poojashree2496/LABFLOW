@@ -8,7 +8,7 @@ Five role dashboards (student, faculty, coordinator, super admin and HOD) plus a
 
 ## Features
 
-- **Attendance two ways**: kiosk QR with a GPS geofence (the SRS version), or a device-bound signed QR scanned in the room. Rescan windows, faculty spot checks, exit scans and flags back them up. See [Attendance](docs/attendance.md).
+- **Three tiers of proxy protection**: kiosk QR with a GPS geofence and random location checks (tier 1, the SRS version), a device-bound signed QR scanned in the room (tier 2), or the LABFLOW Android app, which confirms the student stays at the lab for the whole session with signed location reports and random fingerprint checks (tier 3). Nobody is refused for a location problem; it is flagged for the faculty. Rescan windows, spot checks, exit scans and flags back them up. See [Attendance](docs/attendance.md) and [Phone app](docs/phone-app.md).
 - **Open lab for extra hours**: daily walk-in sessions, project and system selection at the door, automatic sign-out at closing.
 - **Live board**: who is inside each lab, on which system and project, for staff and HOD; head counts only for students.
 - **Equipment**: inventory, kits, group issues, loans and returns on a handshake screen, time-slot bookings with a waitlist, overdue reminders.
@@ -44,8 +44,9 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 | Page | What is in it |
 |---|---|
 | [Architecture](docs/architecture.md) | Gateway, services, front ends, background jobs |
-| [Attendance](docs/attendance.md) | Both modes, the verification pipelines, the event log, verified time |
-| [Data model](docs/data-model.md) | The 37 sheets and how the schema is defined |
+| [Attendance](docs/attendance.md) | The three tiers, the verification pipelines, the event log, verified time |
+| [Phone app](docs/phone-app.md) | Tier 3: install the Android app, set a lab's location, how results are worked out |
+| [Data model](docs/data-model.md) | The 39 sheets and how the schema is defined |
 | [Deployment](docs/deployment.md) | Setup in order, hosted app, secrets to keep |
 | [Testing](docs/testing.md) and [TEST_PLAN](TEST_PLAN.md) | What is tested, how, and what only a deployment can show |
 | [Themes](docs/themes.md) | Pick a theme, what each changes, how to add one |
@@ -57,7 +58,7 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 317 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 323 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
 | 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
@@ -129,13 +130,14 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 317 backend tests
+npm run check      # syntax lint of every .gs/.html script + 323 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)
 npm run e2e:projects # project lifecycle and phone navigation (same browser setup)
 npm run e2e:openlab # lab settings and walk-in QR/GPS attendance (same browser setup)
 npm run e2e:work   # project/system entry and mid-visit changes (same browser setup)
+npm run e2e:tier3  # phone-app linking, live roster, fingerprint check and override (the app simulated)
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.
@@ -158,6 +160,7 @@ The demo lives only in memory. Rebuilding it or restarting the dev server discar
 - `src/*.gs`: server (Config, Db, Auth, Users, DeviceCredential, Session, Checkin, Attendance, Asset, Booking, Project, Lab, Event, Flag, Report, Audit, Backup, Notification, Trigger, Admin, Setup, Code = router). `Vendor_P256.gs` and `Vendor_AES.gs` are bundled libraries (signature verification, AES-GCM).
 - `src/Index.html`, `Styles.html` (generated), `SharedComponents.html`, `Scripts*.html`: UI. No `innerHTML` of data anywhere; DOM is built with an `h()` helper.
 - `test/`: backend tests, fixtures, harness; `test/e2e/` browser flow.
+- `android/`: the LABFLOW phone app (Kotlin, tier 3).
 - `docs/`: the pages listed above; `docs/screens/`: screenshots produced by the browser tests.
 - `dev/`: the local server, Test Lab and scenarios. `styles/themes/`: one CSS file per site theme. `web/`, `scripts/build-web.js`, `vercel.json`: the hosted app.
 

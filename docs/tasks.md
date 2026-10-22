@@ -6,7 +6,7 @@ Legend: `[ ]` not started, `[~]` in progress, `[!]` blocked (say why). Order ins
 
 Implementation deadline: 23 Oct 2026, 5:00 PM.
 
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 
 ---
 
@@ -86,6 +86,7 @@ Do these first. Write the date and result next to each when you finish it. TEST_
 - [ ] v2: a nightly backup lands in Drive and rotation trashes old copies (A3).
 - [ ] v2: `setupEncryptMobiles` on the real sheet, then confirm no plain numbers remain (A2).
 - [ ] v2: GPS geofence at the Intel Unnati AI Lab door with the real coordinates (C5).
+- [ ] **Tier 3 phone app** (branch `tier3-app`, see [phone-app.md](phone-app.md)): merge, `clasp push`, run `setupInitialise` (adds PresencePings, BioChecks and four appended columns), new deployment version, Vercel deploy (the web link-code screen). Then on a real Android phone: install the APK, link, check in, lock the screen for 20 minutes and confirm reports keep arriving, answer a fingerprint check, try a mock-location app, try airplane mode and reconnect. Check the Apps Script redirect from `/exec` works from the app's HTTP client. Try one Xiaomi/Oppo/Vivo phone for battery killing.
 - [ ] Live: set the IBM CoE (DBMS) lab door GPS from a phone in the room, then one check-in inside (passes) and one more than 80 m away (refused). The 21 Oct class closed with 0 of 60 marked, so no live check-in has succeeded yet.
 
 ## 2. Build (after the demo)

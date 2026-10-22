@@ -47,6 +47,10 @@ test('tier 3 link: pairing code from the web, first phone active, a switch waits
   // the code is single use and bound to the student who made it
   const again = post(w, 'app.link', { token: app.token, publicKey: app.dev.publicKey, bioPublicKey: app.bio.publicKey, sig: await signWith(app.dev, app.token), bioSig: await signWith(app.bio, app.token) });
   assert.equal(again.error.code, 'REPLAY');
+  // the same phone signing in again keeps its link and needs no approval
+  const pc0 = w.ok(a.email, 'app.pairCode');
+  const back = post(w, 'app.link', { token: pc0.token, publicKey: app.dev.publicKey, bioPublicKey: app.bio.publicKey, sig: await signWith(app.dev, pc0.token), bioSig: await signWith(app.bio, pc0.token) });
+  assert.equal(back.data.credentialId, app.credentialId); assert.equal(back.data.status, 'active');
   // a wrong key proof is refused
   const pc = w.ok(b.email, 'app.pairCode'), d1 = await genDevice(), d2 = await genDevice();
   assert.equal(post(w, 'app.link', { token: pc.token, publicKey: d1.publicKey, bioPublicKey: d2.publicKey, sig: await signWith(d2, pc.token), bioSig: await signWith(d2, pc.token) }).error.code, 'BAD_SIGNATURE');

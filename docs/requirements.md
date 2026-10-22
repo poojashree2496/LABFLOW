@@ -49,7 +49,7 @@ Evidence is given by symbol; line numbers are only hints and will drift.
 | R10 | Done on local fakes | Student report totals and per-lab hours/days/visits/automatic sign-outs; student home has a 90-day per-lab view | Deployment checks | Deployment |
 | R11 | Done on local fakes | System report with checked-in people, visits, verified hours and project/booking purpose; reservation/loan context is separate | Deployment checks | Deployment |
 | R12 | Done | Timetable sessions; faculty roster shows "Absent" / "Not arrived yet" (ScriptsFaculty.html) | | |
-| R13 | Done | 37 sheets defined in `Cfg.SCHEMA_SRC` | | |
+| R13 | Done | 39 sheets defined in `Cfg.SCHEMA_SRC` | | |
 | R14 | Done | Nightly backup copies with rotation (30 daily + 12 monthly), manual backup and an admin panel (A3); yearly archive to a per-year spreadsheet, manual or automatic each July, with an admin panel (A4, built 21 Oct) | None | - |
 | R15 | Done on local fakes | Role-checked RPC gateway, rate limits, hash-chained audit log. A2 done: `Users.mobile` is sealed with AES-256-GCM (`Crypt`), shown masked to everyone but its owner, revealed to a coordinator or super admin one student at a time with an audit entry | Run `setupEncryptMobiles` on the real sheet; deployment checks | Deployment |
 | R16 | Done on local fakes | HOD role, department/shared-lab read scope, clarified labels, scoped dashboards/exports and full-route mutation refusal; student per-lab time. B2 done: coordinators import students, manage course rosters, and disable or re-enable a profile (never deleted; a disabled student cannot check in or book), audited as `staff` | Deployment checks | Deployment |
@@ -124,13 +124,21 @@ These names are frozen so the three workstreams can work in parallel. **Change t
 | StudentProfiles | `joinYear:n` |
 | Categories | `workstation:b` |
 | Sessions | `archivedAt:n checkinMode` (checkinMode added 21 Oct: the mode the faculty chose at opening) |
-| AttendanceEvents | `projectId assetId` |
+| AttendanceEvents | `projectId assetId outcome` (outcome added 22 Oct: the result an OVERRIDE sets) |
+| DeviceCredentials | `kind bioPublicKey` (22 Oct: `app` keys of the phone app have their own slot) |
 | Reservations | `projectId waitlistedAt:n` |
 
 New table (`U.id('project')` gives ids starting `PRJ`):
 
 ```
 Projects: projectId title description ownerStudentId groupId supervisorFacultyId labId startDate endDate status outcome outcomeLink outcomeAt:n approvedBy approvedAt:n createdAt:n updatedAt:n
+```
+
+New tables (22 Oct, tier 3; `U.id('ping')` gives `PNG`, `U.id('bio')` gives `BIO`):
+
+```
+PresencePings: pingId sessionId studentId credentialId source seq:n at:n receivedAt:n inLab:b distanceM:n accuracyM:n mock:b posKey verdict
+BioChecks: bioId slotKey:s:u sessionId studentId kind dueAt:n deliveredAt:n deadline:n respondedAt:n outcome requestedBy nonce
 ```
 
 **Enum values**
@@ -143,6 +151,10 @@ Projects: projectId title description ownerStudentId groupId supervisorFacultyId
 | Reservations.status | `waitlisted` | Waiting for a taken slot; holds nothing |
 | Projects.status | `pending`, `active`, `completed`, `rejected`, `archived` | |
 | Roles | `hod` | Read-only, department-scoped |
+| Sessions.checkinMode | `C` | Tier 3, the phone app (22 Oct) |
+| AttendanceEvents.type | `OVERRIDE` | The faculty's final result (22 Oct) |
+| AttendanceEvents.method | `app` | Checked in with the phone app (22 Oct) |
+| AttendanceSummaries.status | `partial` | Tier-3 result (22 Oct) |
 
 **New routes** (in `ROUTES`, `src/Code.gs`)
 
@@ -163,6 +175,11 @@ Projects: projectId title description ownerStudentId groupId supervisorFacultyId
 | `system.backup` | admin | A3 |
 | `system.backups` | admin | A3 |
 | `system.archive` | admin | A4 |
+| `app.pairCode`, `app.status`, `app.scan`, `app.ping`, `app.bio`, `presence.webPing` | student | Tier 3 (22 Oct) |
+| `presence.bioNow` | user (the session's operator, checked in the handler) | Tier 3 |
+| `attend.override` | faculty, admin (the session's faculty) | Tier 3 |
+| `cred.pending`, `cred.approve`, `cred.reject` | now also faculty, for phone-app switches only | Tier 3 |
+| `app.link` | none (session-free doPost, like `auth.google`) | Tier 3 |
 
 New report types: `systemUsage` (staff, admin, hod) and `projects` (faculty, staff, admin, hod). The `student` report gains a totals block: total hours, distinct days and auto sign-outs.
 

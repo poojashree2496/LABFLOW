@@ -29,7 +29,7 @@ On route A, `getActiveUser()` returns the visitor's address only when the visito
 
 | Function | What it does |
 |---|---|
-| `setupInitialise()` | Creates the "LABFLOW Database" spreadsheet, all 37 sheets and headers, the QR secret and the encryption key `PII_KEY`. Idempotent; refuses (`SCHEMA_MISMATCH`) rather than alter a mismatching sheet |
+| `setupInitialise()` | Creates the "LABFLOW Database" spreadsheet, all 39 sheets and headers, the QR secret and the encryption key `PII_KEY`. Idempotent; refuses (`SCHEMA_MISMATCH`) rather than alter a mismatching sheet |
 | `setupBootstrapAdmin('you@karunya.edu')` | The first super admin. Honoured only while no active admin exists |
 | `setupSelfTest()` | Platform checks with real timings: P-256 verify time, lock behaviour, identity, encryption round trip. Read its output |
 | `setupInstallTriggers()` | Installs the five time triggers ([architecture.md](architecture.md)). Safe to run twice; touches only its own triggers |

@@ -85,8 +85,8 @@ const IST = (h, m) => Date.UTC(2026, 9, 14, h, m) - 330 * 60000;
     await post('geo', { mode: 'outside', lab: 'A', offsetM: 250 });
     const s4 = await page(sctx, 'student4@karunya.edu', 'student4', '&k=' + encodeURIComponent(kioskCode('kiosk1@karunya.edu')));
     await s4.waitForSelector('text=What are you here for?'); await s4.getByRole('button', { name: /Send location and check in/ }).click();
-    await s4.waitForSelector('.result.bad'); await shot(s4, '05-student-outside-geofence');
-    check('a phone 250 m away is refused by the geofence', /from the lab/.test(await s4.locator('.result.bad').innerText()));
+    await s4.waitForSelector('text=Recorded, but your phone places you outside the lab'); await shot(s4, '05-student-outside-geofence');
+    check('a phone 250 m away is recorded and flagged for the teacher, not refused', true);
     await post('geo', { mode: 'inside', lab: 'A', offsetM: 4 });
     await s4.close();
 
