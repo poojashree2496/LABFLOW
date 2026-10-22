@@ -37,7 +37,8 @@ def('a-rush', 'Kiosk QR + GPS (A)', 'Class rush: 60 students scan the same kiosk
 });
 def('a-outside', 'Kiosk QR + GPS (A)', 'Honest student outside the geofence', 'FR-11, FR-12', async (T) => {
   const w = T.world({ students: 2, mode: 'A' }); w.open(); const [a, b] = w.students;
-  await T.step('200 m away is refused', 'OUTSIDE_GEOFENCE', () => outcome(w.checkin(a, { geo: w.at(200, 15) })));
+  await T.step('200 m away is recorded, not refused', 'accepted', () => outcome(w.checkin(a, { geo: w.at(200, 15) })));
+  await T.step('...and shows as flagged for the faculty, not present', 'flagged', () => w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster.find((r) => r.studentId === a.studentId).status);
   await T.step('40 m away but 30 m GPS error is forgiven (indoor GPS)', 'accepted', () => outcome(w.checkin(b, { geo: w.at(40, 30) })));
 });
 def('a-spoof-console', 'Kiosk QR + GPS (A)', 'Attack: send the lab\'s coordinates from the hostel (browser console)', 'SRS 6.3, 15.4', async (T) => {
@@ -51,7 +52,7 @@ def('a-spoof-console', 'Kiosk QR + GPS (A)', 'Attack: send the lab\'s coordinate
 });
 def('a-mock-accuracy', 'Kiosk QR + GPS (A)', 'Attack: location faking app reports 0.5 m accuracy', 'FR-30', async (T) => {
   const w = T.world({ students: 1, mode: 'A' }); w.open(); const [s] = w.students;
-  await T.step('Impossible accuracy is refused', 'IMPLAUSIBLE_LOCATION', () => outcome(w.checkin(s, { geo: w.at(1, 0.5) })));
+  await T.step('Impossible accuracy is recorded, not refused', 'accepted', () => outcome(w.checkin(s, { geo: w.at(1, 0.5) })));
   await T.step('A high-severity flag is raised for review', true, () => w.ok(w.staff, 'flags.list', {}).flags.some((f) => f.type === 'implausible_location' && f.severity === 'high'));
 });
 def('a-old-code', 'Kiosk QR + GPS (A)', 'Attack: reuse a photo of the kiosk code taken earlier', 'FR-7, FR-9', async (T) => {

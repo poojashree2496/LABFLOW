@@ -36,9 +36,9 @@ var ROUTES = {
   'cred.mine': { roles: ['student'], fn: function (c, p) { return Creds.listForStudent(c, {}); } },
   'cred.revoke': { roles: ['student', 'staff', 'admin'], rl: [20, 600], fn: function (c, p) { return Creds.revoke(c, p); } },
   'cred.list': { roles: ['staff', 'admin'], fn: function (c, p) { return Creds.listForStudent(c, p); } },
-  'cred.pending': { roles: ['staff', 'admin'], fn: function () { return Creds.listPending(); } },
-  'cred.approve': { roles: ['staff', 'admin'], fn: function (c, p) { return Creds.approve(c, p); } },
-  'cred.reject': { roles: ['staff', 'admin'], fn: function (c, p) { return Creds.reject(c, p); } },
+  'cred.pending': { roles: ['faculty', 'staff', 'admin'], fn: function (c) { return Creds.listPending(c); } },
+  'cred.approve': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Creds.approve(c, p); } },   // faculty: phone-app switches only
+  'cred.reject': { roles: ['faculty', 'staff', 'admin'], fn: function (c, p) { return Creds.reject(c, p); } },
 
   // attendance: student side
   'attend.challenge': { roles: ['student'], rl: [60, 60], fn: function (c, p) { return Attend.challenge(c, p); } },
@@ -60,6 +60,16 @@ var ROUTES = {
   'scan.photo': { roles: ['kiosk', 'user'], rl: [120, 60], fn: function (c, p) { return Attend.scanPhoto(c, p); } },
   'student.identify': { roles: ['staff', 'admin'], rl: [60, 60], fn: function (c, p) { return Attend.identify(c, p); } },
   'labs.occupancy': { roles: ['user', 'kiosk'], rl: [90, 60], fn: function (c) { return Occupancy.list(c); } },
+
+  // tier 3, the phone app (PresenceService.gs). 'app.link' runs without a session (doPost) because it creates one.
+  'app.pairCode': { roles: ['student'], rl: [10, 600], fn: function (c) { return Presence.pairCode(c); } },
+  'app.status': { roles: ['student'], rl: [60, 60], fn: function (c, p) { return Presence.status(c, p); } },
+  'app.scan': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Presence.appScan(c, p); } },
+  'app.ping': { roles: ['student'], rl: [60, 60], maxBytes: 200000, fn: function (c, p) { return Presence.ping(c, p); } },
+  'app.bio': { roles: ['student'], rl: [20, 60], fn: function (c, p) { return Presence.bioRespond(c, p); } },
+  'presence.webPing': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Presence.webPing(c, p); } },
+  'presence.bioNow': { roles: ['user'], rl: [10, 60], fn: function (c, p) { return Presence.bioNow(c, p); } },   // the session's operator (checked in Presence)
+  'attend.override': { roles: ['faculty', 'admin'], fn: function (c, p) { return Presence.override(c, p); } },
 
   // faculty / sessions
   'sessions.day': { roles: ['faculty', 'staff', 'admin', 'hod'], fn: function (c, p) { return Sessions.listForDay(c, p); } },
@@ -206,8 +216,8 @@ function doGet(e) {
  * JSON API for the hosted app. The browser POSTs text/plain (a "simple" request, so no CORS preflight, which Apps
  * Script cannot answer) with body {action, payload, session}. Identity comes ONLY from the session: a call without
  * one is refused even if the browser happens to carry Google cookies for the owner (no cross-site request forgery).
- * Two actions run without a session: 'auth.google' exchanges a Google ID token for one, and 'ui.theme' returns only
- * the site theme so the sign-in screen can wear it.
+ * Three actions run without a session: 'auth.google' exchanges a Google ID token for one, 'app.link' exchanges the
+ * phone app's pairing code for one, and 'ui.theme' returns only the site theme so the sign-in screen can wear it.
  */
 function doPost(e) {
   var body = null;
@@ -215,11 +225,15 @@ function doPost(e) {
   if (!body || typeof body !== 'object' || typeof body.action !== 'string') return json_({ ok: false, error: { code: 'BAD_INPUT', message: 'Invalid request.' } });
   if (body.action === 'auth.google') return json_(signIn_(body.payload));
   if (body.action === 'ui.theme') return json_({ ok: true, data: { uiTheme: Settings.get('uiTheme') } });
+  if (body.action === 'app.link') return json_(appLink_(body.payload));
   return json_(rpc(body.action, body.payload, typeof body.session === 'string' ? body.session : '', true));
 }
 
-function signIn_(payload) {
-  try { return { ok: true, data: Auth.signIn(payload || {}) }; }
+function signIn_(payload) { return sessionFree_(function () { return Auth.signIn(payload || {}); }); }
+/** The phone app trades a single-use pairing code (made by the signed-in web app) for its own session. */
+function appLink_(payload) { return sessionFree_(function () { return Presence.link(payload || {}); }); }
+function sessionFree_(fn) {
+  try { return { ok: true, data: fn() }; }
   catch (e) {
     if (e instanceof AppError) return { ok: false, error: { code: e.code, message: e.message, extra: e.extra || null } };
     var ref = 'E' + Utilities.getUuid().slice(0, 8).toUpperCase();
@@ -241,6 +255,7 @@ function launchJson_(params) {
   params = params || {};
   if (typeof params.k === 'string' && /^[A-Za-z0-9._-]{10,200}$/.test(params.k)) out.k = params.k;
   if (typeof params.s === 'string' && /^[A-Za-z0-9._~-]{40,600}$/.test(params.s)) out.s = params.s;
+  if (params.pairApp === '1') out.pairApp = true;
   return JSON.stringify(out).replace(/</g, '\\u003c');
 }
 

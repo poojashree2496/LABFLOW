@@ -69,8 +69,11 @@ var Creds = {
 
   get: function (credentialId) { return Db.cachedGet('DeviceCredentials', 'credentialId', credentialId, 300); },
 
+  /** A web (browser) key; the phone app's keys (kind 'app', PresenceService.gs) have their own one-phone slot. */
+  _web: function (c) { return c.kind !== 'app'; },
+
   summaryFor: function (studentId) {
-    var all = Db.whereEq('DeviceCredentials', { studentId: studentId });
+    var all = Db.whereEq('DeviceCredentials', { studentId: studentId }).filter(Creds._web);
     var pick = function (c) { return c ? { credentialId: c.credentialId, label: c.label, createdAt: c.createdAt, status: c.status } : null; };
     var active = all.filter(function (c) { return c.status === 'active'; });
     var pending = all.filter(function (c) { return c.status === 'pending_approval'; });
@@ -103,7 +106,7 @@ var Creds = {
       if (U.now() / 1000 > Number(parts[3])) fail('EXPIRED', 'Registration timed out. Start again.');
       st = Attend._verifiedStudent(st.studentId);
       if (Tokens.wasRedeemed(parts[2])) fail('REPLAY', 'This registration code was already used.');
-      var all = Db.whereEq('DeviceCredentials', { studentId: st.studentId });
+      var all = Db.whereEq('DeviceCredentials', { studentId: st.studentId }).filter(Creds._web);
       var active = all.filter(function (c) { return c.status === 'active'; });
       if (all.some(function (c) { return c.status === 'pending_approval'; })) fail('PENDING_EXISTS', 'You already have a device waiting for approval. Visit the lab desk.');
       var max = Settings.get('credentialMaxActive');
@@ -114,7 +117,7 @@ var Creds = {
       var cred = Db.insert('DeviceCredentials', {
         credentialId: U.id('cred'), studentId: st.studentId, userEmail: ctx.email, publicKey: publicKey, alg: 'ES256', label: label,
         status: needsApproval ? 'pending_approval' : 'active', replacesCredentialId: needsApproval && active.length ? active[0].credentialId : '',
-        createdAt: now, approvedBy: needsApproval ? '' : 'auto-first-device', approvedAt: needsApproval ? null : now
+        createdAt: now, approvedBy: needsApproval ? '' : 'auto-first-device', approvedAt: needsApproval ? null : now, kind: 'web'
       });
       Tokens.redeem(parts[2], 'R', st.studentId, '', '', cred.credentialId);
       Audit.log({ actor: ctx.email, role: 'student', action: needsApproval ? 'cred.request_replacement' : 'cred.register', entityType: 'DeviceCredential', entityId: cred.credentialId,
@@ -133,7 +136,10 @@ var Creds = {
     return ctx.student;
   },
 
-  /** In-person approval of a replacement device (lab staff / admin). The old credential stops working immediately. */
+  /** Faculty decide phone-app switches only; browser keys stay with the lab desk (coordinator / super admin). */
+  _mayDecide: function (ctx, c) { return ctx.has('staff') || ctx.has('admin') || (ctx.has('faculty') && c.kind === 'app'); },
+
+  /** In-person approval of a replacement device (lab staff / admin; faculty for the phone app). The old credential stops working immediately. */
   approve: function (ctx, p) {
     V.obj(p);
     var credentialId = V.id(p.credentialId, 'Credential', 'cred');
@@ -141,6 +147,7 @@ var Creds = {
     if (!idChecked) fail('BAD_INPUT', 'Confirm that you checked the student\'s ID in person.');
     return Locks.with(function () {
       var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
+      if (!Creds._mayDecide(ctx, c)) fail('FORBIDDEN', 'Faculty approve phone-app changes only. Browser devices are approved at the lab desk.');
       if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
       if (ctx.student && ctx.student.studentId === c.studentId) fail('FORBIDDEN', 'You cannot approve your own device.');
       var now = U.now();
@@ -149,7 +156,7 @@ var Creds = {
         if (old && old.status === 'active') Db.update('DeviceCredentials', old.credentialId, { status: 'replaced', revokedAt: now, revokedBy: ctx.email, revokeReason: 'replaced by ' + c.credentialId });
       }
       var next = Db.update('DeviceCredentials', credentialId, { status: 'active', approvedBy: ctx.email, approvedAt: now });
-      Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId } });
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId } });
       var st = Db.get('StudentProfiles', c.studentId);
       if (st && st.userId) Notify.toUser(st.userId, 'device', 'New device approved', 'Your new device is active. The old device no longer works.', 'credok:' + credentialId);
       return { credential: Creds._pub(next) };
@@ -162,9 +169,10 @@ var Creds = {
     var reason = V.str(p.reason, 'Reason', { min: 3, max: 200 });
     return Locks.with(function () {
       var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
+      if (!Creds._mayDecide(ctx, c)) fail('FORBIDDEN', 'Faculty approve phone-app changes only. Browser devices are approved at the lab desk.');
       if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
       var next = Db.update('DeviceCredentials', credentialId, { status: 'revoked', revokedAt: U.now(), revokedBy: ctx.email, revokeReason: 'rejected: ' + reason });
-      Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: 'cred.reject', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason } });
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'cred.reject', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, reason: reason } });
       return { credential: Creds._pub(next) };
     });
   },
@@ -194,7 +202,7 @@ var Creds = {
     });
   },
 
-  _pub: function (c) { return { credentialId: c.credentialId, studentId: c.studentId, label: c.label, status: c.status, createdAt: c.createdAt, approvedBy: c.approvedBy, approvedAt: c.approvedAt, revokedAt: c.revokedAt, revokeReason: c.revokeReason, replacesCredentialId: c.replacesCredentialId }; },
+  _pub: function (c) { return { credentialId: c.credentialId, studentId: c.studentId, label: c.label, status: c.status, kind: c.kind || 'web', createdAt: c.createdAt, approvedBy: c.approvedBy, approvedAt: c.approvedAt, revokedAt: c.revokedAt, revokeReason: c.revokeReason, replacesCredentialId: c.replacesCredentialId }; },
 
   listForStudent: function (ctx, p) {
     var studentId;
@@ -204,9 +212,9 @@ var Creds = {
   },
 
   /** Staff queue: replacement requests awaiting in-person approval. */
-  listPending: function () {
+  listPending: function (ctx) {
     var students = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
-    return { pending: Db.whereEq('DeviceCredentials', { status: 'pending_approval' }).map(function (c) {
+    return { pending: Db.whereEq('DeviceCredentials', { status: 'pending_approval' }).filter(function (c) { return !ctx || Creds._mayDecide(ctx, c); }).map(function (c) {
       var s = students[c.studentId] || {};
       return Object.assign(Creds._pub(c), { studentName: s.name, rollNo: s.rollNo });
     }) };

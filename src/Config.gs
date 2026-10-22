@@ -32,11 +32,11 @@ var Cfg = (function () {
     Events: 'labEventId name labId coordinatorEmail:s:c startAt:n endAt:n breakStart:n breakEnd:n capacity:n sessionId status description createdBy createdAt:n',
     EventGuests: 'guestId labEventId name organisation addedBy addedAt:n',
     Sessions: 'sessionId type labId courseId facultyId title slotId slotKey:s:u section date scheduledStart:n scheduledEnd:n status openedAt:n openedBy closedAt:n closedBy closeReason openToAll:b rescanMode nextRescanAt:n rescansDone:n requestedBy approvedBy approvedAt:n notes createdBy createdAt:n labEventId breakStart:n breakEnd:n archivedAt:n checkinMode',
-    AttendanceEvents: 'eventId sessionId labId studentId type source kioskId credentialId nonce at:n recordedBy reason approvalStatus approvedBy ref createdAt:n mode method scannedBy scannerRole geofence distanceM:n accuracyM:n entryReason assurance projectId assetId',
+    AttendanceEvents: 'eventId sessionId labId studentId type source kioskId credentialId nonce at:n recordedBy reason approvalStatus approvedBy ref createdAt:n mode method scannedBy scannerRole geofence distanceM:n accuracyM:n entryReason assurance projectId assetId outcome',
     AttendanceSummaries: 'sumId sessionId studentId status firstIn:n lastOut:n verifiedUntil:n verifiedMinutes:n flags:j computedAt:n',
     SpotChecks: 'checkId sessionId studentId requestedBy requestedAt:n outcome resolvedBy resolvedAt:n note',
     RescanWindows: 'windowId sessionId kind openedAt:n closesAt:n openedBy status',
-    DeviceCredentials: 'credentialId studentId:s:c userEmail publicKey:s:u alg label status replacesCredentialId createdAt:n approvedBy approvedAt:n revokedAt:n revokedBy revokeReason lastUsedAt:n',
+    DeviceCredentials: 'credentialId studentId:s:c userEmail publicKey:s:u alg label status replacesCredentialId createdAt:n approvedBy approvedAt:n revokedAt:n revokedBy revokeReason lastUsedAt:n kind bioPublicKey',
     Redemptions: 'nonce purpose studentId sessionId kioskId at:n eventId',
     Flags: 'flagId type severity studentId sessionId labId detail:j status createdAt:n resolvedBy resolvedAt:n note dedupeKey:s:u',
     Categories: 'categoryId name:s:u trackingMode notes workstation:b',
@@ -55,6 +55,8 @@ var Cfg = (function () {
     AuditCheckpoints: 'checkpointId seq:n hash at:n note',
     SystemLog: 'logId at:n level source code message detail:j',
     JobRuns: 'runId job startedAt:n finishedAt:n status detail:j',
+    PresencePings: 'pingId sessionId studentId credentialId source seq:n at:n receivedAt:n inLab:b distanceM:n accuracyM:n mock:b posKey verdict',
+    BioChecks: 'bioId slotKey:s:u sessionId studentId kind dueAt:n deliveredAt:n deadline:n respondedAt:n outcome requestedBy nonce',
     Projects: 'projectId title description ownerStudentId groupId supervisorFacultyId labId startDate endDate status outcome outcomeLink outcomeAt:n approvedBy approvedAt:n createdAt:n updatedAt:n'
   };
 
@@ -111,6 +113,17 @@ var Cfg = (function () {
     crScanningEnabled: { group: 'Device QR (B)', type: 'bool', def: true, desc: 'Class representatives may scan classmates during their own open session.' },
     backToBackSeconds: { group: 'Device QR (B)', type: 'int', def: 2, min: 0, max: 30, desc: 'Two students scanned on the same phone scanner closer together than this are flagged (one person, two phones). 0 = off.' },
 
+    // tier 3: the LABFLOW phone app (Android)
+    appPingSeconds: { group: 'Phone app (tier 3)', type: 'int', def: 120, min: 60, max: 900, desc: 'After check-in the app reports the location of the phone this often until the session ends, also with the screen locked.' },
+    appRadiusSlackM: { group: 'Phone app (tier 3)', type: 'int', def: 30, min: 0, max: 500, desc: 'How loose the "still at the lab" check is: metres added to the lab radius for the reports from the app. A student just outside the door still counts as present.' },
+    bioChecksPerSession: { group: 'Phone app (tier 3)', type: 'int', def: 2, min: 0, max: 2, desc: 'Fingerprint checks at random times per student per session (never near the start or end, well apart). Faculty can also ask for one at any time.' },
+    bioResponseSeconds: { group: 'Phone app (tier 3)', type: 'int', def: 120, min: 60, max: 600, desc: 'Time a student has to answer a fingerprint check after the phone receives it.' },
+    presentCoveragePct: { group: 'Phone app (tier 3)', type: 'int', def: 75, min: 10, max: 100, desc: 'Present needs the phone at the lab for at least this % of the session (and every fingerprint check passed, nothing flagged). Below it the result is Partial.' },
+    absentCoveragePct: { group: 'Phone app (tier 3)', type: 'int', def: 40, min: 0, max: 100, desc: 'Below this % of the session at the lab the result is Absent.' },
+    frozenPings: { group: 'Phone app (tier 3)', type: 'int', def: 6, min: 3, max: 50, desc: 'This many reports in a row with exactly the same location and accuracy are flagged (real GPS always jitters).' },
+    webPingMinSeconds: { group: 'Phone app (tier 3)', type: 'int', def: 300, min: 60, max: 3600, desc: 'Tier 1: while the LABFLOW page of the student is open after check-in, it reports the location at random times, at least this far apart.' },
+    webPingMaxSeconds: { group: 'Phone app (tier 3)', type: 'int', def: 900, min: 60, max: 7200, desc: 'Tier 1: random location checks are at most this far apart.' },
+
     // labs, events, live view
     overstayAlertMinutes: { group: 'Labs and events', type: 'int', def: 10, min: 0, max: 120, desc: 'Staff are alerted about students still inside this long after the lab closing time.' },
     occupancyRefreshSeconds: { group: 'Labs and events', type: 'int', def: 5, min: 3, max: 60, desc: 'Live counters and rosters refresh this often.' },
@@ -151,6 +164,8 @@ var Cfg = (function () {
   var SESSION_TYPES = ['class', 'event', 'research', 'openlab'];
   var CONDITIONS = ['good', 'fair', 'poor', 'damaged'];
   var CHECKIN_MODES = ['A', 'B', 'AB'];
+  /** Session check-in choices: the lab modes plus C, the phone app (tier 3), which also takes A and B scans, flagged. */
+  var SESSION_MODES = ['A', 'B', 'AB', 'C'];
   var ENTRY_REASONS = ['class', 'event', 'research', 'openlab'];
   /** Bump when the privacy notice text changes; users accept it again on their next visit. */
   var CONSENT_VERSION = '2026-10';
@@ -158,13 +173,13 @@ var Cfg = (function () {
   return {
     TZ: TZ, TZ_OFFSET_MIN: TZ_OFFSET_MIN, ROLES: ROLES, DEFAULT_ALLOWED_DOMAINS: DEFAULT_ALLOWED_DOMAINS,
     SCHEMA: SCHEMA, SETTINGS: SETTINGS, LAB_TYPES: LAB_TYPES, SESSION_TYPES: SESSION_TYPES, CONDITIONS: CONDITIONS,
-    CHECKIN_MODES: CHECKIN_MODES, ENTRY_REASONS: ENTRY_REASONS, CONSENT_VERSION: CONSENT_VERSION,
+    CHECKIN_MODES: CHECKIN_MODES, SESSION_MODES: SESSION_MODES, ENTRY_REASONS: ENTRY_REASONS, CONSENT_VERSION: CONSENT_VERSION,
     ID_PREFIX: {
       user: 'USR', student: 'STU', faculty: 'FAC', lab: 'LAB', kiosk: 'KSK', course: 'CRS', roster: 'RST', map: 'FCM',
       slot: 'SLT', session: 'SES', event: 'EVT', spot: 'SPC', window: 'RSW', cred: 'CRD', category: 'CAT', asset: 'AST',
       kit: 'KIT', component: 'KCP', group: 'GRP', member: 'GMB', loan: 'LON', loanItem: 'LIT', tx: 'TXN',
       reservation: 'RSV', notification: 'NTF', audit: 'AUD', checkpoint: 'CHK', log: 'LOG', run: 'RUN',
-      labEvent: 'LEV', guest: 'GST', rep: 'CRP', flag: 'FLG', request: 'EQR', project: 'PRJ'
+      labEvent: 'LEV', guest: 'GST', rep: 'CRP', flag: 'FLG', request: 'EQR', project: 'PRJ', ping: 'PNG', bio: 'BIO'
     },
     /** Script-property keys (secrets and deployment configuration; never stored in a sheet). */
     PROP: { DB_ID: 'DB_SPREADSHEET_ID', HMAC: 'QR_HMAC_SECRET', BOOTSTRAP_ADMIN: 'BOOTSTRAP_ADMIN_EMAIL', DOMAINS: 'ALLOWED_DOMAINS',

@@ -198,12 +198,13 @@ var Checkin = {
       var ll = V.latLng(g.lat, g.lng);
       c.reading = { lat: ll.lat, lng: ll.lng, acc: V.num(g.accuracy, 'Accuracy', 0, 100000) };
     } },
-    { id: 'geo_plausible', label: 'Reading is physically plausible (FR-30)', run: function (c) {
+    { id: 'geo_plausible', label: 'Reading is physically plausible (FR-30); an impossible one is recorded and flagged', run: function (c) {
       if (c.noGeo) return;
       var min = Settings.get('minPlausibleAccuracyM');
-      if (c.reading.acc < min) { c.reading = null; fail('IMPLAUSIBLE_LOCATION', 'Your phone reported a location more precise than phones can measure. Turn off any location app and try again.'); }
+      // Never refused: the check-in is recorded, flagged for the faculty, and not counted as present until reviewed.
+      if (c.reading.acc < min) { c.geoFlag = 'implausible_location'; c.assurance = 'flagged'; }
     } },
-    { id: 'geofence', label: 'Inside the lab geofence (haversine with accuracy allowance, FR-11/12)', run: function (c) {
+    { id: 'geofence', label: 'Inside the lab geofence (haversine with accuracy allowance, FR-11/12); outside is recorded and flagged', run: function (c) {
       if (c.noGeo) return;
       var lab = c.lab, r = c.reading;
       c.reading = null; // raw coordinates are not kept beyond this step (FR-31)
@@ -211,8 +212,8 @@ var Checkin = {
       var d = U.haversineM(r.lat, r.lng, lab.latitude, lab.longitude);
       var allowance = Math.min(r.acc, Settings.get('gpsAccuracyAllowanceM')), radius = Labs.radiusOf(lab);
       c.distanceM = Math.round(d * 10) / 10; c.accuracyM = Math.round(r.acc * 10) / 10;
-      if (d - allowance > radius) { c.geofence = 'fail'; fail('OUTSIDE_GEOFENCE', 'Your phone places you ' + U.distanceBand(d) + ' from the lab (allowed: ' + radius + ' m). Move inside the lab, wait for a better GPS fix, or ask your faculty to verify you.', { band: U.distanceBand(d) }); }
-      c.geofence = 'pass'; c.assurance = 'standard';
+      if (d - allowance > radius) { c.geofence = 'fail'; c.geoFlag = c.geoFlag || 'outside_geofence'; c.assurance = 'flagged'; c.band = U.distanceBand(d); return; }
+      c.geofence = 'pass'; if (!c.geoFlag) c.assurance = 'standard';
     } },
     { id: 'code_once', locked: true, label: 'Kiosk code used once by this student (FR-10)', run: function (c) {
       // Validation and location acquisition can outlive account changes or the pass itself.

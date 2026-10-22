@@ -90,26 +90,34 @@ test('code age, pass expiry, forged and foreign codes', () => {
   assert.equal(w.err(w.faculty, 'checkin.open', { code: w.kioskCode() }).code, 'FORBIDDEN');
 });
 
-test('geofence: outside rejected, accuracy allowance factored in (FR-11/12), no coordinates stored', () => {
-  const w = ready(3); const [a, b, c] = w.students;
+test('geofence: outside is recorded and flagged, never refused; accuracy allowance factored in (FR-11/12), no coordinates stored', () => {
+  const w = ready(4); const [a, b, c, d] = w.students;
   const far = w.checkin(a, { geo: w.at(200, 15) });
-  assert.equal(far.error.code, 'OUTSIDE_GEOFENCE'); assert.match(far.error.message, /100-500m/);
+  assert.equal(far.ok, true); assert.equal(far.data.geofence, 'fail'); assert.equal(far.data.assurance, 'flagged');
   // 40 m away with 30 m reported accuracy: 40 - min(30, 30) = 10 <= 20 -> inside
-  assert.equal(w.checkin(b, { geo: w.at(40, 30) }).ok, true, 'indoor GPS error forgiven');
+  assert.equal(w.checkin(b, { geo: w.at(40, 30) }).data.geofence, 'pass', 'indoor GPS error forgiven');
   // 40 m away with 5 m accuracy: 35 > 20 -> outside
-  assert.equal(w.checkin(c, { geo: w.at(40, 5) }).error.code, 'OUTSIDE_GEOFENCE');
+  assert.equal(w.checkin(c, { geo: w.at(40, 5) }).data.geofence, 'fail');
   // the allowance is capped: 200 m accuracy does not let someone 120 m away in
-  assert.equal(w.checkin(c, { geo: w.at(120, 200) }).error.code, 'OUTSIDE_GEOFENCE');
+  assert.equal(w.checkin(d, { geo: w.at(120, 200) }).data.geofence, 'fail');
   const flags = w.ok(w.faculty, 'flags.list', {}).flags;
-  assert.ok(flags.some((f) => f.type === 'outside_geofence' && f.studentId === a.studentId));
+  assert.ok(flags.some((f) => f.type === 'outside_geofence' && f.studentId === a.studentId && f.detail.band === '100-500m'));
+  // a flagged check-in is never counted as present until the faculty decide
+  const roster = w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster, row = (s) => roster.find((x) => x.studentId === s.studentId);
+  assert.equal(row(a).status, 'flagged'); assert.ok(row(a).flags.includes('location_flagged'));
+  assert.equal(row(b).status, 'present');
+  w.ok(w.faculty, 'attend.override', { sessionId: w.sid, studentId: a.studentId, outcome: 'present', reason: 'Seen in the room' });
+  const after = w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster.find((x) => x.studentId === a.studentId);
+  assert.equal(after.status, 'present'); assert.equal(after.overridden, true);
+  assert.ok(w.eval("Db.readAll('AuditEvents')").some((e) => e.action === 'attend.override'));
   const audit = JSON.stringify(w.eval("Db.readAll('AuditEvents')"));
   assert.ok(audit.indexOf(String(w.at(200, 15).lat).slice(0, 8)) < 0, 'coordinates never reach the audit log');
 });
 
-test('mock-location heuristics: impossible accuracy rejected and flagged; identical readings flagged (FR-30)', () => {
+test('mock-location heuristics: impossible accuracy recorded and flagged, not refused; identical readings flagged (FR-30)', () => {
   const w = ready(2); const [a, b] = w.students;
   const spoof = w.checkin(a, { geo: w.at(1, 0.5) });
-  assert.equal(spoof.error.code, 'IMPLAUSIBLE_LOCATION');
+  assert.equal(spoof.ok, true); assert.equal(spoof.data.assurance, 'flagged');
   assert.ok(w.ok(w.staff, 'flags.list', {}).flags.some((f) => f.type === 'implausible_location' && f.severity === 'high'));
   // the same exact reading in two different sessions
   assert.equal(w.checkin(b, { geo: w.at(7.25, 6.5) }).ok, true);

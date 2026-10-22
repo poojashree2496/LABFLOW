@@ -309,7 +309,9 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
         m.state === 'in' && m.work ? h('p', { class: 'hint', style: { overflowWrap: 'anywhere' } }, 'Project: ' + (m.work.projectTitle || 'Not selected') + ' · System: ' + (m.work.assetName || 'Own laptop / no system')) : null,
         s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,
+        need && a && String(s.labMode).charAt(0) === 'C' ? h('div', { class: 'card sky', style: { marginTop: '8px' } }, h('strong', null, 'Phone app session. '), 'Check in with the LABFLOW app (Device tab: link the app). Without it, for example on an iPhone, scan the lab screen as usual; your check-in is flagged for your teacher to review.') : null,
         need && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Check in by scanning the QR on the lab screen with your phone camera.') : null, warn,
+        s.status === 'open' && m.state === 'in' && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'While this page is open, LABFLOW checks your location at random times to confirm you are still at the lab.') : null,
         h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' } },
           s.status === 'open' && m.state === 'in' ? ui.button('Change system / project', { onClick: () => editWork(s, reload) }) : null,
           need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => scanLabScreen() }) : null,
@@ -319,7 +321,34 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
     }));
   });
   LF.every(15000, () => { if (!document.querySelector('.modal-back')) reload(); });
+  api('sessions.mine').then((r) => { const s = r.sessions.find((x) => x.status === 'open' && x.mine.state === 'in' && hasMode(x, 'A')); if (s) randomLocationChecks(s.sessionId); }).catch(() => {});
 } });
+/* Tier 1: while the page is open after check-in, report the location at random times the server picks. A hidden page
+   waits and reports as soon as it is visible again. Nothing is shown unless the check places the phone away. */
+let locTimer = null, locSession = null;
+function randomLocationChecks(sessionId) {
+  if (locSession === sessionId || !navigator.geolocation) return;
+  locSession = sessionId; clearTimeout(locTimer);
+  const send = (geo) => api('presence.webPing', geo ? { sessionId, geo } : { sessionId }).then((r) => {
+    if (r.inLab === false) LF.toast('Your location looks away from the lab. Your teacher will see this.', 'bad');
+    if (r.next) schedule(r.next * 1000); else locSession = null;
+  }).catch(() => schedule(300000));
+  const due = () => {
+    if (document.hidden) { document.addEventListener('visibilitychange', due, { once: true }); return; }
+    navigator.geolocation.getCurrentPosition((p) => send({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => send(null), { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  };
+  const schedule = (ms) => { clearTimeout(locTimer); locTimer = setTimeout(due, ms); };
+  schedule(60000 + Math.floor(Math.random() * 240000));
+}
+/* Tier 3: the signed-in web app makes a single-use code; the LABFLOW Android app opens with it and links this account. */
+LF.linkPhoneApp = async () => {
+  const r = await api('app.pairCode');
+  const qr = h('div', { class: 'qr-frame', style: { maxWidth: '220px', margin: '0 auto' } }, LF.util.qrSvg(r.link));
+  LF.modal('Link the LABFLOW phone app', h('div', { style: { display: 'grid', gap: '12px' } },
+    h('p', { style: { margin: 0 } }, 'On the phone with the LABFLOW app: tap the button. On a laptop: open the app on your phone and scan this code. It works once and expires at ' + fmt.time(r.expiresAt) + '.'),
+    h('a', { class: 'btn btn-primary', href: r.link, style: { justifyContent: 'center' } }, 'Open the LABFLOW app'), qr,
+    h('p', { class: 'hint', style: { margin: 0 } }, 'Your first phone is linked at once. A new phone later needs your teacher\'s approval. Android only for now.')));
+};
 /* ------------------------------------------------------------------ History */
 LF.register({ role: 'student', id: 'history', label: 'Attendance', icon: 'calendar', render(root) {
   const out = h('div'); root.append(h('h1', { class: 't-h1' }, 'Attendance history'), out);
@@ -353,12 +382,18 @@ LF.register({ role: 'student', id: 'device', label: 'Device', icon: 'phone', ren
     clear(box).append(ui.skeleton(3));
     let creds, local;
     try { [creds, local] = await Promise.all([api('cred.mine'), Device.load()]); } catch (e) { return clear(box).append(ui.errorBox(e, draw)); }
+    const apps = creds.credentials.filter((c) => c.kind === 'app' && (c.status === 'active' || c.status === 'pending_approval'));
+    creds.credentials = creds.credentials.filter((c) => c.kind !== 'app');
     const gate = deviceGate(me), live = creds.credentials.filter((c) => c.status === 'active' || c.status === 'pending_approval');
     const hasActive = creds.credentials.some((c) => c.status === 'active'), anyHistory = creds.credentials.length > 0;
     const thisId = local ? local.credentialId : null;
     const mismatch = local && !creds.credentials.some((c) => c.credentialId === local.credentialId && (c.status === 'active' || c.status === 'pending_approval'));
     clear(box).append(
       gate,
+      h('section', { class: 'card', 'aria-label': 'Phone app' }, h('h2', { class: 't-h2' }, 'LABFLOW phone app (Android)'),
+        h('p', { class: 'hint' }, 'Some sessions use the phone app: it confirms you stay at the lab for the whole session and asks for your fingerprint now and then. One phone per student.'),
+        apps.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '10px' } }, apps.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), h('div', { class: 'hint' }, 'Linked ' + fmt.dt(c.createdAt))), ui.status(c.status)))) : null,
+        st && st.status === 'verified' ? h('div', { style: { marginTop: '12px' } }, ui.button(apps.length ? 'Link a new phone' : 'Link the phone app', { kind: apps.length ? '' : 'primary', icon: 'phone', onClick: () => LF.linkPhoneApp().catch(LF.fail) })) : null),
       h('section', { class: 'card', 'aria-label': 'Registered devices' }, h('h2', { class: 't-h2' }, 'Registered devices'),
         h('p', { class: 'hint' }, 'Labs that use device QR codes need this. In labs that show a QR on a screen, you scan that instead and do not need a registered device.'),
         live.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '10px' } }, live.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), c.credentialId === thisId ? h('span', { style: { marginLeft: '8px' } }, ui.badge('this phone', 'info')) : null, h('div', { class: 'hint' }, 'Registered ' + fmt.dt(c.createdAt))), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, ui.status(c.status),

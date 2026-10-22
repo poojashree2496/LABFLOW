@@ -36,7 +36,7 @@ function run() {
       students: CAST.map((c) => { const s = S[c.key], r = rows.find((x) => x.studentId === s.studentId) || {};
         return { key: c.key, place: s.shown, state: r.state || 'out', status: r.status || 'absent', flags: r.flags || [], minutes: r.verifiedMinutes || 0, lastProof: s.lastProof || null }; }) });
   };
-  const outcome = (r) => (r.ok ? { ok: true } : { ok: false, code: r.error.code, message: r.error.message });
+  const outcome = (r) => (r.ok ? { ok: true, flagged: r.data.assurance === 'flagged' } : { ok: false, code: r.error.code, message: r.error.message });
   /** A student's phone scans the door screen. The phone reports the location it is told to (the hostel trick sends the lab's). */
   const scan = (key, action, reportFrom, text) => {
     const s = S[key], r = w.checkin(s, { action, geo: geo(reportFrom || s.place) });
@@ -62,11 +62,11 @@ function run() {
       : 'Later the teacher calls another rescan. Same rule: 90 seconds, at the door, inside the geofence.');
     w.advance(20 * 1000);
     ['asha', 'karthik', 'divya'].filter(inLab).forEach((k) => { S[k].shown = 'door'; scan(k, 'rescan', 'door', S[k].name + ' walks to the door screen and confirms. Proven present at this moment.'); S[k].shown = 'desk'; });
-    if (S.ravi.place === 'canteen' && !ravisTry) { ravisTry = true; w.advance(10 * 1000); scan('ravi', 'rescan', 'canteen', 'Ravi sees the alert and tries to confirm from the canteen. Refused: his phone is 300 m from the lab.'); }
+    if (S.ravi.place === 'canteen' && !ravisTry) { ravisTry = true; w.advance(10 * 1000); scan('ravi', 'rescan', 'canteen', 'Ravi sees the alert and confirms from the canteen. Recorded but flagged: his phone is 300 m from the lab, so it proves nothing and the teacher reviews him.'); }
     goTo(closesAt + 1000);
     w.e.run('trg_tickSessions()');
     snap(kind === 'first'
-      ? 'The window closes. Meena never confirmed: she cannot see the door screen from the hostel, and nobody knew the time in advance. Ravi is outside. Anyone who did not confirm is now "missed rescan", and their time stops at their last proof.'
+      ? 'The window closes. Meena never confirmed: she cannot see the door screen from the hostel, and nobody knew the time in advance. Ravi confirmed from outside, so he is flagged for the teacher. Anyone who did not confirm is now "missed rescan", and their time stops at their last proof.'
       : 'The second window closes. Everyone in the room has proved presence twice; Ravi and Meena still have nothing after their first scan.');
   };
 

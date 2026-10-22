@@ -222,9 +222,10 @@ var Sessions = {
       }
       var mode = p.rescanMode ? V.enumOf(p.rescanMode, 'Rescan mode', ['off', 'random']) : s.rescanMode;
       if (s.type === 'openlab') mode = 'off';
-      var cm = p.checkinMode ? V.enumOf(p.checkinMode, 'Check-in mode', ['A', 'B', 'AB']) : (s.checkinMode || '');
+      var cm = p.checkinMode ? V.enumOf(p.checkinMode, 'Check-in mode', Cfg.SESSION_MODES) : (s.checkinMode || '');
       var labMode = Labs.modeOf(Db.get('Labs', s.labId));
-      if (cm && !Sessions._within(cm, labMode)) fail('MODE_DISABLED', 'This lab is set up for ' + labMode + ' only. Ask an admin to change the check-in mode of the lab.');
+      // C (the phone app) scans the kiosk code, so the lab needs kiosk QR (A).
+      if (cm && !Sessions._within(cm === 'C' ? 'A' : cm, labMode)) fail('MODE_DISABLED', 'This lab is set up for ' + labMode + ' only. Ask an admin to change the check-in mode of the lab.');
       var next = Db.update('Sessions', s.sessionId, { status: 'open', openedAt: now, openedBy: ctx.email, rescanMode: mode, rescansDone: 0, nextRescanAt: mode === 'random' ? Sessions._planRescan(now, s.scheduledEnd) : null, checkinMode: cm });
       Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: overrides.length ? 'session.open.override' : 'session.open', entityType: 'Session', entityId: s.sessionId, detail: { overrides: overrides, rescanMode: mode } });
       Occupancy.invalidate(s.labId);
@@ -233,12 +234,16 @@ var Sessions = {
   },
 
   /** Random time between minFraction and maxFraction of the remaining session; null if the session is too short. */
-  /** Check-in mode in force for a session: the one its faculty chose at opening (A kiosk QR + GPS, B device QR, AB both),
-   *  else the lab's. A choice the lab no longer supports falls back to the lab's mode. */
+  /** Check-in mode in force for a session: the one its faculty chose at opening (A kiosk QR + GPS, B device QR, AB both,
+   *  C the phone app), else the lab's. A choice the lab no longer supports falls back to the lab's mode. */
   modeOf: function (s, lab) {
     var labMode = Labs.modeOf(lab);
+    // C = the phone app (tier 3). It keeps the lab's modes, so students without the app (iPhone) still check in, flagged.
+    if (s && s.checkinMode === 'C' && labMode.indexOf('A') >= 0) return 'C' + labMode;
     return s && s.checkinMode && Sessions._within(s.checkinMode, labMode) ? s.checkinMode : labMode;
   },
+  /** Is this a phone-app (tier 3) session? */
+  isApp: function (s, lab) { return Sessions.modeOf(s, lab || Db.cachedGet('Labs', 'labId', s.labId, 120)).charAt(0) === 'C'; },
   allows: function (s, lab, mode) { return !!lab && Sessions.modeOf(s, lab).indexOf(mode) >= 0; },
   _within: function (mode, labMode) { return String(mode).split('').every(function (m) { return labMode.indexOf(m) >= 0; }); },
 

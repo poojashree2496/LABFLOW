@@ -12,7 +12,18 @@ function howCell(x) {
   if (!x.method) return '-';
   return h('span', { class: 'pill-row' }, ui.badge(x.method === 'kiosk' ? 'kiosk' : x.method === 'scanner' ? 'phone scan' : x.method, ''),
     x.scannerRole === 'cr' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by CR', 'warn')) : x.scannerRole === 'coordinator' ? h('span', { title: 'Scanned by ' + x.scannedBy }, ui.badge('by event lead', 'info')) : null,
-    x.geofence === 'pass' ? ui.badge('GPS ok', 'good') : x.geofence === 'na' ? ui.badge('no GPS', 'warn') : null, x.assurance === 'lower' ? ui.badge('lower assurance', 'warn') : null);
+    x.geofence === 'pass' ? ui.badge('GPS ok', 'good') : x.geofence === 'fail' ? ui.badge('outside the lab', 'bad') : x.geofence === 'na' ? ui.badge('no GPS', 'warn') : null, x.assurance === 'lower' ? ui.badge('lower assurance', 'warn') : x.assurance === 'flagged' ? ui.badge('flagged', 'bad') : null);
+}
+/** Phone app (tier 3): last report, at the lab now, share of the session at the lab, fingerprint checks, open flags. */
+const CHECK_KIND = { passed: 'good', pending: 'info', missed: 'bad', failed: 'bad' };
+function appCell(x) {
+  const a = x.app;
+  if (!a) return '-';
+  if (!a.lastReportAt && !a.usesApp) return h('span', { class: 'pill-row' }, x.firstIn ? ui.badge('no app', 'warn') : '-', a.flags.map((f) => ui.badge(f.replace(/_/g, ' '), 'bad')));
+  return h('div', { style: { display: 'grid', gap: '4px' } },
+    h('span', { class: 'pill-row' }, a.atLab === true ? ui.badge('at the lab', 'good') : a.atLab === false ? ui.badge('away', 'bad') : ui.badge('no fix', 'warn'), a.coveragePct !== null ? ui.badge(a.coveragePct + '% of session', a.coveragePct >= 75 ? 'good' : 'warn') : null),
+    h('span', { class: 'hint' }, a.lastReportAt ? 'Last report ' + fmt.time(a.lastReportAt) + (a.lastDistanceM !== null ? ' · ' + Math.round(a.lastDistanceM) + ' m' : '') : 'No report yet'),
+    a.checks.length || a.flags.length ? h('span', { class: 'pill-row' }, a.checks.map((k) => ui.badge('fingerprint ' + k.outcome, CHECK_KIND[k.outcome] || '')), a.flags.map((f) => ui.badge(f.replace(/_/g, ' '), 'bad'))) : null);
 }
 
 /** Shared by faculty and admin. */
@@ -27,14 +38,15 @@ LF.sessionCard = function (s, reload) {
   return h('article', { class: 'card', 'aria-label': s.title },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
       h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + times(s) + (s.section ? ' · Batch ' + s.section : '') + (s.facultyName ? ' · ' + s.facultyName : ''))),
-      h('div', { class: 'pill-row' }, ui.badge(TYPE_LABEL[s.type] || s.type, ''), s.labMode ? ui.badge(s.labMode === 'A' ? 'kiosk QR + GPS' : s.labMode === 'B' ? 'device QR' : 'both modes', 'info') : null, ui.status(s.status))),
+      h('div', { class: 'pill-row' }, ui.badge(TYPE_LABEL[s.type] || s.type, ''), s.labMode ? ui.badge(s.labMode.charAt(0) === 'C' ? 'phone app (tier 3)' : s.labMode === 'A' ? 'kiosk QR + GPS' : s.labMode === 'B' ? 'device QR' : 'both modes', 'info') : null, ui.status(s.status))),
     c ? h('div', { class: 'pill-row', style: { marginTop: '10px' } }, ui.badge('Inside ' + c.inside + (c.capacity ? ' / ' + c.capacity : ''), c.overCapacity ? 'bad' : 'good'), c.onBreak ? ui.badge('on break', 'warn') : null, ui.badge('Left ' + c.left, ''), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : ui.badge('Open to all', 'info'), c.absent !== null ? ui.badge('Absent ' + c.absent, c.absent ? 'warn' : '') : null, c.unverifiedExits ? ui.badge('Exit not scanned ' + c.unverifiedExits, 'warn') : null, c.flagged ? ui.badge('Flagged ' + c.flagged, 'bad') : null) : null,
     s.notes ? h('div', { class: 'hint', style: { marginTop: '6px' } }, s.notes) : null,
     actions.length ? h('div', { class: 'toolbar', style: { marginTop: '12px' } }, actions) : null);
 };
 function openFlow(s, reload, override) {
-  const labMode = s.labMode || 'A', modes = [{ value: 'A', label: 'Kiosk QR + GPS (recommended)' }, { value: 'B', label: 'Device QR, scanned in the room' }, { value: 'AB', label: 'Both' }].filter((x) => x.value.split('').every((c) => labMode.includes(c)));
-  const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence rescan at any time from the Live roster.' }) : null;
+  const labMode = (s.labMode || 'A').replace('C', ''), modes = [{ value: 'A', label: 'Tier 1: kiosk QR + GPS, random location checks (recommended)' }, { value: 'B', label: 'Tier 2: device QR, scanned in the room' }, { value: 'AB', label: 'Tiers 1 and 2' }, { value: 'C', label: 'Tier 3: phone app, location for the whole session + fingerprint checks' }]
+    .filter((x) => (x.value === 'C' ? 'A' : x.value).split('').every((c) => labMode.includes(c)));
+  const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence rescan at any time from the Live roster. Tier 3 still accepts students without the app (iPhones), flagged for you to review.' }) : null;
   const isAdmin = LF.me.roles.includes('admin');
   const ov = isAdmin ? ui.field({ name: 'override', label: 'Admin override (outside the time window or lab busy)', type: 'checkbox', value: !!override }) : null;
   const msg = h('div', { class: 'err', role: 'alert', hidden: true });
@@ -55,8 +67,19 @@ function cancelFlow(s, reload) {
 
 /* ------------------------------------------------------------------ Today */
 LF.register({ role: 'faculty', id: 'today', label: 'Today', icon: 'home', render(root) {
-  const top = h('div', { class: 'grid-stats' }), list = h('div', { style: { display: 'grid', gap: '12px' } }), date = h('input', { class: 'input', type: 'date', value: fmt.todayIst(), 'aria-label': 'Date', style: { maxWidth: '180px' } });
-  root.append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h1', { class: 't-h1' }, 'Today\'s labs'), date), top, list);
+  const phones = h('div'), top = h('div', { class: 'grid-stats' }), list = h('div', { style: { display: 'grid', gap: '12px' } }), date = h('input', { class: 'input', type: 'date', value: fmt.todayIst(), 'aria-label': 'Date', style: { maxWidth: '180px' } });
+  root.append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h1', { class: 't-h1' }, 'Today\'s labs'), date), top, phones, list);
+  /* Phone-app switches wait for a teacher: check the student, then approve. The old phone stops working at once. */
+  const drawPhones = () => api('cred.pending').then((r) => {
+    clear(phones);
+    if (!r.pending.length) return;
+    phones.append(h('section', { class: 'card warn', 'aria-label': 'Phone switch requests' }, h('h2', { class: 't-h2' }, 'Phone switch requests'),
+      h('p', { class: 'hint' }, 'A student linked the LABFLOW app on a new phone. Approve it only after checking it is really them (ID card).'),
+      h('div', { style: { display: 'grid', gap: '8px' } }, r.pending.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, (c.studentName || '') + ' · ' + (c.rollNo || '')), h('div', { class: 'hint' }, c.label + ' · ' + fmt.dt(c.createdAt))),
+        h('div', { class: 'toolbar' }, ui.button('Approve', { size: 'sm', kind: 'primary', onClick: async () => { if (!await LF.confirm({ title: 'Approve this phone?', message: 'You checked the student in person. Their old phone stops working.', confirmLabel: 'Approve' })) return; await api('cred.approve', { credentialId: c.credentialId, idChecked: true }); LF.toast('Phone approved', 'good'); drawPhones(); } }),
+          ui.button('Reject', { size: 'sm', kind: 'danger', onClick: async () => { await api('cred.reject', { credentialId: c.credentialId, reason: 'rejected by faculty' }); LF.toast('Request rejected', 'good'); drawPhones(); } })))))));
+  }).catch(() => {});
+  drawPhones();
   const reload = () => ui.loadInto(list, async () => {
     const [r, d] = await Promise.all([api('sessions.day', { date: date.value }), api('dash.faculty').catch(() => null)]);
     if (d) clear(top).append(ui.stat('Sessions today', d.sessions), ui.stat('Open now', d.open, null, d.open ? 'good' : ''), ui.stat('Research requests', d.pendingResearch, d.pendingResearch ? 'Waiting for your decision' : 'None pending', d.pendingResearch ? 'warn' : ''), ui.stat('Open flags', d.openFlags, d.openFlags ? 'Review under Flags' : 'Nothing to review', d.openFlags ? 'warn' : ''));
@@ -99,7 +122,7 @@ function liveRoster(root) {
     const c = r.counts, s = r.session;
     if (!tbl) {
       tbl = ui.table({ caption: 'Live roster', searchPlaceholder: 'Search roll no. or name', pageSize: 40,
-        filters: [{ label: 'State', options: [{ value: 'in', label: 'Inside' }, { value: 'out', label: 'Left' }, { value: 'none', label: 'Not arrived' }], get: (x) => x.state }, { label: 'Status', options: ['present', 'absent', 'unverified_exit', 'missed_rescan', 'flagged'], get: (x) => x.status }],
+        filters: [{ label: 'State', options: [{ value: 'in', label: 'Inside' }, { value: 'out', label: 'Left' }, { value: 'none', label: 'Not arrived' }], get: (x) => x.state }, { label: 'Status', options: ['present', 'partial', 'absent', 'unverified_exit', 'missed_rescan', 'flagged'], get: (x) => x.status }],
         columns: [
           { key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' },
           { key: 'state', label: 'State', render: (x) => x.state === 'in' ? ui.badge('Inside', 'good') : x.state === 'out' ? ui.badge('Left', '') : ui.badge('Not arrived', 'info'), text: (x) => x.state },
@@ -107,6 +130,7 @@ function liveRoster(root) {
           { key: 'firstIn', label: 'In', render: (x) => x.firstIn ? fmt.time(x.firstIn) : '-', text: (x) => x.firstIn || 0 }, { key: 'lastOut', label: 'Out', render: (x) => x.lastOut ? fmt.time(x.lastOut) : '-', text: (x) => x.lastOut || 0 },
           { key: 'verifiedMinutes', label: 'Verified', align: 'right', render: (x) => fmt.mins(x.verifiedMinutes) },
           { key: 'method', label: 'How', text: (x) => [x.method, x.scannerRole, x.geofence, x.assurance].join(' '), render: howCell },
+          { label: 'Phone app', sort: false, text: (x) => x.app ? [x.app.atLab, x.app.coveragePct].concat(x.app.flags).join(' ') : '', render: appCell },
           { label: '', sort: false, render: (x) => h('button', { class: 'btn btn-sm', 'aria-label': 'Actions for ' + x.name, onclick: () => rowActions(x) }, 'Actions') }],
         rows: [], empty: ui.empty('Nobody enrolled yet', 'Students appear here once enrolled or after they scan in.') });
       clear(body).append(banner, countsEl, actionsEl, panelSpot, tbl.el);
@@ -121,6 +145,8 @@ function liveRoster(root) {
     if (r.guests) banner.append(h('div', { class: 'hint' }, r.guests + ' guest(s) added by the event lead.'));
     clear(actionsEl);
     if (open && String(s.labMode || '').indexOf('B') >= 0) actionsEl.append(ui.button('Scan students', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }));
+    if (open && r.appSession) actionsEl.append(ui.button('Fingerprint check now', { kind: 'primary', icon: 'check', onClick: async () => { const out = await api('presence.bioNow', { sessionId: s.sessionId }); LF.toast('Fingerprint check sent. Phones receive it within ' + Math.round(out.reachWithinSeconds / 60) + ' min; students then have 2 min.', 'good'); refresh(); } }));
+    if (r.appSession) banner.append(h('div', { class: 'card flat' }, h('strong', null, 'Phone app session (tier 3). '), 'Phones report their location every few minutes and ask for a fingerprint at random times. Present needs most of the session at the lab, every fingerprint check passed and no open flag. Students without the app are flagged, not refused.'));
     if (open) actionsEl.append(ui.button('Request rescan now', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); refresh(); } }),
       ui.button('Random spot check', { icon: 'camera', onClick: async () => { const out = await api('spot.start', { sessionId: s.sessionId }); LF.toast(out.checks.length + ' student(s) selected for a spot check', 'good'); await drawSpot(s); } }),
       ui.button('Close session', { icon: 'x', onClick: async () => { await closeFlow({ sessionId: s.sessionId, title: s.title }, () => LF.go('live')); } }));
@@ -159,6 +185,7 @@ function liveRoster(root) {
       x.state === 'in' ? ui.button('Add exit (student left)', { block: true, onClick: () => correction(x, 'add_out') }) : null,
       open && x.state === 'in' ? ui.button('Spot check this student', { block: true, icon: 'camera', onClick: async () => { await api('spot.start', { sessionId: s.sessionId, studentId: x.studentId }); LF.toast('Spot check created', 'good'); m.close(); refresh(); } }) : null,
       ui.button('Undo a scan on this student', { block: true, onClick: () => voidFlow(x) }),
+      ui.button('Override the result', { block: true, onClick: () => overrideFlow(x) }),
       h('p', { class: 'hint' }, 'Corrections are logged with your name and reason. They never delete the original scan. Corrections on sessions older than the policy window need admin approval.'));
     const m = LF.modal('Actions: ' + x.name, body);
     function correction(x, action) {
@@ -166,6 +193,12 @@ function liveRoster(root) {
       LF.ui.formModal({ title: action === 'add_in' ? 'Add entry for ' + x.name : 'Add exit for ' + x.name, intro: 'This overrides the scanner for this student only. Give the reason you would show an auditor.',
         fields: [{ name: 'at', label: 'Time (IST)', type: 'datetime-local', value: LF.util.msToIstInput(LF.now()), required: true }, { name: 'reason', label: 'Reason (min 10 characters)', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: 'Record correction',
         onSubmit: async (v) => { const r = await api('attend.correct', { sessionId: s.sessionId, studentId: x.studentId, action, at: LF.util.istToMs(v.at), reason: v.reason }); LF.toast(r.approvalStatus === 'pending' ? 'Sent to an admin for approval' : 'Correction recorded', 'good'); refresh(); } });
+    }
+    function overrideFlow(x) {
+      m.close();
+      LF.ui.formModal({ title: 'Override the result for ' + x.name, intro: 'Your result replaces the computed one (now ' + x.status.replace(/_/g, ' ') + '). It is recorded with your name and reason; nothing is deleted.',
+        fields: [{ name: 'outcome', label: 'Result', type: 'select', required: true, value: 'present', options: [{ value: 'present', label: 'Present' }, { value: 'partial', label: 'Partial' }, { value: 'absent', label: 'Absent' }, { value: 'flagged', label: 'Flagged' }] }, { name: 'reason', label: 'Reason', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: 'Record result',
+        onSubmit: async (v) => { await api('attend.override', { sessionId: s.sessionId, studentId: x.studentId, outcome: v.outcome, reason: v.reason }); LF.toast('Result recorded', 'good'); refresh(); } });
     }
     async function voidFlow(x) {
       m.close();

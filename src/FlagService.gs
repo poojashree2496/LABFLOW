@@ -1,7 +1,9 @@
 /**
  * FlagService.gs - anomalies for faculty and staff to review (SRS Flags tab, findings "Flags").
  *
- * A flag never changes attendance by itself. It records something a person should look at: an impossible GPS
+ * In tiers 1 and 2 a flag never changes attendance by itself; a check-in with a location problem is recorded with
+ * assurance "flagged" and shows as flagged until the faculty overrides it. In a phone-app session (tier 3) any open
+ * flag makes the student's result Flagged until the faculty dismisses the flag or overrides the result. It records something a person should look at: an impossible GPS
  * reading, the same reading in two sessions, check-ins at two labs too far apart, a used or stale QR shown again,
  * two students scanned on one phone within seconds, repeated manual check-ins or missing exit scans.
  * Each flag has a dedupe key so the same situation is raised once. Detectors run after the scan outside the lock and
@@ -13,13 +15,24 @@ var Flags = {
     identical_reading: { severity: 'medium', label: 'Identical GPS reading in two different sessions' },
     impossible_travel: { severity: 'high', label: 'Check-ins at two labs too far apart for the time between them' },
     no_location: { severity: 'low', label: 'Checked in without a location' },
-    outside_geofence: { severity: 'low', label: 'Check-in attempt from outside the lab geofence' },
+    outside_geofence: { severity: 'medium', label: 'Checked in from outside the lab geofence' },
     replay_attempt: { severity: 'medium', label: 'A used code was shown again (screenshot or relay)' },
     stale_qr: { severity: 'low', label: 'An old QR was shown (screenshot)' },
     back_to_back: { severity: 'medium', label: 'Two students scanned on one phone within seconds' },
     desktop_device: { severity: 'low', label: 'Device registered from a desktop browser' },
     frequent_manual: { severity: 'medium', label: 'Frequent manual check-ins' },
-    never_scans_out: { severity: 'medium', label: 'Repeatedly leaves without an exit scan' }
+    never_scans_out: { severity: 'medium', label: 'Repeatedly leaves without an exit scan' },
+    // tier 3, the phone app (PresenceService.gs), and the random location checks of tier 1
+    no_app: { severity: 'medium', label: 'Checked in without the phone app in a phone-app session (for example an iPhone)' },
+    mock_location: { severity: 'high', label: 'The phone reported a faked (mock) location' },
+    location_jump: { severity: 'high', label: 'Location jumped impossibly far between two reports' },
+    frozen_location: { severity: 'medium', label: 'Location never changed between reports (real GPS always moves a little)' },
+    tampered_report: { severity: 'high', label: 'A check-in or presence report failed its signature check (tampered)' },
+    replayed_report: { severity: 'high', label: 'A presence report was sent twice (replayed)' },
+    clock_skew: { severity: 'medium', label: 'The phone clock was far off (reports dated in the future)' },
+    stale_code: { severity: 'medium', label: 'Scanned a kiosk code that was too old (a forwarded picture)' },
+    unapproved_device: { severity: 'medium', label: 'Used a phone that is not approved for this student' },
+    away_from_lab: { severity: 'medium', label: 'A random location check placed the phone away from the lab' }
   },
   WINDOW_MS: 30 * 86400000,
 
@@ -44,6 +57,10 @@ var Flags = {
   // ---- detectors ------------------------------------------------------------------------------------------
   afterScan: function (c) {
     var sid = c.studentId, s = c.session, now = c.now || U.now();
+    // Location problems no longer refuse a check-in; they are recorded with the event and raised here for review.
+    if (c.geoFlag) Flags.raise(c.geoFlag, { studentId: sid, sessionId: s.sessionId, labId: s.labId, detail: { distanceM: c.distanceM, accuracyM: c.accuracyM, band: c.band || '', mode: c.mode }, dedupeKey: c.geoFlag + '|' + sid + '|' + s.sessionId });
+    (c.appFlags || []).forEach(function (f) { Flags.raise(f.type, { studentId: sid, sessionId: s.sessionId, labId: s.labId, detail: f.detail || null, dedupeKey: f.type + '|' + sid + '|' + s.sessionId }); });
+    if (c.purpose === 'in' && c.mode !== 'C' && Sessions.isApp(s)) Flags.raise('no_app', { studentId: sid, sessionId: s.sessionId, labId: s.labId, detail: { mode: c.mode }, dedupeKey: 'noapp|' + sid + '|' + s.sessionId });
     if (c.mode === 'A' && c.noGeo) Flags.raise('no_location', { studentId: sid, sessionId: s.sessionId, labId: s.labId, dedupeKey: 'noloc|' + sid + '|' + s.sessionId });
     if (c.mode === 'A' && c.distanceM !== undefined && c.distanceM !== null) {
       var same = Db.tail('AttendanceEvents', 3000).filter(function (e) {
@@ -79,7 +96,8 @@ var Flags = {
     var sid = c.studentId, sess = c.session ? c.session.sessionId : (c.sessionId || ''), lab = c.labId || '';
     if (!sid) return;
     var day = U.local(U.now()).date;
-    if (e.code === 'REPLAY') Flags.raise('replay_attempt', { studentId: sid, sessionId: sess, labId: lab, detail: { mode: c.mode, scanner: c.scannedBy || '' }, dedupeKey: 'replay|' + sid + '|' + (sess || day) });
+    if (e.code === 'BAD_SIGNATURE' && c.mode === 'C') Flags.raise('tampered_report', { studentId: sid, sessionId: sess, labId: lab, detail: { what: 'app check-in' }, dedupeKey: 'tampered_report|' + sid + '|' + (sess || day) });
+    else if (e.code === 'REPLAY') Flags.raise('replay_attempt', { studentId: sid, sessionId: sess, labId: lab, detail: { mode: c.mode, scanner: c.scannedBy || '' }, dedupeKey: 'replay|' + sid + '|' + (sess || day) });
     else if (e.code === 'STALE_QR') Flags.raise('stale_qr', { studentId: sid, sessionId: sess, labId: lab, detail: { scanner: c.scannedBy || '' }, dedupeKey: 'stale|' + sid + '|' + (sess || day) });
     else if (e.code === 'IMPLAUSIBLE_LOCATION') Flags.raise('implausible_location', { studentId: sid, sessionId: sess, labId: lab, dedupeKey: 'implaus|' + sid + '|' + day });
     else if (e.code === 'OUTSIDE_GEOFENCE') Flags.raise('outside_geofence', { studentId: sid, sessionId: sess, labId: lab, detail: { band: e.extra && e.extra.band }, dedupeKey: 'geo|' + sid + '|' + (sess || day) });

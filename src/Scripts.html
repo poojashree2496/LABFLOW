@@ -666,11 +666,13 @@ function launchFromUrl() {
   const q = new URLSearchParams(location.search), out = {}, k = q.get('k'), s = q.get('s');
   if (k && /^[A-Za-z0-9._-]{10,200}$/.test(k)) out.k = k;
   if (s && /^[A-Za-z0-9._~-]{40,600}$/.test(s)) out.s = s;
+  if (q.get('pairApp') === '1') out.pairApp = true;
   return out;
 }
 function handleLaunch() {
   const l = window.LF_LAUNCH || (LF.hosted ? launchFromUrl() : {}); window.LF_LAUNCH = {};
-  try { if (l.k || l.s) history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ }
+  try { if (l.k || l.s || l.pairApp) history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ }
+  if (l.pairApp && LF.me.roles.includes('student') && LF.linkPhoneApp) { if (LF.role !== 'student') LF.go('device', 'student'); LF.linkPhoneApp().catch(LF.fail); return; }
   if (l.k) {
     if (!LF.me.roles.includes('student')) return toast('That code is for students checking in. Scan it with a student account.', 'bad');
     if (LF.role !== 'student') LF.go('today', 'student');

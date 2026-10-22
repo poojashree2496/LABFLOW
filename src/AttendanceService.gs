@@ -8,6 +8,7 @@
  *   CORR_IN / CORR_OUT     manual corrections (operator, reason, approval status recorded)
  *   VOID                   cancels an earlier event (ref = that event's id) - the original stays in the log
  *   DECISION               admin approval/rejection of a pending correction (ref = the correction's id)
+ *   OVERRIDE               the faculty's final result for a student (outcome = present | partial | absent | flagged)
  * AttendanceSummaries is DERIVED and can be rebuilt from events at any time (Attend.rebuildSummary).
  *
  * VERIFIED DURATION: time counts only between an entry and a verified end - an exit scan, or (when the exit scan is
@@ -65,9 +66,11 @@ var Attend = {
 
   /** Pure derivation for ONE student from their effective events. */
   _compute: function (session, evts, windows, now, withIntervals) {
-    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, autoOut = false, lastEvent = null;
+    var inAt = null, stints = [], firstIn = null, lastOut = null, verified = [], spotFail = false, corrected = false, autoOut = false, lastEvent = null, locFlag = false, override = null;
     (evts || []).forEach(function (e) {
       if (e.type === 'WORK') return; // work metadata never verifies presence or resets the scan gap
+      if (e.type === 'OVERRIDE') { override = e.outcome; return; } // the faculty's final word on the result
+      if (e.assurance === 'flagged') locFlag = true;
       if (e.type === 'CORR_IN' || e.type === 'CORR_OUT') corrected = true;
       if (e.type === 'IN' || e.type === 'CORR_IN') { if (inAt === null) { inAt = e.at; if (firstIn === null) firstIn = e.at; verified.push(e.at); } }
       else if (e.type === 'OUT' || e.type === 'CORR_OUT') {
@@ -76,7 +79,7 @@ var Attend = {
           stints.push({ inAt: inAt, out: e.at }); lastOut = e.at; inAt = null; verified.push(e.at);
         }
       }
-      else if (e.type === 'RESCAN' || e.type === 'SPOT_OK') verified.push(e.at);
+      else if ((e.type === 'RESCAN' && e.assurance !== 'flagged') || e.type === 'SPOT_OK') verified.push(e.at); // a rescan from outside the lab proves nothing
       else if (e.type === 'SPOT_FAIL') spotFail = true;
       if (e.type === 'IN' || e.type === 'OUT' || e.type === 'RESCAN' || e.type === 'CORR_IN' || e.type === 'CORR_OUT') lastEvent = e;
     });
@@ -85,7 +88,7 @@ var Attend = {
     var inside = inAt !== null;
 
     // Rescan windows the student was inside for, but did not answer.
-    var rescans = (evts || []).filter(function (e) { return e.type === 'RESCAN'; });
+    var rescans = (evts || []).filter(function (e) { return e.type === 'RESCAN' && e.assurance !== 'flagged'; });
     var missed = [];
     (windows || []).forEach(function (w) {
       var over = w.status === 'closed' || now > w.closesAt;
@@ -119,9 +122,11 @@ var Attend = {
     if (spotFail) flags.push('spot_check_failed');
     if (corrected) flags.push('corrected');
     if (autoOut) flags.push('auto_out');
-    var status = firstIn === null ? 'absent' : spotFail ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
+    if (locFlag) flags.push('location_flagged');
+    var status = firstIn === null ? 'absent' : (spotFail || locFlag) ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
+    if (override) { status = override; flags.push('overridden'); }
     var result = { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
-             status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent };
+             status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent, override: override };
     if (withIntervals) result.creditedIntervals = intervals;
     return result;
   },
@@ -450,9 +455,10 @@ var Attend = {
   liveCounts: function (session) {
     var now = U.now(), eff = Attend._effective(Attend._eventsFor(session)), wins = Db.where('RescanWindows', function (w) { return w.sessionId === session.sessionId; });
     var eligible = session.openToAll ? null : Object.keys(Roster.eligibleSet(session));
-    var inside = 0, left = 0, seen = 0, flagged = 0, unverified = 0;
+    var inside = 0, left = 0, seen = 0, flagged = 0, unverified = 0, app = Sessions.isApp(session) ? Presence.load(session) : null;
     Object.keys(eff).forEach(function (sid) {
       var c = Attend._compute(session, eff[sid], wins, now);
+      if (app) Presence.decorate(session, app, sid, eff[sid], c, now);
       if (c.firstIn !== null) seen++;
       if (c.inside) inside++; else if (c.firstIn !== null) left++;
       if (c.status === 'flagged' || c.status === 'missed_rescan') flagged++;
@@ -476,14 +482,17 @@ var Attend = {
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId');
     var checks = {}; Db.where('SpotChecks', function (c) { return c.sessionId === session.sessionId; }).forEach(function (c) { checks[c.studentId] = c; });
+    var appData = Sessions.isApp(session) ? Presence.load(session) : null;
     var rows = Object.keys(ids).map(function (sid) {
       var pr = profiles[sid] || {}, c = Attend._compute(session, eff[sid] || [], wins, now), sc = checks[sid], le = c.lastEvent || {};
+      var app = appData ? Presence.decorate(session, appData, sid, eff[sid] || [], c, now) : null;
       return { studentId: sid, rollNo: pr.rollNo, name: pr.name, section: pr.section, enrolled: session.openToAll ? null : !!eligible[sid], state: c.state, firstIn: c.firstIn, lastOut: c.lastOut, status: c.status, flags: c.flags,
                verifiedMinutes: c.verifiedMinutes, spotCheck: sc ? sc.outcome : null, hasPhoto: !!pr.photoFileId,
-               method: le.method || le.source || '', scannerRole: le.scannerRole || '', scannedBy: le.scannerRole === 'cr' || le.scannerRole === 'coordinator' ? le.scannedBy : '', geofence: le.geofence || '', assurance: le.assurance || '' };
+               method: le.method || le.source || '', scannerRole: le.scannerRole || '', scannedBy: le.scannerRole === 'cr' || le.scannerRole === 'coordinator' ? le.scannedBy : '', geofence: le.geofence || '', assurance: le.assurance || '',
+               app: app, overridden: !!c.override };
     }).sort(function (a, b) { return String(a.rollNo) < String(b.rollNo) ? -1 : 1; });
     var openFlags = Db.where('Flags', function (f) { return f.sessionId === session.sessionId && f.status === 'open'; }).length;
-    return { session: Sessions.pub(session, Sessions._ref()), counts: Attend.liveCounts(session), roster: rows, openFlags: openFlags, guests: session.labEventId ? Events.guestCount(session.labEventId) : 0, serverNow: now };
+    return { session: Sessions.pub(session, Sessions._ref()), counts: Attend.liveCounts(session), roster: rows, openFlags: openFlags, appSession: !!appData, guests: session.labEventId ? Events.guestCount(session.labEventId) : 0, serverNow: now };
   },
 
   /** Roster of an archived session. Its scan-level events live in the archive, so this shows the stored summaries. */
@@ -668,7 +677,7 @@ var Attend = {
     if (s.archivedAt) fail('ARCHIVED', 'This session is archived. Its stored summary is final.');
     var events = Db.where('AttendanceEvents', function (e) { return e.sessionId === sessionId; });
     var eff = Attend._effective(events), wins = Db.where('RescanWindows', function (w) { return w.sessionId === sessionId; });
-    var ids = s.openToAll ? {} : Roster.eligibleSet(s);
+    var ids = s.openToAll ? {} : Roster.eligibleSet(s), app = Sessions.isApp(s) ? Presence.load(s) : null;
     Object.keys(eff).forEach(function (k) { ids[k] = true; });
     var create = [], updated = 0;
     Locks.with(function () {
@@ -676,6 +685,7 @@ var Attend = {
       var existing = {}; Db.where('AttendanceSummaries', function (r) { return r.sessionId === sessionId; }).forEach(function (r) { existing[r.studentId] = r; });
       Object.keys(ids).forEach(function (sid) {
         var c = Attend._compute(s, eff[sid] || [], wins, now);
+        if (app) Presence.decorate(s, app, sid, eff[sid] || [], c, now);
         var rec = { sumId: sessionId + ':' + sid, sessionId: sessionId, studentId: sid, status: c.status, firstIn: c.firstIn, lastOut: c.lastOut, verifiedUntil: c.verifiedUntil, verifiedMinutes: c.verifiedMinutes, flags: c.flags, computedAt: now };
         var ex = existing[sid];
         if (!ex) create.push(rec);

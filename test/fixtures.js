@@ -9,8 +9,8 @@ const { load, initDb } = require('./harness');
 
 const subtle = nodeCrypto.webcrypto.subtle;
 const NOW = Date.UTC(2026, 9, 14, 4, 30); // Wed 2026-10-14 10:00 IST
-// Karunya campus (approximate). The IoT lab is at LAB_A; the GPU lab is about 350 m away.
-const LAB_A = { lat: 10.93620, lng: 76.74410 };
+// Karunya campus. LAB_A is the real IoT lab (measured on site); LAB_B, the GPU lab, is about 700 m away (approximate).
+const LAB_A = { lat: 10.933458, lng: 76.742973 };
 const LAB_B = { lat: 10.93930, lng: 76.74510 };
 const WEBAPP = 'https://script.google.com/a/macros/karunya.edu/s/TESTDEPLOYMENT/exec';
 /** A point `metres` north of p (1 degree of latitude is about 111,320 m). */

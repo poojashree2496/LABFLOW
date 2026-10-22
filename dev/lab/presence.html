@@ -134,13 +134,13 @@
     f.students.forEach((s) => {
       const [x, y] = spot(s.key, s.place, atDoor.indexOf(s.key)); const d = dots[s.key];
       d.style.left = x + '%'; d.style.top = y + '%';
-      d.classList.toggle('ping', !!(f.result && f.result.ok && data.cast.find((c) => c.key === s.key).name === f.result.who));
-      d.classList.toggle('refused', !!(f.result && !f.result.ok && data.cast.find((c) => c.key === s.key).name === f.result.who));
+      d.classList.toggle('ping', !!(f.result && f.result.ok && !f.result.flagged && data.cast.find((c) => c.key === s.key).name === f.result.who));
+      d.classList.toggle('refused', !!(f.result && (!f.result.ok || f.result.flagged) && data.cast.find((c) => c.key === s.key).name === f.result.who));
       const c = cards[s.key]; c.badge.className = 'badge ' + s.status; c.badge.textContent = STATUS[s.status] || s.status;
       c.last.textContent = s.lastProof ? hhmm(s.lastProof) : '-'; c.mins.textContent = Math.round(s.minutes) + ' min';
     });
     const v = $('verdict');
-    if (f.result) { v.hidden = false; v.className = 'verdict ' + (f.result.ok ? 'ok' : 'no'); v.textContent = 'Server: ' + (f.result.ok ? 'accepted' : 'refused, ' + f.result.code + '. "' + f.result.message + '"'); }
+    if (f.result) { v.hidden = false; v.className = 'verdict ' + (f.result.ok ? 'ok' : 'no'); v.textContent = 'Server: ' + (f.result.ok ? (f.result.flagged ? 'recorded, flagged for the teacher' : 'accepted') : 'refused, ' + f.result.code + '. "' + f.result.message + '"'); }
     else v.hidden = true;
     if (i === data.frames.length - 1) finish();
   }
