@@ -40,6 +40,8 @@ WebAuthn/passkeys would give hardware-backed keys and phishing-resistant origin 
 5. **No MAC, IMEI or client GPS** is used as identity. Client-reported location is trivially spoofed, so it is not trusted.
 6. **First claim of a roll number.** With `studentAutoVerify` on (the default), the first Google account to claim an imported roll number that has no email on file is verified without a desk check, and that account's first phone becomes the device. Someone could claim a classmate's number first. The claim is audited with the claimer's Google account, the number cannot be claimed twice (the real student is refused and goes to the desk, which can unlink it), and a phone change still needs in-person approval. Importing students with their Karunya emails removes the risk, because then only that email can claim the number. Turn the setting off to have staff verify every claim.
 
+Onboarding checks imported-email binding and existing claims before creating an account or saving contact/consent data. It refreshes account and profile state under the write lock; concurrent requests from one account cannot claim two profiles. A wrong-email claim is refused without reserving the imported profile.
+
 ## 3. Audit log
 
 Every sensitive action appends a row with `hash = SHA-256(prev_hash + canonical row)`. Checkpoints store the head in a sheet, in a script property, and in emailed anchors. `Audit.verify` detects edits, deletions in the middle, truncation and head rewrite (tested).

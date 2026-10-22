@@ -91,18 +91,25 @@ var Users = {
 
     var profile = Locks.with(function () {
       var now = U.now();
-      var user = ctx.user;
+      // Identity may have been resolved while another claim waited for this lock.
+      var fresh = Auth._contextForEmail(ctx.email, true), user = fresh.user;
+      if (fresh.student) fail('ALREADY_ONBOARDED', 'Your student profile already exists.');
+      if (user && !fresh.has('student')) fail('FORBIDDEN', 'Only students can onboard here.');
+      var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
+      // Refused claims must not insert an account, change contact data or reserve the profile.
+      if (existing) {
+        if (existing.userId && (!user || existing.userId !== user.userId)) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
+        if (existing.status !== 'imported' && existing.status !== 'rejected' && (!user || existing.userId !== user.userId)) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
+        if (existing.importedEmail && existing.importedEmail !== ctx.email) fail('FORBIDDEN', 'This roll number is assigned to a different university email. Contact the lab office.');
+      }
       if (!user) {
         user = Db.insert('Users', { userId: U.id('user'), email: ctx.email, displayName: name, roles: 'student', status: 'active', createdAt: now, updatedAt: now,
           mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : '', consentAt: now, consentVersion: Cfg.CONSENT_VERSION });
       } else {
         user = Db.update('Users', user.userId, { mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : user.mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION, updatedAt: now });
       }
-      var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
       var out;
       if (existing) {
-        if (existing.userId && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
-        if (existing.status !== 'imported' && existing.status !== 'rejected' && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
         // Verified automatically when the admin imported this roll number with this email, or when the roll number IS the email.
         // Otherwise, with studentAutoVerify, the first claim of an imported roll number that carries no email is trusted.
         var firstClaim = !existing.importedEmail && !derived && Settings.get('studentAutoVerify');
