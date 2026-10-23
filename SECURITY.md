@@ -42,6 +42,8 @@ WebAuthn/passkeys would give hardware-backed keys and phishing-resistant origin 
 
 Onboarding checks imported-email binding and existing claims before creating an account or saving contact/consent data. It refreshes account and profile state under the write lock; concurrent requests from one account cannot claim two profiles. A wrong-email claim is refused without reserving the imported profile.
 
+Verification/rejection and account unlinking refresh desk authorization and profile state under one lock. Current desk screens send the email being reviewed; a changed claim is refused with `CONFLICT`. Unlinking holds the lock across device revocation and profile detachment, and registration checks that the profile still belongs to its original caller before writing a device. Rejected profiles do not regain verification through disable/enable. These interleavings are tested on local fakes.
+
 ## 3. Audit log
 
 Every sensitive action appends a row with `hash = SHA-256(prev_hash + canonical row)`. Checkpoints store the head in a sheet, in a script property, and in emailed anchors. `Audit.verify` detects edits, deletions in the middle, truncation and head rewrite (tested).

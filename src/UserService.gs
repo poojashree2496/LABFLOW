@@ -137,15 +137,27 @@ var Users = {
     var studentId = V.id(p.studentId, 'Student', 'student');
     var approve = V.bool(p.approve);
     var note = V.str(p.note, 'Note', { optional: true, max: 200 });
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    if (prof.status === 'disabled') fail('INVALID_STATE', 'This profile is disabled.');
-    if (!prof.userId) fail('INVALID_STATE', 'This profile has not been claimed by a student yet.');
-    var next = Db.update('StudentProfiles', studentId, approve
-      ? { status: 'verified', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() }
-      : { status: 'rejected', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() });
-    Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: approve ? 'student.verify' : 'student.reject', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, note: note } });
-    if (prof.userId) Notify.toUser(prof.userId, 'verification', approve ? 'Profile verified' : 'Profile not verified', approve ? 'Your student profile is verified. You can now register your device.' : 'Your profile could not be verified. ' + (note || 'Visit the lab office.'), 'verifyres:' + studentId + ':' + next.status);
-    return { student: Users._pubStudent(next) };
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
+      Auth.requireRole(actor, ['staff', 'admin']);
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      Users._reviewedClaim(prof, p);
+      if (prof.status === 'disabled') fail('INVALID_STATE', 'This profile is disabled.');
+      if (!prof.userId) fail('INVALID_STATE', 'This profile has not been claimed by a student yet.');
+      var next = Db.update('StudentProfiles', studentId, approve
+        ? { status: 'verified', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() }
+        : { status: 'rejected', verifiedBy: ctx.email, verifiedAt: null, updatedAt: U.now() });
+      Audit.log({ actor: ctx.email, role: actor.has('admin') ? 'admin' : 'staff', action: approve ? 'student.verify' : 'student.reject', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, note: note } });
+      Notify.toUser(prof.userId, 'verification', approve ? 'Profile verified' : 'Profile not verified', approve ? 'Your student profile is verified. You can now register your device.' : 'Your profile could not be verified. ' + (note || 'Visit the lab office.'), 'verifyres:' + studentId + ':' + next.status);
+      return { student: Users._pubStudent(next) };
+    });
+  },
+
+  /** A desk dialog may outlive an unlink/reclaim. Older clients may omit the reviewed account. */
+  _reviewedClaim: function (prof, p) {
+    if (p.expectedEmail !== undefined && V.str(p.expectedEmail, 'Reviewed account', { optional: true, max: 254 }).trim().toLowerCase() !== prof.email) {
+      fail('CONFLICT', 'The account linked to this profile changed. Refresh the student list and review it again.');
+    }
   },
 
   /** Admin: detach an account from a profile (wrong account claimed it). Revokes the student's device credentials. */
@@ -153,11 +165,16 @@ var Users = {
     V.obj(p);
     var studentId = V.id(p.studentId, 'Student', 'student');
     var reason = V.str(p.reason, 'Reason', { min: 5, max: 200 });
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    Creds.revokeAllFor(studentId, ctx.email, 'profile unlinked: ' + reason);
-    var next = Db.update('StudentProfiles', studentId, { userId: '', email: '', status: 'imported', verifiedBy: '', verifiedAt: null, updatedAt: U.now() });
-    Audit.log({ actor: ctx.email, role: 'admin', action: 'student.unlink', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, previousUserId: prof.userId, reason: reason } });
-    return { student: Users._pubStudent(next) };
+    return Locks.with(function () {
+      Auth.requireRole(Auth._contextForEmail(ctx.email, true), ['admin']);
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      Users._reviewedClaim(prof, p);
+      if (!prof.userId && prof.status === 'imported') return { student: Users._pubStudent(prof), replayed: true };
+      Creds.revokeAllFor(studentId, ctx.email, 'profile unlinked: ' + reason);
+      var next = Db.update('StudentProfiles', studentId, { userId: '', email: '', status: 'imported', verifiedBy: '', verifiedAt: null, updatedAt: U.now() });
+      Audit.log({ actor: ctx.email, role: 'admin', action: 'student.unlink', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, previousUserId: prof.userId, reason: reason } });
+      return { student: Users._pubStudent(next), replayed: false };
+    });
   },
 
   /** Staff/admin/faculty student directory. Faculty only see students in their own courses. */
@@ -213,7 +230,7 @@ var Users = {
       var next = status === 'disabled' ? 'disabled' : (prof.userId ? (prof.verifiedAt ? 'verified' : 'pending') : 'imported');
       if (prof.status === next) return { student: Users._pubStudent(prof), replayed: true };
       if (status === 'enabled' && prof.status !== 'disabled') fail('INVALID_STATE', 'This profile is not disabled.');
-      var upd = Db.update('StudentProfiles', studentId, { status: next, updatedAt: U.now() });
+      var upd = Db.update('StudentProfiles', studentId, { status: next, verifiedAt: status === 'disabled' && prof.status !== 'verified' ? null : prof.verifiedAt, updatedAt: U.now() });
       Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: status === 'disabled' ? 'student.disable' : 'student.enable', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, was: prof.status, now: next, reason: reason } });
       if (prof.userId) Notify.toUser(prof.userId, 'verification', status === 'disabled' ? 'Profile disabled' : 'Profile enabled', status === 'disabled' ? 'Your lab profile was disabled. Contact the lab office.' : 'Your lab profile is active again.', 'stu-status:' + studentId + ':' + next + ':' + upd.updatedAt);
       return { student: Users._pubStudent(upd), replayed: false };

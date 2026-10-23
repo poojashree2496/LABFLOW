@@ -102,6 +102,7 @@ var Creds = {
     return Locks.with(function () {
       if (U.now() / 1000 > Number(parts[3])) fail('EXPIRED', 'Registration timed out. Start again.');
       st = Attend._verifiedStudent(st.studentId);
+      if (!ctx.user || st.userId !== ctx.user.userId || st.email !== ctx.email) fail('FORBIDDEN', 'This profile is no longer linked to your account. Refresh and contact the lab desk.');
       if (Tokens.wasRedeemed(parts[2])) fail('REPLAY', 'This registration code was already used.');
       var all = Db.whereEq('DeviceCredentials', { studentId: st.studentId });
       var active = all.filter(function (c) { return c.status === 'active'; });
