@@ -109,7 +109,9 @@ var Backup = {
 
   /** Every backup copy, newest first, with what rotation will keep it for. */
   list: function () {
-    var today = U.local(U.now()).date, folder = Backup._folder(), entries = Backup._entries(folder), plan = Backup._plan(entries, today);
+    var folderId = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.BACKUP_FOLDER);
+    if (!folderId) return { backups: [], retention: { dailyDays: Backup.DAILY_KEEP, monthlyMonths: Backup.MONTHLY_KEEP }, folderUrl: null };
+    var today = U.local(U.now()).date, folder = DriveApp.getFolderById(folderId), entries = Backup._entries(folder), plan = Backup._plan(entries, today);
     return { backups: entries.slice().reverse().map(function (e) { return Backup._view(e, plan.keep); }),
              retention: { dailyDays: Backup.DAILY_KEEP, monthlyMonths: Backup.MONTHLY_KEEP }, folderUrl: folder.getUrl() };
   },

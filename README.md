@@ -57,11 +57,11 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 330 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks, 22 HOD checks, 36 session-workflow checks and 10 recovery checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 335 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks, 22 HOD checks, 36 session-workflow checks, 10 recovery checks and 15 readiness checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
-Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
+Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Automated runs use local fakes. The repo records an initial live setup on 21 Oct; see the dated snapshot and remaining physical checks in [Presenting](docs/presenting.md).
 
 The [critical workflow audit](docs/workflow-audit.md) adds 29 regression cases and fixes attendance races, booking/fulfilment checks and interrupted-return recovery. Backend checks, all 27 local scenarios and 84 browser checks pass, including the staff return form's live balances, validation, return-all shortcut and safe retry after an uncertain response.
 
@@ -78,6 +78,8 @@ Faculty, staff and admin can open **Live board** to see current visitors, projec
 Reports now include student hours/days/visits/auto sign-outs, per-system use and supervised project outcomes/hours, with CSV/PDF exports. Student Today shows per-lab days and hours for the past 90 days. Reservations and loans stay separate from verified attendance; see [Reports](docs/reports.md).
 
 Super admins can assign the HOD role and account/lab departments. HOD accounts have an overview, read-only facilities, live board and scoped reports. A blank lab department means shared; a HOD with no department sees shared labs only. See [HOD access](docs/hod-access.md).
+
+Super admins can open **Audit & system → System health → Lab readiness** to review door GPS, walk-in hours/projects, recent kiosk activity, teaching sessions, workstation counts, HOD setup and backup recency. These are configuration checks; they do not replace a phone check-in and an outside-geofence rehearsal.
 
 ## Authentication: the blocker you must check
 
@@ -131,7 +133,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 330 backend tests
+npm run check      # syntax lint of every .gs/.html script + 335 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)
@@ -139,6 +141,7 @@ npm run e2e:projects # project lifecycle and phone navigation (same browser setu
 npm run e2e:openlab # lab settings and walk-in QR/GPS attendance (same browser setup)
 npm run e2e:work   # project/system entry and mid-visit changes (same browser setup)
 npm run e2e:session # session modes, rescans and onboarding (same browser setup)
+npm run e2e:readiness # admin setup checks and refresh (same browser setup)
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.

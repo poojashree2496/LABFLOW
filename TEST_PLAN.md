@@ -1,5 +1,7 @@
 # LABFLOW test plan and results
 
+Readiness update (2026-10-23): lint and 335 backend tests passed; 27/27 scenarios, 85 general browser checks and 15 readiness browser checks passed. The mobile panel screenshot was inspected.
+
 Recovery audit run (2026-10-23): lint and all 330 backend tests passed; 27/27 scenarios and 10 isolated Brave recovery browser checks passed. Other browser results below retain their recorded run dates.
 
 Session audit run (2026-10-22): `npm run check` passed lint and 322 backend tests; `npm run sim` passed 27/27 scenarios; isolated Brave/Chromium passed 85 general browser checks and 36 new session-workflow checks. The other focused browser suites below were last run on 2026-10-21. These tests use in-memory Google-service fakes. See the [session workflow audit](docs/session-workflow-audit.md) for findings and deployment limits.
@@ -9,9 +11,10 @@ Session audit run (2026-10-22): `npm run check` passed lint and 322 backend test
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (33), checkin (21), contracts (3), crypt (11), dev-world (3), foundation (16), hod (4), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), reports (16), recovery (8), roll (4), scanning (14), session-workflow (2), work-selection (19), workflow-audit (29) | `npm test` | **330 pass, 0 fail** |
+| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (33), checkin (21), contracts (3), crypt (11), dev-world (3), foundation (16), hod (4), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), reports (16), readiness (5), recovery (8), roll (4), scanning (14), session-workflow (2), work-selection (19), workflow-audit (29) | `npm test` | **335 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **85 pass, 0 fail** |
+| Focused readiness E2E (Playwright, Brave/Chromium) | `npm run e2e:readiness` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
 | Focused recovery E2E (Playwright, Brave/Chromium) | `npm run e2e:recovery` with `CHROMIUM_PATH` | **10 pass, 0 fail** |
 | Focused session workflow E2E (Playwright, Brave/Chromium) | `npm run e2e:session` with `CHROMIUM_PATH` | **36 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
@@ -25,7 +28,7 @@ Session audit run (2026-10-22): `npm run check` passed lint and 322 backend test
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
-What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (missing class exits only credit verified presence; open labs credit to automatic closing); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the four trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
+What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (missing class exits only credit verified presence; open labs credit to automatic closing); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the five trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
 
 Coverage added with the v2 work (each is in `npm test`, mapped to requirements in [docs/traceability.md](docs/traceability.md)):
 

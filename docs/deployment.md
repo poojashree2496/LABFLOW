@@ -1,6 +1,6 @@
 # Deployment
 
-Nothing in this repository has been run against a live Google account. Follow this page in order, and finish with the checks in [TEST_PLAN.md](../TEST_PLAN.md) section B.
+The repository records an initial hosted deployment and a dated live setup check on 21 Oct; see [Presenting](presenting.md). Automated test results still use local Google-service fakes. Follow this page for a new deployment, then record the real checks in [TEST_PLAN.md](../TEST_PLAN.md) section B.
 
 ## Before you start
 
@@ -58,6 +58,14 @@ Sign in as the bootstrap admin, then in the admin pages:
 3. **Users and roles**, courses, rosters and the timetable. CSV import is available for users and students (`URK24CS1021`-style roll numbers fill join year and department).
 4. **Settings**: allowed values are listed with limits in Admin > Settings; set `reportRecipients`, `hodEmail` and `academicYearStartMonth`, and choose a site theme ([themes.md](themes.md)).
 5. Students open the app on their phone, open "My device", run the compatibility check and register the device. A second or replacement device needs in-person approval by staff.
+
+## Review lab readiness
+
+Under **Audit & system → System health → Lab readiness**, review each active lab and use the configuration shortcuts. **Refresh setup checks** reads the current settings again. A kiosk is recent when it reported within two minutes; a backup is recent when an actual copy was created within 36 hours. Backup-folder access failures show **Could not check**, not a successful backup. Listing backups before the first copy does not create a Drive folder.
+
+Walk-ins that are intentionally off do not require opening hours or projects. Pending projects are usable, but each visitor still needs their own eligible project or an active group membership. A device-only lab does not need GPS. Closed/cancelled teaching sessions do not count as remaining sessions today.
+
+The panel verifies saved configuration and recent activity. It does not verify university identity, camera operation, the real door boundary, attendance throughput or backup restoration. Rehearse an inside check-in, an outside refusal and a rescan in the room.
 
 ## 6. Backups and the archive
 

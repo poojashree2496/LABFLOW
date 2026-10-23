@@ -68,13 +68,13 @@ HOD read/write policy and department scoping are implemented; see [HOD access](h
 
 ---
 
-## 1. Deployment checks (need a real Google Workspace, so none are done)
+## 1. Deployment checks (record results from the real Workspace)
 
-Do these first. Write the date and result next to each when you finish it. TEST_PLAN section B has the detail.
+The dated initial live setup is recorded in progress.md and presenting.md; that is not evidence that every deployment check passed. Write the date and result next to each check when verified. Use Admin > Audit & system > System health > Lab readiness to review saved setup first. TEST_PLAN section B has the detail.
 
 - [ ] **Identity for both domains.** Open the web app as an ordinary user from `karunya.edu` and from `karunya.edu.in`. Highest risk: if the second domain is a separate Workspace, its users will be refused. See README "Authentication".
 - [ ] Run `setupInitialise`, `setupBootstrapAdmin`, `setupSelfTest`; read the real timings (P-256 verify, sheet write, lock).
-- [ ] Run `setupInstallTriggers`; confirm all four triggers ran after a day.
+- [ ] Run `setupInstallTriggers`; confirm all five triggers ran after a day.
 - [ ] Version A on a phone: GPS and camera inside the HtmlService iframe; the geofence check at the real lab door.
 - [ ] Device key survives closing the browser (Android Chrome and iPhone Safari).
 - [ ] Kiosk with a USB scanner; kiosk with camera mode in Chrome.
