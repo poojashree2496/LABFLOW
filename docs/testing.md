@@ -15,6 +15,14 @@ Everything here runs on a laptop with no Google account. The tests load the **re
 | `npm run dev` | The local server at `http://localhost:8787/` with the Test Lab at `/lab` and the presence demo at `/presence` |
 | `npm run e2e`, `e2e:issue`, `e2e:projects`, `e2e:openlab`, `e2e:work`, `e2e:hod`, `e2e:reports`, `e2e:live`, `e2e:autoclose`, `e2e:session`, `e2e:recovery`, `e2e:readiness` | Playwright browser suites (need Chrome or Chromium; set `CHROMIUM_PATH` to use another browser). Screenshots go to `.build/shots` |
 
+## GitHub Actions
+
+[CI](../.github/workflows/ci.yml) runs **Backend checks** on every branch push, pull request and manual Actions run. Node 24 on Ubuntu executes `npm ci`, `npm run build`, `npm run lint`, `npm test` and `npm run sim` in that order. Building first tests the vendor bundles generated from the lockfile rather than relying only on committed bundles.
+
+Action versions are pinned to commit IDs, the repository token has only `contents: read`, and checkout credentials are not persisted. A run has a ten-minute timeout; a newer run of the same event/branch or PR cancels its predecessor. No Google credentials, repository secrets or deployment steps are involved. Browser suites still run separately with the commands above.
+
+Before the initial push, the workflow passed actionlint 1.7.12, and its install/build/lint/test/scenario commands passed under Node 24 in a fresh temporary checkout on macOS. The hosted Ubuntu run is reported separately in GitHub Actions.
+
 ## How the backend tests work
 
 - `test/harness.js` loads the `.gs` files in order into a Node `vm` context together with fakes of `SpreadsheetApp`, `CacheService`, `LockService`, `PropertiesService`, `Utilities`, `MailApp`/`GmailApp`, `DriveApp`, `DocumentApp`, `ScriptApp` and `Session`. The fake sheet enforces the real grid limits (a write wider than the sheet throws).
