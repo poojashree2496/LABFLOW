@@ -46,7 +46,14 @@
   .meta { text-align: right; font-size: 13px; color: var(--muted); }
   .meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eef0f4; color: var(--muted); }
-  .badge.present { background: #e3f4ea; color: var(--good); } .badge.missed_rescan, .badge.unverified_exit { background: #fbe5e2; color: var(--bad); }
+  .badge.present { background: #e3f4ea; color: var(--good); } .badge.missed_rescan, .badge.unverified_exit, .badge.flagged, .badge.final { background: #fbe5e2; color: var(--bad); }
+  .badge.partial, .badge.flagged.final { background: #fdf1dc; color: var(--warn); }
+  .badge.present.final { background: #e3f4ea; color: var(--good); }
+  .win.random, .win.teacher { background: var(--blue); }
+  .phone { position: absolute; width: 22px; height: 30px; margin: -15px 0 0 -11px; border-radius: 5px; border: 3px solid; background: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; transition: left 1s ease, top 1s ease; z-index: 1; }
+  .phone[hidden] { display: none; }
+  .picker { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .picker button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
   .story { margin-top: 14px; display: grid; gap: 8px; }
   .story p { margin: 0; font-size: 19px; line-height: 1.45; }
   .verdict { font-size: 14px; padding: 6px 10px; border-radius: 8px; justify-self: start; }
@@ -61,8 +68,9 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Is the student still in the lab?</h1>
-  <p class="sub">One class, 10:00 to 12:00, run through LABFLOW's real attendance engine. Each accept, refusal and credited minute comes from the server code. The teacher calls the rescans; Restart runs it again with different times.</p>
+  <h1 id="title">Is the student still in the lab?</h1>
+  <div class="picker" id="picker" hidden></div>
+  <p class="sub" id="sub">One class, 10:00 to 12:00, run through LABFLOW's real attendance engine. Each accept, refusal and result comes from the server code. Attendance is attended or not: arriving late is fine, leaving early or missing a rescan is not. The teacher calls the rescans; Restart runs it again with different times.</p>
   <div class="bar">
     <button class="primary" id="play">Play</button>
     <button id="step">Next step</button>
@@ -85,38 +93,54 @@
   <div class="card story"><p id="text">Loading the class...</p><div class="verdict" id="verdict" hidden></div></div>
   <div class="card final" id="final" hidden style="margin-top:14px">
     <strong>What the teacher's report says at 12:00</strong>
-    <table><thead><tr><th>Student</th><th>What happened</th><th>Status</th><th>Credited time</th></tr></thead><tbody id="rows"></tbody></table>
+    <table><thead><tr><th>Student</th><th>What happened</th><th>Result</th><th>Why</th></tr></thead><tbody id="rows"></tbody></table>
   </div>
-  <div class="key"><span><i style="background:var(--warn)"></i>Rescan called by the teacher (students are not warned)</span><span>Confirming = scanning the door screen again with GPS inside the lab, within 90 s</span></div>
+  <div class="key" id="key"><span><i style="background:var(--warn)"></i>Rescan called by the teacher (students are not warned)</span><span>Confirming = scanning the door screen again with GPS inside the lab, within 90 s</span></div>
 </div>
 <script>
 (function () {
   const COLORS = { asha: '#1f8a4c', ravi: '#c27c0e', meena: '#c0392b', karthik: '#6c4ab6', divya: '#2457c5' };
-  const STATUS = { present: 'Present', absent: 'Not in', missed_rescan: 'Missed rescan', unverified_exit: 'Exit not scanned' };
+  // During the class: where each student stands. At the end: attended or not (flagged = the teacher decides).
+  const STATUS = { present: 'In the lab', absent: 'Not in', missed_rescan: 'Missed rescan', unverified_exit: 'Exit not scanned', partial: 'Partial', flagged: 'Flagged' };
+  const FINAL = { present: 'Attended', flagged: 'Teacher decides' };
+  const FLAGS = { stale_code: 'old code', outside_geofence: 'outside the lab', mock_location: 'faked location', frozen_location: 'frozen location', unapproved_device: 'unapproved phone', no_app: 'no app', tampered_report: 'tampered report', replayed_report: 'replayed report' };
+  const WHY = { late: 'arrived late and stayed', short_stay: 'left before 75% of the class', missed_rescan: 'missed a rescan', location_flagged: 'confirmed from outside the lab', unverified_exit: 'no exit scan' };
+  const tier3 = () => data && data.tier === 3;
+  const why = (c) => {
+    if (tier3()) {
+      const out = ['phone at the lab for ' + Math.round(c.coverage) + '% of the class'];
+      if (c.flags.length) out.push('flagged: ' + c.flags.map((x) => FLAGS[x] || x).join(', '));
+      if (c.checks.length) out.push('fingerprint ' + c.checks.join(', '));
+      return out.join('; ');
+    }
+    const out = c.flags.filter((x) => WHY[x] && !(x === 'unverified_exit' && c.flags.includes('missed_rescan'))).map((x) => WHY[x]);
+    return out.length ? out.join(', ') : 'in the lab for the class';
+  };
   // Spots in % of the map box. The lab circle spans left 4-54%, top 6-80%.
   const DESKS = { asha: [18, 30], ravi: [30, 24], meena: [42, 32], karthik: [20, 52], divya: [38, 54] };
   const AWAY = { asha: [66, 84], ravi: [72.5, 84], meena: [79, 84], karthik: [85.5, 84], divya: [92, 84] };
   const spot = (k, place, i) => place === 'desk' ? DESKS[k] : place === 'door' ? [24 + i * 3, 70] : place === 'canteen' ? [79, 22] : place === 'hostel' ? [79, 54] : AWAY[k];
   const $ = (id) => document.getElementById(id);
   const hhmm = (t) => new Date(t + 330 * 60000).toISOString().slice(11, 16);
-  let data = null, idx = -1, timer = null, playing = false, dots = {}, cards = {};
+  let data = null, idx = -1, timer = null, playing = false, dots = {}, cards = {}, phones = {};
 
   function el(tag, props, ...kids) { const e = document.createElement(tag); Object.assign(e, props || {}); kids.forEach((k) => e.append(k)); return e; }
   const pct = (t) => ((t - data.start) / (data.end - data.start)) * 100;
 
   function build() {
     const tl = $('timeline'); tl.querySelectorAll('.tick, .win, .winlbl').forEach((n) => n.remove());
-    for (let m = 0; m <= 120; m += 20) tl.append(el('div', { className: 'tick', textContent: hhmm(data.start + m * 60000) }, ));
-    tl.querySelectorAll('.tick').forEach((n, i) => { n.style.left = (i * 20 / 120 * 100) + '%'; });
+    const span = (data.end - data.start) / 60000;
+    for (let m = 0; m <= span; m += 20) { const t = el('div', { className: 'tick', textContent: hhmm(data.start + m * 60000) }); t.style.left = (m / span * 100) + '%'; tl.append(t); }
     const map = $('map'), people = $('people');
-    map.querySelectorAll('.dot').forEach((n) => n.remove()); people.textContent = '';
+    map.querySelectorAll('.dot, .phone').forEach((n) => n.remove()); people.textContent = ''; dots = {}; cards = {}; phones = {};
     data.cast.forEach((c) => {
       const d = el('div', { className: 'dot', textContent: c.name[0] }, el('span', { textContent: c.name }));
       d.style.background = COLORS[c.key]; map.append(d); dots[c.key] = d;
-      const badge = el('span', { className: 'badge' }), last = el('b'), mins = el('b');
+      const ph = el('div', { className: 'phone', textContent: c.name[0], title: c.name + "'s phone", hidden: true }); ph.style.borderColor = COLORS[c.key]; ph.style.color = COLORS[c.key]; map.append(ph); phones[c.key] = ph;
+      const badge = el('span', { className: 'badge' }), last = el('b'), cov = el('b');
       const card = el('div', { className: 'person' }, el('div', { className: 'av', textContent: c.name[0] }), el('div', { className: 'who' }, el('strong', { textContent: c.name + ' · ' + c.rollNo }), el('small', { textContent: c.role })),
-        el('div', { className: 'meta' }, badge, el('div', null, 'Last proven here ', last), el('div', null, 'Credited ', mins)));
-      card.firstChild.style.background = COLORS[c.key]; people.append(card); cards[c.key] = { badge, last, mins };
+        el('div', { className: 'meta' }, badge, el('div', null, tier3() ? 'Phone last at the lab ' : 'Last proven here ', last), tier3() ? el('div', null, 'Phone at the lab ', cov) : null));
+      card.firstChild.style.background = COLORS[c.key]; people.append(card); cards[c.key] = { badge, last, cov };
     });
     $('final').hidden = true; $('verdict').hidden = true;
   }
@@ -127,20 +151,24 @@
     const tl = $('timeline');
     data.windows.forEach((w, n) => { if (f.at >= w.from && !tl.querySelector('[data-w="' + n + '"]')) {
       const b = el('div', { className: 'win' }); b.dataset.w = n; b.style.left = pct((w.from + w.to) / 2) + '%'; b.style.width = Math.max(0.8, pct(w.to) - pct(w.from)) + '%';
-      const l = el('div', { className: 'winlbl', textContent: 'Rescan ' + hhmm(w.from) }); l.dataset.w = n; l.style.left = pct(w.from) + '%';
+      b.classList.add(w.kind || 'rescan');
+      const l = el('div', { className: 'winlbl', textContent: (w.label || 'Rescan') + ' ' + hhmm(w.from) }); l.dataset.w = n; l.style.left = pct(w.from) + '%';
       tl.append(b, l);
     } });
     const atDoor = f.students.filter((s) => s.place === 'door').map((s) => s.key);
     f.students.forEach((s) => {
       const [x, y] = spot(s.key, s.place, atDoor.indexOf(s.key)); const d = dots[s.key];
       d.style.left = x + '%'; d.style.top = y + '%';
+      const ph = phones[s.key];
+      if (s.phone && s.phone !== s.place) { const [px, py] = spot(s.key, s.phone, atDoor.indexOf(s.key)); ph.hidden = false; ph.style.left = (px + 3) + '%'; ph.style.top = (py - 5) + '%'; } else ph.hidden = true;
       d.classList.toggle('ping', !!(f.result && f.result.ok && !f.result.flagged && data.cast.find((c) => c.key === s.key).name === f.result.who));
       d.classList.toggle('refused', !!(f.result && (!f.result.ok || f.result.flagged) && data.cast.find((c) => c.key === s.key).name === f.result.who));
-      const c = cards[s.key]; c.badge.className = 'badge ' + s.status; c.badge.textContent = STATUS[s.status] || s.status;
-      c.last.textContent = s.lastProof ? hhmm(s.lastProof) : '-'; c.mins.textContent = Math.round(s.minutes) + ' min';
+      const c = cards[s.key], over = i === data.frames.length - 1;
+      c.badge.className = 'badge ' + s.status + (over ? ' final' : ''); c.badge.textContent = over ? (FINAL[s.status] || 'Not attended') : (STATUS[s.status] || s.status);
+      c.last.textContent = s.lastProof ? hhmm(s.lastProof) : '-'; if (tier3()) c.cov.textContent = Math.round(s.coverage) + '%';
     });
     const v = $('verdict');
-    if (f.result) { v.hidden = false; v.className = 'verdict ' + (f.result.ok ? 'ok' : 'no'); v.textContent = 'Server: ' + (f.result.ok ? (f.result.flagged ? 'recorded, flagged for the teacher' : 'accepted') : 'refused, ' + f.result.code + '. "' + f.result.message + '"'); }
+    if (f.result) { v.hidden = false; v.className = 'verdict ' + (f.result.ok ? 'ok' : 'no'); v.textContent = 'Server: ' + (f.result.ok ? (f.result.flagged ? 'recorded, flagged for the teacher' + (f.result.flags && f.result.flags.length ? ' (' + f.result.flags.map((x) => FLAGS[x] || x).join(', ') + ')' : '') : 'accepted') : 'refused, ' + f.result.code + '. "' + f.result.message + '"'); }
     else v.hidden = true;
     if (i === data.frames.length - 1) finish();
   }
@@ -149,7 +177,7 @@
     stop(); $('step').disabled = true;
     const rows = $('rows'); rows.textContent = '';
     data.cast.forEach((c) => rows.append(el('tr', null, el('td', { textContent: c.name }), el('td', { textContent: c.role }),
-      el('td', null, el('span', { className: 'badge ' + c.status, textContent: STATUS[c.status] || c.status })), el('td', { textContent: Math.round(c.minutes) + ' min' }))));
+      el('td', null, el('span', { className: 'badge final ' + c.status, textContent: FINAL[c.status] || 'Not attended' })), el('td', { textContent: why(c) }))));
     $('final').hidden = false;
   }
 
@@ -158,7 +186,7 @@
   function stop() { playing = false; clearTimeout(timer); $('play').textContent = 'Play'; }
   $('play').onclick = () => { if (playing) return stop(); if (!data || idx >= data.frames.length - 1) return; playing = true; $('play').textContent = 'Pause'; tick(); };
   $('step').onclick = () => { stop(); if (data && idx + 1 < data.frames.length) show(idx + 1); };
-  $('restart').onclick = load;
+  $('restart').onclick = () => (window.PROXY_RUNS ? pick(current) : load());
 
   async function load() {
     stop(); $('text').textContent = 'Running the class on the server...'; $('step').disabled = false;
@@ -166,7 +194,22 @@
     if (data.error) { $('text').textContent = 'Could not run: ' + data.error; return; }
     build(); show(0);
   }
-  load();
+  // Proxy attempts: the same player, one recorded run per cheating trick, chosen with the buttons.
+  let current = 0;
+  function pick(i) {
+    stop(); current = i; data = window.PROXY_RUNS[i]; $('step').disabled = false;
+    $('picker').querySelectorAll('button').forEach((b, n) => b.setAttribute('aria-pressed', String(n === i)));
+    build(); show(0); playing = true; $('play').textContent = 'Pause'; timer = setTimeout(tick, hold(data.frames[0]));
+  }
+  if (window.PROXY_RUNS) {
+    $('title').textContent = 'Can a friend mark them present?';
+    $('sub').textContent = 'Every student has the LABFLOW app. Pick a trick: each one is a full class run through the real server code, with the app reporting a signed location every 2 minutes and asking for a fingerprint at times only the server knows. Asha is honest in every run. Attended needs the phone at the lab for at least 75% of the class, every fingerprint check passed and no open flag.';
+    $('key').textContent = '';
+    $('key').append(el('span', null, el('i', { style: 'background:var(--blue)' }), 'Fingerprint check (2 minutes to answer)'), el('span', null, 'Small square = where the phone is, when its owner is somewhere else'));
+    window.PROXY_RUNS.forEach((r, i) => $('picker').append(el('button', { type: 'button', textContent: r.label, onclick: () => pick(i) })));
+    $('picker').hidden = false; data = window.PROXY_RUNS[0]; build(); show(0);
+    $('picker').querySelector('button').setAttribute('aria-pressed', 'true');
+  } else load();
 })();
 </script>
 </body>

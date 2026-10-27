@@ -29,12 +29,12 @@ test('happy path: register -> open -> IN -> OUT -> close -> verified present', a
   const r1 = w.scan(await w.qr(s, w.sid, 'in'));
   assert.equal(r1.ok, true); assert.equal(r1.data.type, 'IN'); assert.equal(r1.data.student.rollNo, 'S001');
   assert.equal(rosterRow(w, s).state, 'in');
-  w.advance(45 * 60000);
+  w.advance(100 * 60000);
   const r2 = w.scan(await w.qr(s, w.sid, 'out'));
   assert.equal(r2.data.type, 'OUT');
   w.ok(w.faculty, 'sessions.close', { sessionId: w.sid });
   const row = rosterRow(w, s);
-  assert.equal(row.status, 'present'); assert.equal(row.verifiedMinutes, 45);
+  assert.equal(row.status, 'present'); assert.equal(row.verifiedMinutes, 100);
   const h = w.ok(s.email, 'attend.history');
   assert.equal(h.history[0].status, 'present'); assert.equal(h.totals.present, 1);
 });
@@ -217,7 +217,7 @@ test('missing exit scan does NOT award a full session', async () => {
 test('exit grace: OUT after close is accepted within grace, refused after', async () => {
   const w = await ready(2); const [a, b] = w.students; open(w);
   w.scan(await w.qr(a, w.sid, 'in')); w.scan(await w.qr(b, w.sid, 'in'));
-  w.advance(60 * 60000);
+  w.advance(100 * 60000);
   const qa = await w.qr(a, w.sid, 'out');
   w.ok(w.faculty, 'sessions.close', { sessionId: w.sid });
   assert.equal(w.scan(qa).ok, true, 'within grace');

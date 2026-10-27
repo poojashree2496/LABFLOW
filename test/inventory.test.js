@@ -331,7 +331,7 @@ test('reports: daily/monthly/student numbers match the attendance data', async (
   for (const st of w.students) await w.registerDevice(st);
   const sid = w.session().sessionId; w.ok(w.faculty, 'sessions.open', { sessionId: sid });
   for (const st of w.students.slice(0, 2)) w.scan(await w.qr(st, sid, 'in'));
-  w.advance(60 * 60000);
+  w.advance(100 * 60000);
   w.scan(await w.qr(w.students[0], sid, 'out'));
   w.ok(w.faculty, 'sessions.close', { sessionId: sid });
   const d = w.ok(w.admin, 'reports.run', { type: 'daily', date: w.today });
@@ -341,7 +341,7 @@ test('reports: daily/monthly/student numbers match the attendance data', async (
   const f = w.ok(w.faculty, 'reports.run', { type: 'faculty', from: w.today, to: w.today });
   assert.equal(f.rows.length, 1);
   const st = w.ok(w.students[0].email, 'reports.run', { type: 'student', from: w.today, to: w.today });
-  assert.equal(st.rows[0][st.columns.indexOf('Verified minutes')], 60);
+  assert.equal(st.rows[0][st.columns.indexOf('Verified minutes')], 100);
   const m = w.ok(w.admin, 'reports.run', { type: 'monthly', month: '2026-10' });
   assert.equal(m.rows[0][0], 'IOT01');
 });

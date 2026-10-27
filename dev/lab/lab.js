@@ -43,6 +43,7 @@ setInterval(() => { if (state && !state.paused) { state.now += 1000; drawClock()
 
 /* ------------------------------------------------------------------ sections */
 const SECTIONS = [
+  { id: 'quick', label: 'Quick check-in', render: quick },
   { id: 'overview', label: 'Overview', render: overview },
   { id: 'stage', label: 'Stage (simulate a class)', render: stage },
   { id: 'pipeline', label: 'Verification pipeline', render: pipelines },
@@ -90,6 +91,67 @@ function overview(root) {
   const today = h('section', { class: 'panel stack' }, h('h2', null, 'Sessions on the simulated day'), h('table', null, h('thead', null, h('tr', null, ['Time', 'Lab', 'Session', 'Type', 'Status'].map((x) => h('th', null, x)))),
     h('tbody', null, state.sessions.sort((a, b) => a.start - b.start).map((s) => h('tr', null, h('td', { class: 'mono' }, fmtTime(s.start).slice(0, 5) + '-' + fmtTime(s.end).slice(0, 5)), h('td', null, s.lab), h('td', null, s.title), h('td', null, s.type), h('td', null, h('span', { class: 'chip ' + (s.status === 'open' ? 'ok' : s.status === 'closed' ? '' : 'idle') }, s.status)))))));
   grid.append(clockP, jobs, worldP, ids, today);
+}
+
+/* ------------------------------------------------------------------ Quick check-in: one click, any student, any lab */
+const metres = (a, b) => { const r = Math.PI / 180, x = (b.lng - a.lng) * r * Math.cos((a.lat + b.lat) * r / 2), y = (b.lat - a.lat) * r; return Math.round(Math.sqrt(x * x + y * y) * 6371000); };
+function quick(root) {
+  root.append(h('h1', null, 'Quick check-in'), h('p', { class: 'lead' }, 'The whole check-in flow for any student in any lab, with one click and no accounts. The real server code runs every call as the kiosk, the student and the admin in turn. Put the phone somewhere on the map, pick a lab and a student, and run it.'));
+  const labs = state.labs, students = state.users.filter((u) => /student/.test(u.roles));
+  const P = { lat: labs[0].latitude, lng: labs[0].longitude };
+  const labSel = h('select', { class: 'input' }, labs.map((l) => h('option', { value: l.labId }, l.code + ' · ' + l.name + ' (mode ' + l.mode + ')')));
+  const stuSel = h('select', { class: 'input' }, students.map((u) => h('option', { value: u.email }, u.name || u.email)));
+  const method = h('select', { class: 'input' }, h('option', { value: 'A' }, 'A: student scans the kiosk code, sends GPS'), h('option', { value: 'B' }, 'B: kiosk scans the student\'s phone QR'));
+  const action = h('select', { class: 'input' }, h('option', { value: '' }, 'default (in)'), h('option', { value: 'in' }, 'in'), h('option', { value: 'out' }, 'out'));
+  const lat = h('input', { class: 'input mono', type: 'number', step: 'any', style: { width: '130px' } }), lng = h('input', { class: 'input mono', type: 'number', step: 'any', style: { width: '130px' } });
+  const acc = h('input', { class: 'input', type: 'number', min: 0.1, max: 500, step: 'any', value: 12, style: { width: '80px' } });
+  const tbody = h('tbody'), out = h('div', { class: 'stack' }, h('p', { class: 'hint' }, 'Nothing run yet.')), mapEl = h('div', { style: { height: '380px', borderRadius: '8px', background: '#0b1220' } });
+  const cur = () => labs.find((l) => l.labId === labSel.value);
+  let map = null, pin = null;
+  function setPin(p, pan) {
+    P.lat = +(+p.lat).toFixed(6); P.lng = +(+p.lng).toFixed(6); lat.value = P.lat; lng.value = P.lng;
+    if (pin) { pin.setLatLng([P.lat, P.lng]); if (pan) map.panTo([P.lat, P.lng]); }
+    clear(tbody).append(...labs.map((l) => {
+      const d = metres(P, { lat: l.latitude, lng: l.longitude }), inside = d <= l.radiusM;
+      return h('tr', { style: { cursor: 'pointer', background: l.labId === labSel.value ? 'var(--panel-2)' : null }, onclick: () => { labSel.value = l.labId; pickLab(); } },
+        h('td', null, h('strong', null, l.code), ' ', l.name), h('td', null, l.mode),
+        h('td', { class: 'mono' }, h('a', { href: 'https://www.openstreetmap.org/?mlat=' + l.latitude + '&mlon=' + l.longitude + '#map=19/' + l.latitude + '/' + l.longitude, target: '_blank', rel: 'noopener', style: { color: 'inherit' } }, l.latitude + ', ' + l.longitude)),
+        h('td', null, l.radiusM + ' m'), h('td', { class: 'mono' }, d + ' m'), h('td', null, h('span', { class: 'chip ' + (inside ? 'ok' : 'warn') }, inside ? 'inside' : 'outside')));
+    }));
+  }
+  function pickLab() { const l = cur(); method.value = /A/.test(l.mode) ? 'A' : 'B'; setPin({ lat: l.latitude, lng: l.longitude }, true); }
+  [lat, lng].forEach((x) => x.addEventListener('change', () => setPin({ lat: lat.value, lng: lng.value }, true)));
+  labSel.addEventListener('change', pickLab);
+  const move = (m) => { const l = cur(); setPin({ lat: l.latitude + m / 111320, lng: l.longitude }, true); };
+  async function run() {
+    const r = await api('quick', { labId: labSel.value, student: stuSel.value, method: method.value, action: action.value || undefined, geo: { lat: P.lat, lng: P.lng, accuracy: Number(acc.value) } });
+    const last = r.steps[r.steps.length - 1], status = last && last.action === 'attend.roster' && last.data ? last.data.status : null;
+    clear(out).append(h('div', { class: 'row' }, h('strong', null, (stuSel.options[stuSel.selectedIndex] || {}).text + ' → ' + cur().code), status ? h('span', { class: 'chip ' + (status === 'present' ? 'ok' : 'warn') }, status) : h('span', { class: 'chip bad' }, 'stopped')),
+      ...r.steps.map((s) => h('div', { class: 'trace ' + (s.ok ? 'ok' : 'bad') }, h('div', { class: 'row' }, h('span', { class: 'chip ' + (s.ok ? 'ok' : 'bad') }, s.ok ? 'ok' : s.error.code), h('span', { class: 'chip' }, s.who), h('strong', null, s.label), s.action ? h('span', { class: 'mono hint' }, s.action) : null, !s.ok ? h('span', { class: 'hint' }, s.error.message) : null),
+        h('details', null, h('summary', { class: 'hint' }, 'response'), h('pre', { class: 'mono hint', style: { overflow: 'auto', maxHeight: '240px', margin: 0 } }, JSON.stringify(s.ok ? s.data : s.error, null, 1))))),
+      ...r.traces.map((t) => h('div', { class: 'trace ' + (t.ok ? 'ok' : 'bad') }, h('div', { class: 'row' }, h('strong', null, 'Pipeline ' + t.pipeline), h('span', { class: 'chip ' + (t.ok ? 'ok' : 'bad') }, t.ok ? 'accepted' : t.code)),
+        h('div', { class: 'chain' }, t.trace.map((x) => h('span', { class: 'chip ' + (x.ok ? 'ok' : 'bad'), title: x.ms + ' ms' }, x.id))))));
+    refreshState().catch(() => {});
+  }
+  root.append(h('div', { class: 'grid', style: { gridTemplateColumns: 'minmax(0, 3fr) minmax(300px, 2fr)' } },
+    h('section', { class: 'panel stack' }, h('h2', null, 'Labs and the phone'), mapEl, h('p', { class: 'hint' }, 'Circles are the geofences. Click the map or drag the pin to move the phone. Coordinates link to OpenStreetMap.')),
+    h('section', { class: 'panel stack' }, h('h2', null, 'Run'),
+      h('label', { class: 'f' }, 'Lab', labSel), h('label', { class: 'f' }, 'Student', stuSel), h('label', { class: 'f' }, 'Method', method), h('label', { class: 'f' }, 'Action', action),
+      h('div', { class: 'row' }, h('span', { class: 'hint' }, 'phone at'), lat, lng, h('span', { class: 'hint' }, '± m'), acc),
+      h('div', { class: 'row' }, btn('At the lab', () => move(0), 'sm'), btn('100 m out', () => move(100), 'sm'), btn('1 km out', () => move(1000), 'sm'), btn('Fake 0.5 m accuracy', () => { acc.value = 0.5; }, 'sm')),
+      h('div', { class: 'row' }, btn('Run check-in', run, 'gold'), btn('+5 min', async () => { await api('clock', { action: 'advance', ms: 300000 }); await refreshState(); }, 'sm')),
+      h('p', { class: 'hint' }, 'If the lab has no open session, an "open to all" test session is created and opened as the admin. Method B registers a device key for the student on first use. Location is sent only in method A.'))),
+    h('section', { class: 'panel stack', style: { marginTop: '14px' } }, h('table', null, h('thead', null, h('tr', null, ['Lab', 'Mode', 'Coordinates', 'Radius', 'Phone distance', ''].map((x) => h('th', null, x)))), tbody)),
+    h('section', { class: 'panel stack', style: { marginTop: '14px' } }, h('h2', null, 'Result'), out));
+  if (window.L) {
+    map = L.map(mapEl).setView([P.lat, P.lng], 16);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    labs.forEach((l) => L.circle([l.latitude, l.longitude], { radius: l.radiusM, color: '#f2b83a', weight: 2, fillOpacity: 0.2 }).addTo(map).bindTooltip(l.code + ' (' + l.radiusM + ' m)', { permanent: true, direction: 'top' }).on('click', () => { labSel.value = l.labId; pickLab(); }));
+    pin = L.marker([P.lat, P.lng], { draggable: true, title: 'Phone' }).addTo(map).on('dragend', () => setPin({ lat: pin.getLatLng().lat, lng: pin.getLatLng().lng }));
+    map.on('click', (e) => setPin({ lat: e.latlng.lat, lng: e.latlng.lng }));
+    map.fitBounds(labs.map((l) => [l.latitude, l.longitude]), { padding: [40, 40] });
+  } else mapEl.append(h('p', { class: 'hint', style: { padding: '12px' } }, 'The map needs the internet (Leaflet and OpenStreetMap tiles). Type the coordinates instead.'));
+  pickLab();
 }
 
 /* ------------------------------------------------------------------ Stage: kiosk + phones + relay */
@@ -243,7 +305,7 @@ function dataView(root) {
 
 /* ------------------------------------------------------------------ boot */
 clear($('#top-actions')).append(h('a', { class: 'btn sm', href: appUrl('admin@karunya.edu'), target: '_blank', rel: 'noopener' }, 'Open app'), btn('+5 min', async () => { await api('clock', { action: 'advance', ms: 300000 }); await refreshState(); }, 'sm'));
-refreshState().then(() => go((location.hash || '#overview').slice(1))).catch((e) => { clear($('#main')).append(h('h1', null, 'The dev server is not responding'), h('p', null, String(e.message))); });
+refreshState().then(() => go((location.hash || '#quick').slice(1))).catch((e) => { clear($('#main')).append(h('h1', null, 'The dev server is not responding'), h('p', null, String(e.message))); });
 addEventListener('hashchange', () => { if (!current || location.hash.slice(1) !== current.id) go(location.hash.slice(1)); });
 setInterval(() => { refreshState().catch(() => {}); }, 15000);
 })();

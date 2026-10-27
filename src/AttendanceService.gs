@@ -124,6 +124,12 @@ var Attend = {
     if (autoOut) flags.push('auto_out');
     if (locFlag) flags.push('location_flagged');
     var status = firstIn === null ? 'absent' : (spotFail || locFlag) ? 'flagged' : missed.length ? 'missed_rescan' : (inside && requireExit && session.status !== 'open') ? 'unverified_exit' : 'present';
+    // Attendance is attended or not. Once a class is over, a student must have been verified for most of it: arriving
+    // late is fine, leaving early is not. Not a flag, nothing to review. Tier 3 works out its own result (Presence.decorate).
+    if (status === 'present' && session.type === 'class' && session.status !== 'open' && !Sessions.isApp(session)) {
+      var length = (session.scheduledEnd - session.scheduledStart - Attend._breakOverlap(session, session.scheduledStart, session.scheduledEnd)) / 60000;
+      if (length > 0 && minutes < length * Settings.get('presentCoveragePct') / 100) { status = 'absent'; flags.push('short_stay'); }
+    }
     if (override) { status = override; flags.push('overridden'); }
     var result = { state: inside ? 'in' : (firstIn === null ? 'none' : 'out'), firstIn: firstIn, lastOut: lastOut, lastIn: openIn, verifiedMinutes: Math.round(minutes * 10) / 10, verifiedUntil: verifiedUntil,
              status: status, flags: flags, inside: inside, missedWindows: missed.length, lastEvent: lastEvent, override: override };

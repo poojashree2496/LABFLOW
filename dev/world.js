@@ -3,14 +3,19 @@
  * a realistic department, a controllable clock, verification-pipeline fault injection, traces and simulated sheet
  * latency. Development only; nothing here is deployed (dev/ is in .claspignore).
  */
-const { world: baseWorld, NOW, LAB_A, LAB_B, north } = require('../test/fixtures');
+const nodeCrypto = require('crypto');
+const { world: baseWorld, NOW, LAB_A } = require('../test/fixtures');
 
 const FIRST = ['Aarav', 'Diya', 'Ishaan', 'Ananya', 'Rohan', 'Meera', 'Karthik', 'Nila', 'Arjun', 'Kavya', 'Vikram', 'Sneha', 'Rahul', 'Priya', 'Aditya', 'Lakshmi', 'Siddharth', 'Divya', 'Harish', 'Pooja',
   'Naveen', 'Asha', 'Gokul', 'Revathi', 'Joel', 'Shalini', 'Pranav', 'Keerthana', 'Sanjay', 'Swathi', 'Abel', 'Nandhini', 'Varun', 'Janani', 'Kevin', 'Harini', 'Dinesh', 'Ishwarya', 'Samuel', 'Yamini'];
 const LAST = ['Kumar', 'Raj', 'Nair', 'Menon', 'Iyer', 'Thomas', 'Joseph', 'Pillai', 'Reddy', 'Das', 'Paul', 'Babu', 'Krishnan', 'Varghese', 'Prakash', 'Mathew', 'Suresh', 'George', 'Sharma', 'John'];
-const LAB_C = north(LAB_A, -140);
-// Synthetic geofence for the Unnati demo, not the real lab door. Replace with confirmed C5 data.
-const LAB_UNNATI = north(LAB_A, 600);
+/** A point `n` metres north and `e` metres east of p. */
+const near = (p, n, e) => ({ lat: +(p.lat + n / 111320).toFixed(6), lng: +(p.lng + e / (111320 * Math.cos(p.lat * Math.PI / 180))).toFixed(6) });
+// Only LAB_A (IoT) is measured on site. The other three are made-up spots around it (80-115 m away, geofences apart)
+// so the whole department fits on one map. Replace with real coordinates when they are known.
+const LAB_B = near(LAB_A, 63, 48);
+const LAB_C = near(LAB_A, -52, -71);
+const LAB_UNNATI = near(LAB_A, -18, 112);
 const PRESETS = { small: { students: 12, historyDays: 2 }, demo: { students: 30, historyDays: 5 }, large: { students: 60, historyDays: 10 } };
 // Steps that only check something (safe to skip in the Test Lab to see what that check protects against).
 const SKIPPABLE = ['nonce_fresh', 'qr_fresh', 'mode_enabled', 'rate_limit', 'device_active', 'student_verified', 'signature', 'replay', 'revocation_recheck', 'authorization_recheck', 'enrolment', 'attendance_state',
@@ -77,7 +82,7 @@ function seed(lab, preset) {
   w.e.setTime(NOW - 4 * 86400000); // set-up happened a few days before the simulated day
   // labs: the IoT lab follows the spec (kiosk QR + GPS), the GPU lab uses device QR, the computing lab offers both
   w.ok(A, 'labs.upsert', Object.assign({}, w.lab, { checkinMode: 'A', openTime: '08:00', closeTime: '19:00', inchargeEmails: 'staff@karunya.edu', building: 'Engineering block', room: 'EB-204' }));
-  w.ok(A, 'labs.upsert', Object.assign({}, w.lab2, { checkinMode: 'B', openTime: '08:00', closeTime: '21:00', building: 'Research block', room: 'RB-110' }));
+  w.ok(A, 'labs.upsert', Object.assign({}, w.lab2, { latitude: LAB_B.lat, longitude: LAB_B.lng, checkinMode: 'B', openTime: '08:00', closeTime: '21:00', building: 'Research block', room: 'RB-110' }));
   lab.lab3 = w.ok(A, 'labs.upsert', { code: 'CMP01', name: 'Computing Lab', type: 'computing', capacity: 60, latitude: LAB_C.lat, longitude: LAB_C.lng, radiusM: 25, checkinMode: 'AB', openTime: '08:00', closeTime: '18:00', building: 'Engineering block', room: 'EB-101' }).lab;
   w.ok(A, 'kiosks.upsert', { labId: lab.lab3.labId, name: 'Computing door', authorizedEmail: 'kiosk3@karunya.edu' });
   w.ok(A, 'users.upsert', { email: 'faculty3@karunya.edu', displayName: 'Dr Priya Raman', roles: ['faculty'], employeeCode: 'F003' });
@@ -127,6 +132,7 @@ function seed(lab, preset) {
   lab.demoEventId = demoEvent.labEventId;
   // attendance history on earlier days, so reports and charts have something real in them
   history(lab, opts.historyDays);
+  phoneAppClass(lab);
   // A live class and a couple of checked-in students make the dashboards and request queue useful immediately.
   w.e.setTime(NOW + 6 * 60000);
   w.e.run('Sessions.materialize(U.local(U.now()).date)');
@@ -165,7 +171,7 @@ function seed(lab, preset) {
 /** C5 demo placeholders only: no real room, coordinates, models or inventory have been supplied. */
 function seedUnnati(lab) {
   const w = lab.w, placeholder = 'DEMO PLACEHOLDER: quantities, models and locations await the confirmed lab inventory.';
-  w.e.setTime(NOW - 10 * 60000); // 09:50, before the Test Lab clock starts at 09:54
+  w.e.setTime(NOW - 10 * 60000); // 09:50, before the Test Lab clock starts at 10:07
   const unnati = w.ok(w.admin, 'labs.upsert', { code: 'UNNATI', name: 'Intel Unnati AI Lab', type: 'gpu', capacity: 30,
     building: 'TBD (demo placeholder)', room: 'TBD (demo)', latitude: LAB_UNNATI.lat, longitude: LAB_UNNATI.lng, radiusM: 25,
     checkinMode: 'AB', openLab: true, openTime: '08:00', closeTime: '19:00', inchargeEmails: w.staff,
@@ -202,6 +208,45 @@ function seedUnnati(lab) {
   lab.unnati = { lab: unnati, kioskEmail, workstationIds, projectIds, studentIds: students.map((s) => s.studentId), sessionId: session.sessionId };
 }
 
+/**
+ * Tier 3 on the simulated day: the 09:00 Computing class runs as a phone-app session. Four students link the
+ * simulated app (Node keys, the same signed messages as android/) and report every 2 minutes; one leaves at 09:40,
+ * one never answers a fingerprint check. Two without the app (iPhones) check in on the kiosk page and are flagged.
+ */
+function phoneAppClass(lab) {
+  const w = lab.w, fac = 'faculty3@karunya.edu', kiosk = 'kiosk3@karunya.edu', t0 = Date.UTC(2026, 9, 14, 3, 30); // 09:00 IST
+  const key = () => { const k = nodeCrypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }), j = k.publicKey.export({ format: 'jwk' });
+    return { privateKey: k.privateKey, publicKey: Buffer.concat([Buffer.from([4]), Buffer.from(j.x, 'base64url'), Buffer.from(j.y, 'base64url')]).toString('base64url') }; };
+  const sign = (k, msg) => nodeCrypto.sign('sha256', Buffer.from(msg, 'utf8'), { key: k.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  const fix = (m) => { const p = near(LAB_C, m, m / 2); return [p.lat.toFixed(7), p.lng.toFixed(7), String(8 + (m % 7))]; };
+  const now = () => w.eval('U.now()');
+  w.e.setTime(t0 - 5 * 60000);
+  w.e.run('Sessions.materialize(U.local(U.now()).date)');
+  const ses = w.ok(fac, 'sessions.day', { date: '2026-10-14' }).sessions.find((s) => s.labId === lab.lab3.labId && s.type === 'class');
+  w.ok(fac, 'sessions.open', { sessionId: ses.sessionId, checkinMode: 'C' });
+  const app = w.students.slice(3, 7).map((s, i) => {
+    w.e.setTime(t0 + i * 70000);
+    const token = w.ok(s.email, 'app.pairCode').token, dev = key(), bio = key();
+    const r = w.eval('appLink_(' + JSON.stringify({ token, publicKey: dev.publicKey, bioPublicKey: bio.publicKey, sig: sign(dev, token), bioSig: sign(bio, token), label: ['Pixel 7', 'Galaxy A54', 'Redmi Note 12', 'OnePlus Nord'][i] }) + ')');
+    if (!r.ok) throw new Error('Demo app link failed for ' + s.email + ': ' + r.error.code);
+    const code = w.ok(kiosk, 'kiosk.display').code, m = ['c1', code, 'in', now(), ...fix(3 + i), 0].join('|');
+    w.ok(s.email, 'app.scan', { credentialId: r.data.credentialId, sessionId: ses.sessionId, m, sig: sign(dev, m) });
+    return { s, dev, bio, cred: r.data.credentialId, seq: 0, leaves: i === 1 ? t0 + 40 * 60000 : Infinity, ignoresBio: i === 2 };
+  });
+  w.students.slice(7, 9).forEach((s, i) => { w.e.setTime(t0 + (5 + i) * 60000); const r = w.checkin(s, { kiosk, sessionId: ses.sessionId, geo: Object.assign(near(LAB_C, 2 + i * 3, 1), { accuracy: 11 }) }); if (!r.ok) throw new Error('Demo kiosk check-in failed for ' + s.email + ': ' + r.error.code); });
+  for (let t = t0 + 6 * 60000; t <= t0 + 64 * 60000; t += 2 * 60000) {
+    w.e.setTime(t);
+    if (t === t0 + 30 * 60000) w.ok(fac, 'presence.bioNow', { sessionId: ses.sessionId });
+    app.forEach((a, i) => {
+      if (t >= a.leaves) return;
+      const p = ['p1', ses.sessionId, ++a.seq, now() + i * 1000, ...fix(2 + ((a.seq + i) % 9)), 0].join('|');
+      const ch = (w.ok(a.s.email, 'app.ping', { credentialId: a.cred, pings: [{ m: p, sig: sign(a.dev, p) }] }) || {}).challenge;
+      if (ch && !a.ignoresBio) w.ok(a.s.email, 'app.bio', { credentialId: a.cred, bioId: ch.bioId, sig: sign(a.bio, ch.message) });
+    });
+  }
+  lab.phoneAppSessionId = ses.sessionId;
+}
+
 /** Past days: the IoT class runs with kiosk QR check-ins; most students scan out, a few forget. */
 function history(lab, days) {
   const w = lab.w, today = Date.UTC(2026, 9, 14, 4, 30);
@@ -234,8 +279,8 @@ function createLab(opts = {}) {
   lab.w = baseWorld({ students: 0, mode: 'AB' });
   lab.w.e.run("PropertiesService.getScriptProperties().setProperty('WEBAPP_URL', " + JSON.stringify(opts.baseUrl || 'http://localhost:8787/') + ')');
   seed(lab, preset);
-  // the simulated day starts a few minutes before the 10:00 class; the clock then runs in real time
-  lab.clock = makeClock(NOW - 6 * 60000);
+  // the simulated day starts at 10:07, just after the seeded check-ins of the 10:00 class; the clock then runs in real time
+  lab.clock = makeClock(NOW + 7 * 60000);
   lab.sync = () => lab.w.e.setTime(lab.clock.now());
   lab.sync();
   lab.w.e.run('Sessions.materialize(U.local(U.now()).date)');

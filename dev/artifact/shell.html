@@ -1,0 +1,541 @@
+<title>LABFLOW Live Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: a navy header with the simulated clock, tabs, then one working area per tab; LABFLOW Test Lab navy and gold. */
+:root {
+  --bg: #f3f5fa; --panel: #ffffff; --panel-2: #eef1f8; --line: #d7ddea; --ink: #13203d; --soft: #57637d;
+  --gold: #b9830f; --gold-soft: #fbf0d6; --brand: #2f62c8; --brand-ink: #ffffff;
+  --good: #15845a; --good-soft: #e0f3e9; --warn: #a46700; --warn-soft: #fbefd9; --bad: #c23c3c; --bad-soft: #f8e2e2; --skip: #7b5bd6;
+  --disp: "Barlow Condensed", "Arial Narrow", sans-serif; --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1424; --panel: #131d33; --panel-2: #18243f; --line: #263453; --ink: #e7ecf6; --soft: #97a5c0;
+  --gold: #f2b83a; --gold-soft: #2c2512; --brand: #3d72dc; --brand-ink: #ffffff;
+  --good: #3ccf86; --good-soft: #12301f; --warn: #f0b84a; --warn-soft: #2e2410; --bad: #f26b6b; --bad-soft: #351717; --skip: #a78bfa; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1424; --panel: #131d33; --panel-2: #18243f; --line: #263453; --ink: #e7ecf6; --soft: #97a5c0;
+  --gold: #f2b83a; --gold-soft: #2c2512; --brand: #3d72dc; --brand-ink: #ffffff;
+  --good: #3ccf86; --good-soft: #12301f; --warn: #f0b84a; --warn-soft: #2e2410; --bad: #f26b6b; --bad-soft: #351717; --skip: #a78bfa; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font: 14.5px/1.55 var(--sans); }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+a { color: var(--brand); }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+.gut { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+header.top { background: #0a2252; color: #e7ecf6; border-bottom: 3px solid #f2b83a; }
+header.top .gut { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-block: 12px; max-width: 1440px; margin: 0 auto; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.mark { font: 700 28px/1 var(--disp); letter-spacing: .06em; text-transform: uppercase; }
+.tag { font: 600 11px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: #0a2252; background: #f2b83a; padding: 5px 8px; border-radius: 4px; }
+.clockbox { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clock { font: 600 15px/1.2 var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.clock small { display: block; color: #9fb0d0; font: 500 10.5px/1.3 var(--sans); letter-spacing: .08em; text-transform: uppercase; }
+.hbtn { border: 1px solid #2b4479; background: #12306b; color: #e7ecf6; border-radius: 6px; padding: 5px 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.hbtn:hover { border-color: #f2b83a; }
+.notice { background: var(--gold-soft); border-bottom: 1px solid var(--line); font-size: 13px; }
+.notice .gut { max-width: 1440px; margin: 0 auto; padding-block: 7px; }
+
+nav.tabs { background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+nav.tabs .gut { display: flex; gap: 2px; overflow-x: auto; max-width: 1440px; margin: 0 auto; }
+nav.tabs button { all: unset; cursor: pointer; padding: 11px 14px; font-weight: 600; color: var(--soft); white-space: nowrap; border-bottom: 3px solid transparent; }
+nav.tabs button:hover { color: var(--ink); }
+nav.tabs button[aria-current="page"] { color: var(--ink); border-bottom-color: var(--gold); }
+nav.tabs button:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+main .gut { max-width: 1440px; margin: 0 auto; padding-block: 20px 60px; }
+section.view { display: grid; gap: 16px; min-width: 0; }
+h1 { font: 700 32px/1.05 var(--disp); letter-spacing: .03em; text-transform: uppercase; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; margin: 0; letter-spacing: .01em; }
+h3 { font: 600 11px/1.3 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--soft); margin: 0; }
+p { margin: 0; max-width: 78ch; }
+.lead { color: var(--soft); }
+.hint { color: var(--soft); font-size: 12.5px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; display: grid; gap: 10px; align-content: start; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+label.f { display: grid; gap: 3px; font-size: 12px; color: var(--soft); font-weight: 600; min-width: 0; }
+.input { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; max-width: 100%; }
+.btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 600; }
+.btn:hover { border-color: var(--brand); }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.btn.gold { background: #f2b83a; border-color: #f2b83a; color: #1d1500; }
+.btn.sm { padding: 3px 9px; font-size: 12.5px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font: 600 11.5px/1.6 var(--sans); border: 1px solid var(--line); background: var(--panel-2); white-space: nowrap; }
+.chip.ok { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+.chip.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.chip.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.chip.mode { font-family: var(--mono); }
+.tablebox { overflow-x: auto; min-width: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--soft); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.pick { cursor: pointer; } tr.pick:hover td { background: var(--panel-2); } tr.sel td { background: var(--gold-soft); }
+.trace { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); display: grid; gap: 6px; min-width: 0; }
+.trace.ok { border-left-color: var(--good); } .trace.bad { border-left-color: var(--bad); }
+.trace pre { margin: 0; overflow: auto; max-height: 220px; font: 12px/1.45 var(--mono); color: var(--soft); white-space: pre-wrap; word-break: break-word; }
+details > summary { cursor: pointer; color: var(--soft); font-size: 12.5px; }
+.chain { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* map */
+.map svg { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; user-select: none; }
+.m-grid { stroke: var(--line); stroke-width: .6; }
+.m-fence { fill: var(--gold-soft); stroke: var(--gold); stroke-width: 1.4; cursor: pointer; }
+.m-fence.sel { stroke-width: 3; }
+.m-dot { fill: var(--gold); }
+.m-code { font: 700 9px var(--mono); fill: var(--ink); pointer-events: none; }
+.m-sub { font: 500 6.5px var(--sans); fill: var(--soft); pointer-events: none; }
+.m-scale { stroke: var(--ink); stroke-width: 1.2; } .m-scale-t { font: 600 7px var(--sans); fill: var(--ink); }
+.m-pin { fill: var(--brand); stroke: var(--panel); stroke-width: 1.5; cursor: grab; }
+.m-acc { fill: var(--brand); fill-opacity: .12; stroke: var(--brand); stroke-width: .7; stroke-dasharray: 2 2; pointer-events: none; }
+.m-pin-t { font: 600 7px var(--sans); fill: var(--brand); pointer-events: none; }
+
+/* stage and app frames */
+.stage { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+.framehead { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.screen { border: 8px solid #1b2234; border-radius: 12px; background: #fff; overflow: hidden; }
+.screen iframe { display: block; width: 100%; height: 560px; border: 0; }
+.device { border: 10px solid #1b2234; border-radius: 30px; background: #fff; overflow: hidden; max-width: 400px; width: 100%; justify-self: center; }
+.device iframe { display: block; width: 100%; height: 720px; border: 0; }
+.appbox { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+.appbox iframe { display: block; width: 100%; height: 820px; border: 0; }
+.roles { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.role { all: unset; cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 9px 11px; display: grid; gap: 2px; }
+.role:hover { border-color: var(--brand); }
+.role[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-soft); }
+.role:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.role b { font-size: 13.5px; } .role span { font-size: 12px; color: var(--soft); }
+.relay .item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 5px; min-width: 0; }
+.relay .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* start */
+.tiers { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.tier { border-top: 3px solid var(--gold); }
+.tier .num { font: 700 12.5px/1 var(--mono); color: var(--gold); letter-spacing: .06em; }
+.tier h2 { font: 700 22px/1.1 var(--disp); letter-spacing: .02em; text-transform: uppercase; }
+.say { border-left: 3px solid var(--line); padding-left: 10px; color: var(--soft); font-style: italic; }
+ol.run { margin: 0; padding: 0; list-style: none; counter-reset: run; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+ol.run li { counter-increment: run; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+ol.run li:last-child { border-bottom: 0; }
+ol.run li::before { content: counter(run, decimal-leading-zero); font: 700 15px/1 var(--mono); color: var(--gold); }
+ol.run strong { display: block; } ol.run span { color: var(--soft); font-size: 13.5px; }
+.note { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.toasts { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 6px; z-index: 20; }
+.toast { background: var(--ink); color: var(--bg); padding: 8px 12px; border-radius: 8px; font-size: 13px; max-width: 340px; }
+.toast.bad { background: var(--bad); color: #fff; }
+
+@media (max-width: 1100px) { .stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .stage > :first-child { grid-column: 1 / -1; } }
+@media (max-width: 720px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .clockbox { margin-left: 0; }
+  ol.run li { grid-template-columns: 30px minmax(0, 1fr); } ol.run li > .btn { grid-column: 2; justify-self: start; }
+  .appbox iframe { height: 720px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<header class="top">
+  <div class="gut">
+    <div class="brand"><span class="mark">Labflow</span><span class="tag">Live demo</span></div>
+    <div class="clockbox">
+      <div class="clock" id="clock" aria-live="off">--</div>
+      <button class="hbtn" type="button" id="adv">+5 min</button>
+      <button class="hbtn" type="button" id="tick">Run tick</button>
+      <button class="hbtn" type="button" id="reset">Reset demo</button>
+    </div>
+  </div>
+</header>
+<div class="notice"><div class="gut"><strong>Simulated data.</strong> The real LABFLOW server code runs inside this page on a demo department. Nothing here reaches the live system or any real account, and every change resets when the page reloads.</div></div>
+<nav class="tabs" aria-label="Demo sections"><div class="gut" id="tabs"></div></nav>
+<main><div class="gut" id="main"></div></main>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script>/*@ENV@*/</script>
+<script>/*@ENGINE@*/</script>
+<script>/*@DEMO@*/</script>
+<script>/*@DATA@*/</script>
+<script>
+(function () {
+'use strict';
+var D = LFDEMO(LFENV, LFENGINE, LFDATA.snapshot, LFDATA.startNow);
+
+/* ------------------------------------------------------------------ small helpers */
+function h(tag, props) {
+  var el = document.createElement(tag), kids = Array.prototype.slice.call(arguments, 2);
+  if (props) Object.keys(props).forEach(function (k) {
+    var v = props[k];
+    if (v === undefined || v === null || v === false) return;
+    if (k === 'class') el.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k.indexOf('on') === 0 && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'selected') el[k] = v;
+    else el.setAttribute(k, v === true ? '' : String(v));
+  });
+  (function add(list) { list.forEach(function (c) { if (c === null || c === undefined || c === false) return; if (Array.isArray(c)) add(c); else el.appendChild(c instanceof Node ? c : document.createTextNode(String(c))); }); })(kids);
+  return el;
+}
+var $ = function (s) { return document.querySelector(s); };
+function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+function fill(el, list) { clear(el); (function add(l) { l.forEach(function (c) { if (Array.isArray(c)) add(c); else if (c) el.appendChild(c); }); })(list); }
+function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : '') }, msg); $('#toasts').appendChild(t); setTimeout(function () { t.remove(); }, bad ? 6000 : 2800); }
+function btn(label, fn, cls) { return h('button', { type: 'button', class: 'btn ' + (cls || ''), onclick: async function (e) { var b = e.currentTarget; b.disabled = true; try { await fn(e); } catch (x) { toast(String(x.message || x), true); } finally { b.disabled = false; } } }, label); }
+function select(id, options, value) { return h('select', { class: 'input', id: id }, options.map(function (o) { return h('option', { value: o[0], selected: o[0] === value }, o[1]); })); }
+var IST = 330 * 60000;
+var hhmm = function (ms) { return new Date(ms + IST).toISOString().slice(11, 16); };
+var dayName = function (ms) { var d = new Date(ms + IST); return d.toUTCString().slice(0, 11).replace(',', ''); };
+
+var S = D.state();
+function refresh() { S = D.state(); drawClock(); }
+function drawClock() { var n = D.now(); clear($('#clock')).append(dayName(n) + ' 2026 · ' + new Date(n + IST).toISOString().slice(11, 19) + ' IST', h('small', null, 'simulated clock')); }
+drawClock(); setInterval(drawClock, 1000);
+setInterval(function () { try { D.tick(); } catch (e) { /* shown when run by hand */ } }, 60000);
+$('#adv').onclick = function () { D.advance(300000); refresh(); toast('Clock moved 5 minutes'); };
+$('#tick').onclick = function () { var r = D.tick(); refresh(); toast('Tick ran: ' + Object.keys(r || {}).map(function (k) { return k + ' ' + JSON.stringify(r[k]); }).join(', ').slice(0, 160)); };
+$('#reset').onclick = function () { D.reset(); keyStore = {}; relay.items = {}; refresh(); frames.forEach(function (f) { f.setAs(f.as); }); toast('Demo reset to the start of the day'); };
+
+/* ------------------------------------------------------------------ where the phones are */
+var labs = S.labs, home = labs.find(function (l) { return l.code === 'IOT01'; }) || labs[0];
+var geo = { lat: home.latitude + 4 / 111320, lng: home.longitude, accuracy: 12, denied: false };
+var geoListeners = [];
+function setGeo(p) { Object.assign(geo, p); geoListeners.forEach(function (f) { f(); }); }
+function metres(a, b) { var r = Math.PI / 180, x = (b.lng - a.lng) * r * Math.cos((a.lat + b.lat) * r / 2), y = (b.lat - a.lat) * r; return Math.round(Math.sqrt(x * x + y * y) * 6371000); }
+function placeNear(lab, m, acc) { setGeo({ lat: lab.latitude + m / 111320, lng: lab.longitude, accuracy: acc === undefined ? 12 : acc, denied: false }); }
+
+/* ------------------------------------------------------------------ the real app in frames, talking to this page */
+/* Runs inside each app frame: replaces google.script.run, location and the camera relay with messages to this page. */
+function bridge(as) {
+  var seq = 0, waiting = {};
+  var send = function (m) { m.lf = 1; parent.postMessage(m, '*'); };
+  var ask = function (type, extra, cb) { var id = ++seq; waiting[id] = cb; extra.type = type; extra.id = id; extra.as = as; send(extra); };
+  addEventListener('message', function (ev) {
+    var d = ev.data || {}; if (d.lf !== 1) return;
+    if (d.type === 'res' && waiting[d.id]) { var cb = waiting[d.id]; delete waiting[d.id]; cb(d.result); }
+    if (d.type === 'open' && window.LF) {
+      var q = (String(d.text).split('?')[1] || '').split('&'), k = '', s = '';
+      q.forEach(function (p) { var kv = p.split('='); if (kv[0] === 'k') k = decodeURIComponent(kv[1] || ''); if (kv[0] === 's') s = decodeURIComponent(kv[1] || ''); });
+      if (k && LF.kioskCheckin) LF.kioskCheckin(k); else if (s && LF.scanLink) LF.scanLink(s); else if (LF.toast) LF.toast('Not a LABFLOW link', 'bad');
+    }
+    if (d.type === 'type') {
+      // a USB barcode scanner types the code into the focused scanner box and presses Enter
+      var box = document.querySelector('input[placeholder^="Scan, or paste"]');
+      if (!box) { if (window.LF && LF.toast) LF.toast('This screen has no scanner box open', 'bad'); return; }
+      box.value = String(d.text); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+  });
+  function chain(ok, bad) { return { withSuccessHandler: function (f) { return chain(f, bad); }, withFailureHandler: function (f) { return chain(ok, f); },
+    rpc: function (action, payload) { ask('rpc', { action: action, payload: payload }, function (r) { if (ok) ok(r); }); } }; }
+  window.google = { script: { run: chain(null, null) } };
+  var emailOk = /^[a-z0-9._%+'-]+@karunya\.edu(?:\.in)?$/;
+  window.LF_DEV = { as: as, switchAccount: function (e) { e = String(e || '').trim().toLowerCase(); if (!emailOk.test(e)) throw new Error('Enter an @karunya.edu or @karunya.edu.in email address.'); send({ type: 'switch', to: e }); }, signOut: function () { send({ type: 'switch', to: '' }); } };
+  function position(ok, err) { ask('geo', {}, function (g) { if (g.denied) return err && err({ code: 1, message: 'User denied Geolocation' }); ok({ coords: { latitude: g.lat, longitude: g.lng, accuracy: g.accuracy }, timestamp: Date.now() }); }); }
+  try { Object.defineProperty(navigator, 'geolocation', { configurable: true, value: { getCurrentPosition: position, watchPosition: function (ok, err) { position(ok, err); return 1; }, clearWatch: function () {} } }); } catch (e) { /* keep the real one */ }
+  // Device keys: the app keeps them in IndexedDB. Here they live in the parent page instead (a CryptoKey survives
+  // postMessage), so they work whatever storage a nested frame gets and survive the frame reloading.
+  var fake = { open: function (name) {
+    var req = {};
+    setTimeout(function () {
+      var db = { createObjectStore: function () {}, close: function () {}, transaction: function (store) {
+        var tx = {}, ns = name + '/' + store;
+        var op = function (kind, key, value) { var r = {}; ask('kv', { op: kind, ns: ns, key: key, value: value }, function (res) { r.result = res; if (tx.oncomplete) tx.oncomplete(); }); return r; };
+        tx.objectStore = function () { return { get: function (k) { return op('get', k); }, put: function (v, k) { return op('put', k, v); }, delete: function (k) { return op('delete', k); } }; };
+        return tx; } };
+      req.result = db; if (req.onupgradeneeded) req.onupgradeneeded(); if (req.onsuccess) req.onsuccess();
+    }, 0);
+    return req; } };
+  try { Object.defineProperty(window, 'indexedDB', { configurable: true, value: fake }); } catch (e) { /* the real one stays */ }
+  document.addEventListener('DOMContentLoaded', function () {
+    var LF = window.LF; if (!LF || !LF.util) return;
+    var orig = LF.util.qrSvg;
+    LF.util.qrSvg = function (text) { send({ type: 'qr', as: as, text: text }); return orig(text); };
+  });
+}
+var frames = [];
+function appFrame(as, title) {
+  var el = h('iframe', { title: title });
+  var f = { el: el, as: as, setAs: function (a) { f.as = a; var b = '<script>(' + bridge.toString() + ')(' + JSON.stringify(a) + ');<\/script>'; el.srcdoc = LFDATA.app.replace('<body>', function () { return '<body>' + b; }); if (f.onAs) f.onAs(a); } };
+  frames.push(f); f.setAs(as); return f;
+}
+addEventListener('message', function (ev) {
+  var d = ev.data || {}; if (d.lf !== 1) return;
+  var f = frames.find(function (x) { return x.el.contentWindow === ev.source; });
+  var reply = function (result) { ev.source.postMessage({ lf: 1, type: 'res', id: d.id, result: result }, '*'); };
+  if (d.type === 'rpc') { var r; try { r = D.call(d.as, String(d.action), d.payload); } catch (e) { r = { ok: false, error: { code: 'INTERNAL', message: String(e && e.message) } }; } reply(r); }
+  else if (d.type === 'kv') { var box = keyStore[d.ns] = keyStore[d.ns] || {}; if (d.op === 'put') box[d.key] = d.value; if (d.op === 'delete') delete box[d.key]; reply(d.op === 'get' ? box[d.key] : d.key); }
+  else if (d.type === 'geo') reply({ lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, denied: geo.denied });
+  else if (d.type === 'qr') { relay.items[d.as] = { as: d.as, text: String(d.text), at: Date.now() }; relay.listeners.forEach(function (x) { x(); }); }
+  else if (d.type === 'switch' && f) f.setAs(String(d.to || ''));
+});
+var relay = { items: {}, listeners: [] }, keyStore = {};
+
+/* ------------------------------------------------------------------ tabs */
+var VIEWS = [
+  { id: 'start', label: 'Start here', render: start },
+  { id: 'checkin', label: 'Check in', render: checkin },
+  { id: 'stage', label: 'Stage', render: stage },
+  { id: 'app', label: 'Open the app', render: appView },
+  { id: 'replay', label: 'Presence replay', render: replay },
+  { id: 'proxy', label: 'Proxy attempts', render: proxyView },
+  { id: 'attacks', label: 'Attacks', render: attacks }
+];
+var built = {}, current = null;
+function go(id, opts) {
+  var v = VIEWS.find(function (x) { return x.id === id; }) || VIEWS[0];
+  current = v.id;
+  clear($('#tabs')).append.apply($('#tabs'), VIEWS.map(function (x) { return h('button', { type: 'button', 'aria-current': x.id === v.id ? 'page' : null, onclick: function () { go(x.id); } }, x.label); }));
+  VIEWS.forEach(function (x) { if (built[x.id]) built[x.id].el.hidden = x.id !== v.id; });
+  if (!built[v.id]) { var el = h('section', { class: 'view', id: 'view-' + v.id }); $('#main').appendChild(el); built[v.id] = { el: el, api: v.render(el) || {} }; }
+  if (opts && built[v.id].api.preset) built[v.id].api.preset(opts);
+  try { history.replaceState(null, '', '#' + v.id); } catch (e) { /* the viewer may refuse */ }
+  scrollTo({ top: 0 });
+}
+
+/* ------------------------------------------------------------------ Start here */
+function start(root) {
+  var tier = function (num, name, what, show, say, tryIt) {
+    return h('article', { class: 'panel tier' }, h('span', { class: 'num' }, num), h('h2', null, name), h('p', null, what), h('h3', null, 'Show it'), h('p', null, show), h('p', { class: 'say' }, say), h('div', null, tryIt));
+  };
+  root.append(
+    h('h1', null, 'How attendance is taken'),
+    h('p', { class: 'lead' }, 'LABFLOW has three ways to mark a student present, from the simplest to the strictest. Every button on this page runs the real server code, with its checks, refusals and audit log, on a demo department of 30 students and four labs. The day is Wednesday 14 October 2026 and the clock runs in real time from 10:07.'),
+    h('div', { class: 'tiers' },
+      tier('TIER 1', 'Kiosk QR + GPS', 'The lab\'s door screen shows a QR that changes every few seconds. The student scans it and the phone sends one GPS reading.', 'IoT lab, method A. At the lab the student is present; 100 m away the check-in is recorded but flagged, not counted.', 'The screen proves you were at the door seconds ago. The GPS proves you are in the room, and the coordinates are thrown away after the check.', btn('Try it', function () { go('checkin', { lab: 'IOT01', method: 'A' }); }, 'primary')),
+      tier('TIER 2', 'Device QR', 'The student\'s phone shows a QR signed by a key that never leaves that phone. The kiosk, the teacher or a class rep scans it.', 'GPU lab, method B. Then on the Stage, the student phone shows its QR and the teacher phone scans it.', 'No GPS needed. Someone in the room scanned a phone only that student holds, and a screenshot goes stale in 15 seconds.', btn('Try it', function () { go('checkin', { lab: 'GPU01', method: 'B' }); }, 'primary')),
+      tier('TIER 3', 'Phone app', 'The Android app checks in at the kiosk, reports a signed location every 2 minutes and asks for a fingerprint at random times.', 'The 09:00 Computing class ran on the app: Ananya and Karthik present, Rohan partial (left at 09:40), Meera partial (skipped a fingerprint check), Nila and Arjun flagged (no app).', 'It checks the whole class, not only the moment you walk in. Students without the app are flagged, never refused.', btn('Open as faculty3, then press Live roster', function () { go('app', { as: 'faculty3@karunya.edu' }); }, 'primary'))),
+    h('h1', { style: { marginTop: '10px' } }, 'Run order'),
+    h('ol', { class: 'run' },
+      runItem('Tier 1 at the door', 'Check in on IOT01 at the lab, then again 100 m out. Point at present against flagged and at the pipeline of checks.', 'checkin', { lab: 'IOT01', method: 'A' }),
+      runItem('Tier 2 with real screens', 'Stage: the student phone presses "Show my QR", the relay hands it to the teacher phone, which scans it.', 'stage'),
+      runItem('Tier 3 roster', 'faculty3 → Live roster. Walk the six results, then press "Fingerprint check now".', 'app', { as: 'faculty3@karunya.edu' }),
+      runItem('Does it keep checking?', 'Presence replay: a student slips out to the canteen, another marks in from the hostel; surprise rescans catch both.', 'replay'),
+      runItem('Proxy attempts', 'Every student has the app. Press a trick (photo of the screen, fake GPS, phone left in the lab, a friend swapping accounts...) and watch how it is caught.', 'proxy'),
+      runItem('Student dashboard', 'Today, Attendance history and percentage, Device.', 'app', { as: 'student1@karunya.edu' }),
+      runItem('Faculty dashboard', 'Live roster with Request rescan now and Random spot check, Flags, a report.', 'app', { as: 'faculty@karunya.edu' }),
+      runItem('Admin and audit', 'Audit & system → Verify chain integrity: every action is hash-chained.', 'app', { as: 'admin@karunya.edu' }),
+      runItem('Attacks', '27 scripted attacks and class rushes, each refused or caught.', 'attacks')),
+    h('div', { class: 'note' }, h('strong', null, 'Say these up front'), h('ul', null,
+      h('li', null, 'This is a demo department with made-up students, not the live deployment.'),
+      h('li', null, 'Tier 3 is simulated here with the same signed messages the Android app sends. The app builds but has not run on a real phone yet.'),
+      h('li', null, 'Only the IoT lab\'s coordinates were measured on site; the other three labs are placed by hand nearby.'),
+      h('li', null, 'Camera scanning is replaced by a relay that hands the QR from one screen to another.'),
+      h('li', null, 'Report exports (PDF and CSV) do nothing on this page; they work with the local dev server (npm run dev).'))));
+  function runItem(title, text, view, opts) { return h('li', null, h('div', null, h('strong', null, title), h('span', null, text)), btn('Open', function () { go(view, opts); }, 'sm')); }
+}
+
+/* ------------------------------------------------------------------ Check in: one click, any student, any lab */
+function checkin(root) {
+  var students = S.users.filter(function (u) { return /student/.test(u.roles); });
+  var labSel = select('ci-lab', labs.map(function (l) { return [l.labId, l.code + ' · ' + l.name + ' (mode ' + l.mode + ')']; }), home.labId);
+  var stuSel = select('ci-student', students.map(function (u) { return [u.email, (u.name || u.email) + (u.classRep ? ' (class rep)' : '')]; }), 'student13@karunya.edu');
+  var method = select('ci-method', [['A', 'A: student scans the kiosk code and sends GPS'], ['B', 'B: kiosk scans the student\'s phone QR']], 'A');
+  var action = select('ci-action', [['', 'Default (in)'], ['in', 'In'], ['out', 'Out']], '');
+  var acc = h('input', { class: 'input', id: 'ci-acc', type: 'number', min: 0.1, max: 500, step: 'any', value: geo.accuracy, style: { width: '84px' } });
+  var where = h('span', { class: 'mono hint' });
+  var tbody = h('tbody'), out = h('div', { class: 'grid', style: { gridTemplateColumns: 'minmax(0,1fr)' } }, h('p', { class: 'hint' }, 'Nothing run yet. Pick a lab and a student, then press Run check-in.'));
+  var cur = function () { return labs.find(function (l) { return l.labId === labSel.value; }); };
+  var map = labMap(function (l) { labSel.value = l.labId; pickLab(); });
+  acc.addEventListener('change', function () { setGeo({ accuracy: Number(acc.value) || 12 }); });
+  function draw() {
+    where.textContent = geo.lat.toFixed(6) + ', ' + geo.lng.toFixed(6) + ' ± ' + geo.accuracy + ' m';
+    acc.value = geo.accuracy; map.update(labSel.value);
+    clear(tbody).append.apply(tbody, labs.map(function (l) {
+      var d = metres(geo, { lat: l.latitude, lng: l.longitude }), inside = d <= l.radiusM;
+      return h('tr', { class: 'pick' + (l.labId === labSel.value ? ' sel' : ''), onclick: function () { labSel.value = l.labId; pickLab(); } },
+        h('td', null, h('strong', null, l.code), ' ', l.name), h('td', null, h('span', { class: 'chip mode' }, l.mode)),
+        h('td', { class: 'mono' }, h('a', { href: 'https://www.openstreetmap.org/?mlat=' + l.latitude + '&mlon=' + l.longitude + '#map=19/' + l.latitude + '/' + l.longitude, target: '_blank', rel: 'noopener' }, l.latitude + ', ' + l.longitude)),
+        h('td', null, l.radiusM + ' m'), h('td', { class: 'mono' }, d + ' m'), h('td', null, h('span', { class: 'chip ' + (inside ? 'ok' : 'warn') }, inside ? 'inside' : 'outside')));
+    }));
+  }
+  geoListeners.push(draw);
+  function pickLab() { var l = cur(); method.value = /A/.test(l.mode) ? 'A' : 'B'; placeNear(l, 4, geo.accuracy); }
+  labSel.addEventListener('change', pickLab);
+  async function run() {
+    var r = await D.quick({ labId: labSel.value, student: stuSel.value, method: method.value, action: action.value || undefined, geo: geo.denied ? null : { lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy } });
+    var last = r.steps[r.steps.length - 1], status = last && last.action === 'attend.roster' && last.data ? last.data.status : null;
+    fill(out, [h('div', { class: 'row' }, h('strong', null, stuSel.options[stuSel.selectedIndex].text + ' → ' + cur().code + ' by method ' + method.value), status ? h('span', { class: 'chip ' + (status === 'present' ? 'ok' : 'warn') }, status) : h('span', { class: 'chip bad' }, 'stopped')),
+      r.steps.map(function (s) { return h('div', { class: 'trace ' + (s.ok ? 'ok' : 'bad') }, h('div', { class: 'row' }, h('span', { class: 'chip ' + (s.ok ? 'ok' : 'bad') }, s.ok ? 'ok' : s.error.code), h('span', { class: 'chip' }, s.who), h('strong', null, s.label), s.action ? h('span', { class: 'mono hint' }, s.action) : null), !s.ok ? h('span', { class: 'hint' }, s.error.message) : null,
+        h('details', null, h('summary', null, 'Server response'), h('pre', null, JSON.stringify(s.ok ? s.data : s.error, null, 1)))); }),
+      r.traces.map(function (t) { return h('div', { class: 'trace ' + (t.ok ? 'ok' : 'bad') }, h('div', { class: 'row' }, h('strong', null, 'Checks run by ' + t.pipeline), h('span', { class: 'chip ' + (t.ok ? 'ok' : 'bad') }, t.ok ? 'accepted' : t.code)), h('div', { class: 'chain' }, t.trace.map(function (x) { return h('span', { class: 'chip ' + (x.ok ? 'ok' : 'bad'), title: x.label || x.id }, x.id); }))); })]);
+    refresh();
+  }
+  root.append(h('h1', null, 'Check in'),
+    h('p', { class: 'lead' }, 'The whole check-in for one student, run as the kiosk, the student and the admin in turn. Put the phone on the map (click or drag the blue pin), choose a lab and a student, and run it. Each step shows the server\'s real answer, and the green and red chips are the verification checks in the order they ran.'),
+    h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))' } },
+      h('section', { class: 'panel map' }, h('h2', null, 'Labs and the phone'), map.el, h('p', { class: 'hint' }, 'Gold circles are the geofences, to scale. Only IOT01 was measured on site.')),
+      h('section', { class: 'panel' }, h('h2', null, 'Run'),
+        h('label', { class: 'f', for: 'ci-lab' }, 'Lab', labSel), h('label', { class: 'f', for: 'ci-student' }, 'Student', stuSel),
+        h('label', { class: 'f', for: 'ci-method' }, 'Method', method), h('label', { class: 'f', for: 'ci-action' }, 'Action', action),
+        h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Phone at'), where, h('label', { class: 'row hint', for: 'ci-acc' }, 'GPS accuracy (m)', acc)),
+        h('div', { class: 'row' }, btn('At the lab', function () { placeNear(cur(), 4, 12); }, 'sm'), btn('100 m out', function () { placeNear(cur(), 100, 12); }, 'sm'), btn('1 km out', function () { placeNear(cur(), 1000, 15); }, 'sm'), btn('Faked 0.5 m accuracy', function () { setGeo({ accuracy: 0.5 }); }, 'sm')),
+        h('div', { class: 'row' }, btn('Run check-in', run, 'gold')),
+        h('p', { class: 'hint' }, 'If the lab has no open session, a test session open to every student is created and opened as the admin. Method B registers a device key for the student first; location is sent only in method A. Students 1, 2 and 12 are already checked in to the IoT class, so for them the default action is Out.'))),
+    h('section', { class: 'panel tablebox' }, h('table', null, h('thead', null, h('tr', null, ['Lab', 'Mode', 'Coordinates', 'Radius', 'Phone distance', ''].map(function (x) { return h('th', null, x); }))), tbody)),
+    h('section', { class: 'panel' }, h('h2', null, 'Result'), out));
+  draw();
+  return { preset: function (o) { var l = labs.find(function (x) { return x.code === o.lab; }); if (l) { labSel.value = l.labId; pickLab(); } if (o.method) method.value = o.method; } };
+}
+
+/** The labs to scale around the IoT lab, with a draggable phone pin. */
+function labMap(onLab) {
+  var lat0 = home.latitude, lng0 = home.longitude, mx = 111320 * Math.cos(lat0 * Math.PI / 180), my = 111320;
+  var xy = function (lat, lng) { return [(lng - lng0) * mx, -(lat - lat0) * my]; };
+  var pts = labs.map(function (l) { return xy(l.latitude, l.longitude); });
+  var pad = 60, x0 = Math.min.apply(null, pts.map(function (p) { return p[0]; })) - pad, x1 = Math.max.apply(null, pts.map(function (p) { return p[0]; })) + pad + 50;
+  var y0 = Math.min.apply(null, pts.map(function (p) { return p[1]; })) - pad, y1 = Math.max.apply(null, pts.map(function (p) { return p[1]; })) + pad;
+  var NS = 'http://www.w3.org/2000/svg', s = function (tag, attrs, text) { var e = document.createElementNS(NS, tag); Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); }); if (text) e.textContent = text; return e; };
+  var svg = s('svg', { viewBox: [x0, y0, x1 - x0, y1 - y0].join(' '), role: 'img', 'aria-label': 'Map of the lab geofences, to scale, with the phone position' });
+  for (var gx = Math.ceil(x0 / 50) * 50; gx < x1; gx += 50) svg.appendChild(s('line', { class: 'm-grid', x1: gx, y1: y0, x2: gx, y2: y1 }));
+  for (var gy = Math.ceil(y0 / 50) * 50; gy < y1; gy += 50) svg.appendChild(s('line', { class: 'm-grid', x1: x0, y1: gy, x2: x1, y2: gy }));
+  var fences = labs.map(function (l, i) {
+    var c = s('circle', { class: 'm-fence', cx: pts[i][0], cy: pts[i][1], r: l.radiusM });
+    c.addEventListener('click', function (e) { e.stopPropagation(); onLab(l); });
+    svg.appendChild(c); svg.appendChild(s('circle', { class: 'm-dot', cx: pts[i][0], cy: pts[i][1], r: 1.8 }));
+    svg.appendChild(s('text', { class: 'm-code', x: pts[i][0] + l.radiusM + 3, y: pts[i][1] - 1 }, l.code));
+    svg.appendChild(s('text', { class: 'm-sub', x: pts[i][0] + l.radiusM + 3, y: pts[i][1] + 7 }, l.radiusM + ' m · mode ' + l.mode));
+    return c;
+  });
+  var sx = x0 + 10, sy = y1 - 10;
+  svg.appendChild(s('line', { class: 'm-scale', x1: sx, y1: sy, x2: sx + 50, y2: sy })); svg.appendChild(s('text', { class: 'm-scale-t', x: sx + 14, y: sy - 4 }, '50 m'));
+  svg.appendChild(s('text', { class: 'm-scale-t', x: x1 - 14, y: y0 + 12 }, 'N ↑'));
+  var accC = s('circle', { class: 'm-acc', r: 12 }), pin = s('circle', { class: 'm-pin', r: 4.5 }), pinT = s('text', { class: 'm-pin-t' }, 'phone');
+  svg.appendChild(accC); svg.appendChild(pin); svg.appendChild(pinT);
+  var toLL = function (ev) { var p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; var q = p.matrixTransform(svg.getScreenCTM().inverse()); return { lat: lat0 - q.y / my, lng: lng0 + q.x / mx }; };
+  var dragging = false;
+  svg.addEventListener('pointerdown', function (ev) { if (ev.target.classList.contains('m-fence')) return; dragging = true; svg.setPointerCapture(ev.pointerId); var p = toLL(ev); setGeo({ lat: p.lat, lng: p.lng, denied: false }); });
+  svg.addEventListener('pointermove', function (ev) { if (!dragging) return; var p = toLL(ev); setGeo({ lat: p.lat, lng: p.lng }); });
+  svg.addEventListener('pointerup', function () { dragging = false; });
+  function update(selId) {
+    var p = xy(geo.lat, geo.lng), off = p[0] < x0 || p[0] > x1 || p[1] < y0 || p[1] > y1;
+    var cx = Math.min(x1 - 6, Math.max(x0 + 6, p[0])), cy = Math.min(y1 - 6, Math.max(y0 + 10, p[1]));
+    pin.setAttribute('cx', cx); pin.setAttribute('cy', cy); accC.setAttribute('cx', cx); accC.setAttribute('cy', cy); accC.setAttribute('r', off ? 0 : Math.max(1, geo.accuracy));
+    pinT.setAttribute('x', cx + 6); pinT.setAttribute('y', cy - 6); pinT.textContent = off ? 'phone is off the map (' + metres(geo, { lat: lat0, lng: lng0 }) + ' m from IOT01)' : 'phone';
+    if (cx + 6 > x1 - 90) { pinT.setAttribute('x', cx - 6); pinT.setAttribute('text-anchor', 'end'); } else pinT.removeAttribute('text-anchor');
+    fences.forEach(function (c, i) { c.classList.toggle('sel', labs[i].labId === selId); });
+  }
+  return { el: svg, update: update };
+}
+
+/* ------------------------------------------------------------------ Stage: kiosk and two phones running the real app */
+function stage(root) {
+  var students = S.users.filter(function (u) { return /student/.test(u.roles); });
+  var rank = function (u) { return /faculty/.test(u.roles) ? 0 : /staff/.test(u.roles) ? 1 : /admin/.test(u.roles) ? 2 : 3; };
+  var teachers = S.users.filter(function (u) { return /faculty|staff|admin/.test(u.roles); }).concat(students.filter(function (u) { return u.classRep || u.coordinator; })).sort(function (a, b) { return rank(a) - rank(b); });
+  var kSel = select('st-kiosk', S.kiosks.map(function (k) { return [k.email, k.name + ' (' + k.lab + ', mode ' + k.mode + ')']; }), 'kiosk1@karunya.edu');
+  var pSel = select('st-student', students.map(function (u) { return [u.email, (u.name || u.email) + (u.classRep ? ' (class rep)' : '')]; }), 'student14@karunya.edu');
+  var tSel = select('st-teacher', teachers.map(function (u) { return [u.email, (u.name || u.email) + ' · ' + u.roles]; }), 'faculty@karunya.edu');
+  var kF = appFrame(kSel.value, 'Kiosk screen'), pF = appFrame(pSel.value, 'Student phone'), tF = appFrame(tSel.value, 'Teacher phone');
+  kSel.addEventListener('change', function () { kF.setAs(kSel.value); var k = S.kiosks.find(function (x) { return x.email === kSel.value; }); var l = k && labs.find(function (x) { return x.labId === k.labId; }); if (l) placeNear(l, 4, 12); });
+  pSel.addEventListener('change', function () { pF.setAs(pSel.value); }); tSel.addEventListener('change', function () { tF.setAs(tSel.value); });
+  var geoLine = h('span', { class: 'hint' });
+  var drawGeo = function () { var near = labs.map(function (l) { return [l, metres(geo, { lat: l.latitude, lng: l.longitude })]; }).sort(function (a, b) { return a[1] - b[1]; })[0]; geoLine.textContent = geo.denied ? 'Phones refuse location access.' : 'Phones report ' + near[1] + ' m from ' + near[0].code + ', accuracy ' + geo.accuracy + ' m.'; };
+  geoListeners.push(drawGeo); drawGeo();
+  var kioskLab = function () { var k = S.kiosks.find(function (x) { return x.email === kSel.value; }); return labs.find(function (x) { return x.labId === (k && k.labId); }) || home; };
+  var relayBox = h('div', { class: 'relay grid', style: { gridTemplateColumns: 'minmax(0,1fr)', gap: '8px' } });
+  function drawRelay() {
+    var items = Object.keys(relay.items).map(function (k) { return relay.items[k]; }).sort(function (a, b) { return b.at - a.at; }).slice(0, 5);
+    var openOn = function (frame, text) { frame.el.contentWindow.postMessage({ lf: 1, type: 'open', text: text }, '*'); toast('Opened on ' + frame.as); };
+    clear(relayBox).append.apply(relayBox, items.length ? items.map(function (d) {
+      var isKiosk = /[?&]k=/.test(d.text), age = Math.round((Date.now() - d.at) / 1000);
+      return h('div', { class: 'item' }, h('div', { class: 'row' }, h('span', { class: 'chip ' + (isKiosk ? 'warn' : 'ok') }, isKiosk ? 'kiosk QR (tier 1)' : 'student QR (tier 2)'), h('span', { class: 'hint' }, d.as + ' · ' + age + ' s ago')),
+        h('div', { class: 'mono hint text' }, d.text),
+        h('div', { class: 'row' }, isKiosk ? btn('Student phone scans it', function () { openOn(pF, d.text); }, 'primary sm') : btn('Kiosk scans it', function () { kF.el.contentWindow.postMessage({ lf: 1, type: 'type', text: d.text }, '*'); toast('Typed into the kiosk scanner'); }, 'primary sm'),
+          btn('Teacher phone scans it', function () { openOn(tF, d.text); }, 'sm')));
+    }) : [h('p', { class: 'hint' }, 'Waiting for a QR. The kiosk draws one every few seconds in mode A; a student draws one with "Show my QR".')]);
+  }
+  relay.listeners.push(drawRelay); drawRelay(); setInterval(function () { if (current === 'stage') drawRelay(); }, 2000);
+  root.append(h('h1', null, 'Stage'),
+    h('p', { class: 'lead' }, 'The kiosk, a student\'s phone and a teacher\'s phone, each the real LABFLOW app signed in as that account. A camera cannot be used here, so the relay plays the camera: it takes the latest QR one screen drew and opens it on another, exactly as if its camera app had read the link.'),
+    h('div', { class: 'panel' }, h('div', { class: 'row' }, h('strong', null, 'Phone location'),
+      btn('At the kiosk\'s lab', function () { placeNear(kioskLab(), 4, 12); }, 'sm'), btn('100 m out', function () { placeNear(kioskLab(), 100, 12); }, 'sm'), btn('Hostel, 1 km', function () { placeNear(kioskLab(), 1000, 20); }, 'sm'),
+      btn('Faked 0.5 m accuracy', function () { setGeo({ accuracy: 0.5, denied: false }); }, 'sm'), btn('Deny location', function () { setGeo({ denied: true }); }, 'sm'), geoLine),
+    h('div', { class: 'row' }, h('strong', null, 'Session'), btn('Open a test session at this door', function () {
+      var r = D.openTestSession(kioskLab().labId);
+      if (r.error) throw new Error(r.error.message);
+      [kF, pF, tF].forEach(function (f) { f.setAs(f.as); }); refresh();
+      toast(r.existing ? 'A session is already open here: ' + r.existing : 'Opened a session in ' + kioskLab().code + ' that every student can join');
+    }, 'sm'), h('span', { class: 'hint' }, 'Owned by Dr Anand Joseph (faculty@), so his phone can scan students into it.')),
+      h('p', { class: 'hint' }, 'Tier 1: the IoT door shows its QR; press "Student phone scans it" and finish on the phone. Tier 2: pick the GPU door and press "Open a test session at this door". On the student phone, Device → "Register this phone", then Today → "Show my QR" on the "Demo session" card, and press "Kiosk scans it" or "Teacher phone scans it". Scanning a class the teacher does not run is refused, as it should be.')),
+    h('div', { class: 'stage' },
+      h('section', { class: 'grid', style: { gridTemplateColumns: 'minmax(0,1fr)', gap: '10px' } }, h('div', { class: 'framehead' }, h('h2', null, 'Kiosk screen'), kSel), h('div', { class: 'screen' }, kF.el), h('section', { class: 'panel' }, h('h2', null, 'QR relay (the camera)'), relayBox)),
+      h('section', { class: 'grid', style: { gridTemplateColumns: 'minmax(0,1fr)', gap: '10px' } }, h('div', { class: 'framehead' }, h('h2', null, 'Student phone'), pSel), h('div', { class: 'device' }, pF.el)),
+      h('section', { class: 'grid', style: { gridTemplateColumns: 'minmax(0,1fr)', gap: '10px' } }, h('div', { class: 'framehead' }, h('h2', null, 'Teacher phone'), tSel), h('div', { class: 'device' }, tF.el))));
+}
+
+/* ------------------------------------------------------------------ Open the app as anyone */
+function appView(root) {
+  var ROLES = [
+    ['student1@karunya.edu', 'Student', 'Aarav, checked in to the 10:00 IoT class'],
+    ['faculty@karunya.edu', 'Faculty', 'Dr Anand Joseph, IoT class 10:00-12:00'],
+    ['faculty3@karunya.edu', 'Faculty, phone-app class', 'Dr Priya Raman, 09:00 Computing class on tier 3'],
+    ['student2@karunya.edu', 'Class rep', 'Diya, class rep for the IoT course'],
+    ['student3@karunya.edu', 'Event coordinator', 'Ishaan runs the IoT workshop at 12:00'],
+    ['staff@karunya.edu', 'Lab staff', 'Desk, loans (one overdue), bookings, inventory'],
+    ['admin@karunya.edu', 'Admin', 'Overview, labs, people, settings, audit'],
+    ['hod@karunya.edu', 'HOD', 'Department view, read-only'],
+    ['kiosk1@karunya.edu', 'Door screen', 'IoT lab kiosk with the rotating QR'],
+    ['', 'Account picker', 'The app\'s own demo sign-in list']
+  ];
+  var frame = appFrame('student1@karunya.edu', 'LABFLOW app');
+  var anySel = select('app-any', [['', 'Any account...']].concat(S.users.map(function (u) { return [u.email, (u.name || u.email) + ' · ' + u.roles]; })), '');
+  var cards = ROLES.map(function (r) { return h('button', { type: 'button', class: 'role', 'aria-pressed': 'false', onclick: function () { frame.setAs(r[0]); } }, h('b', null, r[1]), h('span', null, r[2])); });
+  var label = h('span', { class: 'mono hint' });
+  frame.onAs = function (as) { cards.forEach(function (c, i) { c.setAttribute('aria-pressed', String(ROLES[i][0] === as)); }); label.textContent = as ? 'Signed in as ' + as : 'Not signed in'; };
+  frame.onAs(frame.as);
+  anySel.addEventListener('change', function () { if (anySel.value) frame.setAs(anySel.value); });
+  root.append(h('h1', null, 'Open the app'),
+    h('p', { class: 'lead' }, 'The real LABFLOW app, signed in as the account you pick. Everything works: check-ins from the other tabs show up on the rosters, and changes made here show up there.'),
+    h('div', { class: 'roles' }, cards), h('div', { class: 'row' }, h('label', { class: 'row hint', for: 'app-any' }, 'Or', anySel), label),
+    h('div', { class: 'appbox' }, frame.el));
+  return { preset: function (o) { if (o.as !== undefined) frame.setAs(o.as); } };
+}
+
+/* ------------------------------------------------------------------ Presence replay (recorded at build time) */
+function replay(root) {
+  var runs = JSON.stringify(LFDATA.presenceRuns).replace(/</g, '\\u003c');
+  var fr = h('iframe', { title: 'Presence replay' });
+  fr.srcdoc = LFDATA.presence.replace('<head>', function () { return '<head><script>window.PRESENCE_RUNS = ' + runs + ';<\/script>'; });
+  root.append(h('h1', null, 'Presence replay'),
+    h('p', { class: 'lead' }, 'One class from 10:00 to 12:00 on the real attendance engine: Asha stays, Ravi slips out to the canteen, Meena marks in from the hostel with a faked location, Karthik leaves early and scans out, Divya arrives late. The teacher calls two rescans nobody can predict. Press Play. Restart switches between three recorded runs with different rescan times.'),
+    h('div', { class: 'appbox' }, fr));
+}
+
+/* ------------------------------------------------------------------ Proxy attempts (tier 3, recorded at build time) */
+function proxyView(root) {
+  var runs = JSON.stringify(LFDATA.proxyRuns).replace(/</g, '\\u003c');
+  var fr = h('iframe', { title: 'Proxy attempts' });
+  fr.srcdoc = LFDATA.presence.replace('<head>', function () { return '<head><script>window.PROXY_RUNS = ' + runs + ';<\/script>'; });
+  root.append(h('h1', null, 'Proxy attempts'),
+    h('p', { class: 'lead' }, 'A phone-app class where every student has the LABFLOW app. Each button replays one way a student tries to get marked present without being there, run through the real server code with the app simulated: signed check-ins, a signed location every 2 minutes and fingerprint checks at times only the server knows. A student without the app can still check in, but is flagged "no app".'),
+    h('div', { class: 'appbox' }, fr));
+}
+
+/* ------------------------------------------------------------------ Attacks (recorded at build time) */
+function attacks(root) {
+  var sc = LFDATA.scenarios, passed = sc.filter(function (r) { return r.ok; }).length, groups = [];
+  sc.forEach(function (r) { var g = groups.find(function (x) { return x.name === r.group; }); if (!g) groups.push(g = { name: r.group, items: [] }); g.items.push(r); });
+  fill(root, [h('h1', null, 'Attacks and class rushes'),
+    h('p', { class: 'lead' }, passed + ' of ' + sc.length + ' scenarios behaved as expected. Each runs in a fresh department on the same server code as this page, step by step, with the expected and the actual outcome. Recorded when this page was built (' + LFDATA.builtAt.slice(0, 10) + ').'),
+    groups.map(function (g) {
+      return h('section', { class: 'panel' }, h('h2', null, g.name), h('div', { class: 'grid', style: { gridTemplateColumns: 'minmax(0,1fr)', gap: '8px' } }, g.items.map(function (r) {
+        return h('details', { class: 'trace ' + (r.ok ? 'ok' : 'bad') },
+          h('summary', { style: { color: 'inherit' } }, h('span', { class: 'chip ' + (r.ok ? 'ok' : 'bad') }, r.ok ? 'as expected' : 'unexpected'), ' ', h('strong', null, r.title), ' ', h('span', { class: 'hint' }, r.srs)),
+          h('div', { class: 'tablebox' }, h('table', null, h('thead', null, h('tr', null, h('th', null, 'Step'), h('th', null, 'Expected'), h('th', null, 'Got'))),
+            h('tbody', null, r.steps.map(function (s) { return h('tr', null, h('td', null, s.label), h('td', { class: 'mono' }, String(s.expected)), h('td', null, h('span', { class: 'chip ' + (s.ok ? 'ok' : 'bad') }, String(s.actual)))); })))),
+          r.notes.map(function (n) { return h('p', { class: 'hint' }, n); }));
+      })));
+    })]);
+}
+
+var first = (location.hash || '').slice(1);
+go(VIEWS.some(function (v) { return v.id === first; }) ? first : 'start');
+})();
+</script>

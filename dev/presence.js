@@ -67,7 +67,7 @@ function run() {
     w.e.run('trg_tickSessions()');
     snap(kind === 'first'
       ? 'The window closes. Meena never confirmed: she cannot see the door screen from the hostel, and nobody knew the time in advance. Ravi confirmed from outside, so he is flagged for the teacher. Anyone who did not confirm is now "missed rescan", and their time stops at their last proof.'
-      : 'The second window closes. Everyone in the room has proved presence twice; Ravi and Meena still have nothing after their first scan.');
+      : 'The second window closes. Everyone in the room has proved they are here; Ravi and Meena still have nothing after their first scan.');
   };
 
   // The teacher picks the moments; they change on every run so nobody can learn them.
@@ -76,15 +76,15 @@ function run() {
     [start + 2 * MIN, () => {
       ['asha', 'ravi', 'karthik'].forEach((k) => enter(k, S[k].name + ' scans the door screen. GPS puts the phone inside the lab: marked in.'));
       S.meena.place = 'hostel'; S.meena.shown = 'hostel';
-      scan('meena', 'in', 'desk', "Meena is at the hostel. A friend sends her a photo of the door screen and she fakes the lab's location from the browser. Accepted: a web page cannot prove where a phone is. Watch what happens next.");
+      scan('meena', 'in', 'desk', "Meena is at the hostel. A friend sends her a photo of the door screen and she fakes the lab's location from the browser. Her phone reports the lab's coordinates, so it is accepted: a web page cannot prove where a phone really is. Had she sent her real hostel location, it would be recorded and flagged, not counted as present until the teacher decides. Watch what happens next.");
     }],
     [start + 20 * MIN, () => enter('divya', 'Divya arrives 20 minutes late and scans in.')],
     [start + 27 * MIN, () => move('ravi', 'canteen', 'Ravi walks out to the canteen without scanning out. On paper he is still in the lab.')],
-    [start + 60 * MIN, () => leave('karthik', 'Karthik has to leave at 11:00. He scans out at the door, so his time is credited.')],
+    [start + 60 * MIN, () => leave('karthik', 'Karthik leaves at 11:00 and scans out at the door. He is not flagged and nothing is wrong with his scans, but half a class is not enough to count as attended.')],
     [firstAt, () => rescan('first')],
     [secondAt, () => rescan('second')],
     [start + 115 * MIN, () => ['asha', 'divya'].forEach((k) => leave(k, S[k].name + ' scans out at the end of class.'))],
-    [start + 120 * MIN, () => { w.ok(w.faculty, 'sessions.close', { sessionId: sid }); snap('12:00. The class closes. Time is credited only between an entry and a later proof of presence: a rescan, a spot check or an exit scan.'); }]
+    [start + 120 * MIN, () => { w.ok(w.faculty, 'sessions.close', { sessionId: sid }); snap('12:00. The class closes. Attendance is attended or not: a student needs to be proven in the lab for at least 75% of the class. Divya came 20 minutes late and stayed, so she counts. Karthik left at 11:00, so he does not, with no flag. A missed rescan means not attended; Ravi confirmed from outside, so the teacher decides.'); }]
   ];
   agenda.sort((x, y) => x[0] - y[0]).forEach(([t, fn]) => { goTo(t); fn(); });
 

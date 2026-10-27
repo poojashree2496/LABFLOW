@@ -19,6 +19,7 @@ const path = require('path');
 const { createLab, describePipelines, runJob, PRESETS } = require('./world');
 const scenarios = require('./scenarios');
 const presence = require('./presence');
+const proxy = require('./proxy');
 const { render, page: hostedPage } = require('../scripts/build-web');
 
 const LAB_DIR = path.join(__dirname, 'lab');
@@ -202,12 +203,58 @@ function start(port, opts) {
         return send(res, 200, { results });
       }
       case 'presence': return send(res, 200, presence.run());
+      case 'proxy': return send(res, 200, await proxy.runAll());
       case 'kioskcode': {
         const k = String(url.searchParams.get('kiosk') || 'kiosk1@karunya.edu'); const r = lab.w.call(k, 'kiosk.display', {});
         return send(res, 200, r.ok ? { code: r.data.code, url: r.data.url, mode: r.data.mode } : { error: r.error });
       }
+      case 'quick': return send(res, 200, await quickCheckin(body));
       default: return send(res, 404, { error: 'unknown dev api ' + name });
     }
+  }
+
+  /** Quick check-in: the whole flow for one seeded student in one call, through the real rpc as each party (kiosk,
+   *  student, admin). Opens a test session in the lab when none is open. Returns every call and the pipeline traces. */
+  async function quickCheckin(b) {
+    const w = lab.w, e = w.e, ev = (code) => JSON.parse(e.run('JSON.stringify(' + code + ')')), steps = [], seq0 = lab.traceSeq;
+    const call = (who, label, as, action, payload) => { const r = w.call(as, action, payload); steps.push({ who, label, action, ok: r.ok, data: r.data, error: r.error }); return r; };
+    const done = () => ({ steps, traces: lab.traces.filter((t) => t.id > seq0) });
+    const labId = String(b.labId || ''), student = w.students.find((s) => s.email === b.student);
+    if (!student) throw new Error('Unknown student ' + b.student);
+    const kiosk = ev("(Db.readAll('Kiosks').filter(function(k){ return k.labId === " + JSON.stringify(labId) + " && k.status !== 'revoked'; })[0] || {}).authorizedEmail || ''");
+    if (!kiosk) throw new Error('This lab has no kiosk');
+    let sid = ev("(Db.where('Sessions', function(s){ return s.labId === " + JSON.stringify(labId) + " && s.status === 'open'; })[0] || {}).sessionId || ''");
+    if (sid) steps.push({ who: 'setup', label: 'Use the session already open in this lab', ok: true, data: { sessionId: sid } });
+    else {
+      const now = ev('U.local(U.now())'), end = ev('U.local(U.now() + 7200000)');
+      const c = call('admin', 'Create a test session open to every student', w.admin, 'sessions.create', { type: 'event', labId, date: now.date, startTime: now.time, endTime: end.date === now.date ? end.time : '23:59', title: 'Quick test', openToAll: true, facultyId: w.facultyId, override: true });
+      if (!c.ok) return done();
+      sid = c.data.session.sessionId;
+      if (!call('admin', 'Open it', w.admin, 'sessions.open', { sessionId: sid, override: true }).ok) return done();
+    }
+    if (b.method === 'B') {
+      if (!w.devices[student.studentId]) {
+        try { const d = await w.registerDevice(student); steps.push({ who: 'student', label: 'Register this phone (P-256 key)', action: 'cred.complete', ok: true, data: { credentialId: d.credentialId, status: d.status } }); }
+        catch (x) { steps.push({ who: 'student', label: 'Register this phone (P-256 key)', action: 'cred.complete', ok: false, error: { code: 'DEVICE', message: String(x.message) } }); return done(); }
+      }
+      const dev = w.devices[student.studentId], purpose = b.action || 'in';
+      const ch = call('student', 'Ask for a QR token', student.email, 'attend.challenge', { sessionId: sid, purpose, credentialId: dev.credentialId });
+      if (!ch.ok) return done();
+      const qr = await w.sign(ch.data.token, dev);
+      steps.push({ who: 'student', label: 'Phone signs token.timestamp and shows the QR', ok: true, data: { qr } });
+      call('kiosk', 'Kiosk camera scans the QR', kiosk, 'kiosk.scan', { qr });
+    } else {
+      const k = call('kiosk', 'Kiosk shows its rotating code', kiosk, 'kiosk.display', {});
+      if (!k.ok) return done();
+      if (!k.data.code) { steps.push({ who: 'kiosk', label: 'Lab allows kiosk QR + GPS', ok: false, error: { code: 'MODE', message: 'This lab does not use kiosk QR + GPS (mode ' + k.data.mode + ').' } }); return done(); }
+      const op = call('student', 'Phone opens the kiosk link', student.email, 'checkin.open', { code: k.data.code });
+      if (!op.ok) return done();
+      const geo = b.geo ? { lat: Number(b.geo.lat), lng: Number(b.geo.lng), accuracy: Number(b.geo.accuracy) || 12 } : undefined;
+      call('student', 'Phone submits with its location', student.email, 'checkin.submit', { pass: op.data.pass, action: b.action || op.data.actions[0], sessionId: sid, geo });
+    }
+    const ro = w.call(w.admin, 'attend.roster', { sessionId: sid });
+    steps.push({ who: 'admin', label: 'Roster status afterwards', action: 'attend.roster', ok: ro.ok, error: ro.error, data: ro.ok ? ro.data.roster.find((r) => r.studentId === student.studentId) || { status: 'not on roster' } : undefined });
+    return done();
   }
 
   return new Promise((resolve) => server.listen(port, () => {
@@ -225,6 +272,6 @@ if (require.main === module) {
     console.log('LABFLOW Test Lab   http://localhost:' + port + '/lab');
     console.log('The app            http://localhost:' + port + '/   (local demo account picker; ?as=email is a testing shortcut)');
     console.log('Presence checks    http://localhost:' + port + '/presence');
-    console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 10:06 IST.');
+    console.log('World "' + lab.preset + '" built in ' + lab.buildMs + ' ms; simulated clock starts Wed 14 Oct 2026, 10:07 IST.');
   });
 }
