@@ -112,7 +112,7 @@ LF.register({ role: 'admin', id: 'users', label: 'People', icon: 'users', render
   async function studentsView() {
     const r = await api('students.list', { limit: 500 }), reload = () => LF.go('users');
     return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', pageSize: 30, rows: r.students, filters: [{ label: 'Profile', options: ['imported', 'pending', 'verified', 'rejected', 'disabled'], get: (x) => x.status }],
-      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Batch' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => LF.showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null, LF.studentStatusButton(x, reload)) }] }).el;
+      columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Batch' }, { key: 'year', label: 'Year' }, { key: 'email', label: 'Account' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }, { label: '', sort: false, render: (x) => h('span', { class: 'toolbar' }, ui.button('Open', { size: 'sm', onClick: () => LF.showStudent(x, reload) }), x.status === 'pending' ? ui.button('Verify', { size: 'sm', kind: 'primary', onClick: async () => { await api('students.verify', { studentId: x.studentId, expectedEmail: x.email, approve: true }); LF.toast('Verified', 'good'); reload(); } }) : null, LF.studentStatusButton(x, reload)) }] }).el;
   }
   function importView() {
     const stu = studentImport();
@@ -296,12 +296,29 @@ LF.register({ role: 'admin', id: 'audit', label: 'Audit & system', icon: 'eye', 
   async function systemView() {
     const s = await api('system.status');
     return h('div', { style: { display: 'grid', gap: '16px' } }, h('div', { class: 'grid-stats' }, ui.stat('Triggers', s.triggers.ok ? 'OK' : 'Problem', s.triggers.summary, s.triggers.ok ? 'good' : 'bad'), ui.stat('Email today', s.mail.remainingToday === null ? 'n/a' : s.mail.remainingToday, s.mail.queued + ' queued · transport: ' + s.emailTransport), ui.stat('Time zone', s.timeZone, fmt.dt(s.serverNow)), ui.stat('Allowed domains', s.allowedDomains.length, s.allowedDomains.join(', '))),
-      h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Background jobs'), s.latestJobs.length ? ui.table({ caption: 'Jobs', search: false, rows: s.latestJobs, columns: [{ key: 'job', label: 'Job' }, { key: 'at', label: 'Last run', render: (x) => fmt.dt(x.at) }, { key: 'status', label: 'Result', render: (x) => ui.badge(x.status, x.status === 'ok' ? 'good' : 'bad') }, { key: 'detail', label: 'Detail' }] }).el : ui.empty('No job has run yet', 'Install triggers from the Apps Script editor (see README).')),
+      readinessPanel(s.readiness), h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Background jobs'), s.latestJobs.length ? ui.table({ caption: 'Jobs', search: false, rows: s.latestJobs, columns: [{ key: 'job', label: 'Job' }, { key: 'at', label: 'Last run', render: (x) => fmt.dt(x.at) }, { key: 'status', label: 'Result', render: (x) => ui.badge(x.status, x.status === 'ok' ? 'good' : 'bad') }, { key: 'detail', label: 'Detail' }] }).el : ui.empty('No job has run yet', 'Install triggers from the Apps Script editor (see README).')),
       h('section', { class: 'card' }, h('h2', { class: 't-h2' }, 'Recent errors'), s.recentErrors.length ? ui.table({ caption: 'Errors', search: false, rows: s.recentErrors, columns: [{ key: 'at', label: 'When', render: (x) => fmt.dt(x.at) }, { key: 'source', label: 'Source' }, { key: 'code', label: 'Code' }, { key: 'message', label: 'Message' }] }).el : h('div', { class: 'hint' }, 'No errors logged.')), backupsPanel(), archivePanel());
+  }
+  function readinessPanel(initial) {
+    const box = h('section', { class: 'card', 'aria-label': 'Lab readiness', style: { display: 'grid', gap: '16px' } });
+    const labels = { configured: 'Configured', attention: 'Needs attention', not_required: 'Not required', info: 'For review', unknown: 'Could not check' };
+    const kinds = { configured: 'good', attention: 'warn', unknown: 'warn', info: 'info' };
+    const checks = (rows) => h('ul', { style: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '12px' } }, rows.map((c) => h('li', null,
+      h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('strong', null, c.label), ui.badge(labels[c.state] || 'Could not check', kinds[c.state] || '')),
+      h('div', { class: 'hint' }, c.detail))));
+    function draw(r) {
+      clear(box).append(h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('h2', { class: 't-h2' }, 'Lab readiness'), ui.button('Refresh setup checks', { size: 'sm', icon: 'refresh', onClick: async () => { const fresh = await api('system.status'); draw(fresh.readiness); } })),
+        h('p', { class: 'hint', style: { margin: 0 } }, 'Saved settings and recent activity only. Confirm cameras, location and a real check-in in the room. Checked ' + fmt.dt(r.checkedAt) + '.'),
+        h('section', { class: 'card flat', 'aria-label': 'Shared setup checks' }, checks(r.global), h('div', { class: 'toolbar', style: { marginTop: '12px' } }, h('a', { class: 'btn btn-sm', href: '#labflow-backups' }, 'View backups'), ui.button('Manage HOD accounts', { size: 'sm', onClick: () => LF.go('users') }))),
+        ...r.labs.map((lab) => h('section', { class: 'card flat', 'aria-label': lab.code + ' setup' }, h('h3', { class: 't-h3' }, lab.code + ' · ' + lab.name), h('p', { class: 'hint' }, 'Check-in mode: ' + lab.mode), checks(lab.checks),
+          h('div', { class: 'toolbar', style: { marginTop: '12px' } }, ui.button('Labs and kiosks', { size: 'sm', onClick: () => LF.go('labs') }), ui.button('Academics', { size: 'sm', onClick: () => LF.go('academics') }), ui.button('Projects', { size: 'sm', onClick: () => LF.go('projects') })))),
+        r.labs.length ? null : ui.empty('No active labs', 'Add or enable a lab under Labs and kiosks.'));
+    }
+    draw(initial); return box;
   }
   /** Backups (A3): the nightly Drive copies, what rotation keeps, and a Back up now button. */
   function backupsPanel() {
-    const box = h('section', { class: 'card', style: { display: 'grid', gap: '10px' } });
+    const box = h('section', { class: 'card', id: 'labflow-backups', style: { display: 'grid', gap: '10px' } });
     const load = () => ui.loadInto(box, async () => {
       const r = await api('system.backups'), link = (u, text) => /^https:\/\//.test(u || '') ? h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, text) : null;
       return h('div', { style: { display: 'grid', gap: '10px' } }, h('h2', { class: 't-h2' }, 'Backups'),

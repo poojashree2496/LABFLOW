@@ -91,18 +91,25 @@ var Users = {
 
     var profile = Locks.with(function () {
       var now = U.now();
-      var user = ctx.user;
+      // Identity may have been resolved while another claim waited for this lock.
+      var fresh = Auth._contextForEmail(ctx.email, true), user = fresh.user;
+      if (fresh.student) fail('ALREADY_ONBOARDED', 'Your student profile already exists.');
+      if (user && !fresh.has('student')) fail('FORBIDDEN', 'Only students can onboard here.');
+      var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
+      // Refused claims must not insert an account, change contact data or reserve the profile.
+      if (existing) {
+        if (existing.userId && (!user || existing.userId !== user.userId)) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
+        if (existing.status !== 'imported' && existing.status !== 'rejected' && (!user || existing.userId !== user.userId)) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
+        if (existing.importedEmail && existing.importedEmail !== ctx.email) fail('FORBIDDEN', 'This roll number is assigned to a different university email. Contact the lab office.');
+      }
       if (!user) {
         user = Db.insert('Users', { userId: U.id('user'), email: ctx.email, displayName: name, roles: 'student', status: 'active', createdAt: now, updatedAt: now,
           mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : '', consentAt: now, consentVersion: Cfg.CONSENT_VERSION });
       } else {
         user = Db.update('Users', user.userId, { mobile: mobile ? Crypt.seal(mobile, Users.MOBILE_FIELD) : user.mobile, consentAt: now, consentVersion: Cfg.CONSENT_VERSION, updatedAt: now });
       }
-      var existing = Db.getBy('StudentProfiles', 'rollNo', rollNo);
       var out;
       if (existing) {
-        if (existing.userId && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number is already linked to another account. Contact the lab office if this is a mistake.');
-        if (existing.status !== 'imported' && existing.status !== 'rejected' && existing.userId !== user.userId) fail('ROLL_TAKEN', 'This roll number already has a pending claim. Contact the lab office.');
         // Verified automatically when the admin imported this roll number with this email, or when the roll number IS the email.
         // Otherwise, with studentAutoVerify, the first claim of an imported roll number that carries no email is trusted.
         var firstClaim = !existing.importedEmail && !derived && Settings.get('studentAutoVerify');
@@ -122,7 +129,9 @@ var Users = {
     });
     if (photo) { try { Users._storePhoto(profile, photo); } catch (e) { Syslog.warn('users', 'PHOTO_STORE_FAILED', String(e.message)); } }
     if (profile.status === 'pending') Notify.toRole('staff', 'verification', 'Student awaiting verification', profile.name + ' (' + profile.rollNo + ') needs identity verification.', 'verify:' + profile.studentId);
-    return { student: Users._pubStudent(Db.get('StudentProfiles', profile.studentId)) };
+    var current = Db.mustGet('StudentProfiles', profile.studentId, 'Student');
+    if (current.userId !== profile.userId || current.email !== profile.email) fail('CONFLICT', 'This profile was reclaimed while it was being saved. Refresh and contact the lab desk.');
+    return { student: Users._pubStudent(current) };
   },
 
   verifyStudent: function (ctx, p) {
@@ -130,15 +139,27 @@ var Users = {
     var studentId = V.id(p.studentId, 'Student', 'student');
     var approve = V.bool(p.approve);
     var note = V.str(p.note, 'Note', { optional: true, max: 200 });
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    if (prof.status === 'disabled') fail('INVALID_STATE', 'This profile is disabled.');
-    if (!prof.userId) fail('INVALID_STATE', 'This profile has not been claimed by a student yet.');
-    var next = Db.update('StudentProfiles', studentId, approve
-      ? { status: 'verified', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() }
-      : { status: 'rejected', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() });
-    Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: approve ? 'student.verify' : 'student.reject', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, note: note } });
-    if (prof.userId) Notify.toUser(prof.userId, 'verification', approve ? 'Profile verified' : 'Profile not verified', approve ? 'Your student profile is verified. You can now register your device.' : 'Your profile could not be verified. ' + (note || 'Visit the lab office.'), 'verifyres:' + studentId + ':' + next.status);
-    return { student: Users._pubStudent(next) };
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
+      Auth.requireRole(actor, ['staff', 'admin']);
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      Users._reviewedClaim(prof, p);
+      if (prof.status === 'disabled') fail('INVALID_STATE', 'This profile is disabled.');
+      if (!prof.userId) fail('INVALID_STATE', 'This profile has not been claimed by a student yet.');
+      var next = Db.update('StudentProfiles', studentId, approve
+        ? { status: 'verified', verifiedBy: ctx.email, verifiedAt: U.now(), updatedAt: U.now() }
+        : { status: 'rejected', verifiedBy: ctx.email, verifiedAt: null, updatedAt: U.now() });
+      Audit.log({ actor: ctx.email, role: actor.has('admin') ? 'admin' : 'staff', action: approve ? 'student.verify' : 'student.reject', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, note: note } });
+      Notify.toUser(prof.userId, 'verification', approve ? 'Profile verified' : 'Profile not verified', approve ? 'Your student profile is verified. You can now register your device.' : 'Your profile could not be verified. ' + (note || 'Visit the lab office.'), 'verifyres:' + studentId + ':' + next.status);
+      return { student: Users._pubStudent(next) };
+    });
+  },
+
+  /** A desk dialog may outlive an unlink/reclaim. Older clients may omit the reviewed account. */
+  _reviewedClaim: function (prof, p) {
+    if (p.expectedEmail !== undefined && V.str(p.expectedEmail, 'Reviewed account', { optional: true, max: 254 }).trim().toLowerCase() !== prof.email) {
+      fail('CONFLICT', 'The account linked to this profile changed. Refresh the student list and review it again.');
+    }
   },
 
   /** Admin: detach an account from a profile (wrong account claimed it). Revokes the student's device credentials. */
@@ -146,11 +167,16 @@ var Users = {
     V.obj(p);
     var studentId = V.id(p.studentId, 'Student', 'student');
     var reason = V.str(p.reason, 'Reason', { min: 5, max: 200 });
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    Creds.revokeAllFor(studentId, ctx.email, 'profile unlinked: ' + reason);
-    var next = Db.update('StudentProfiles', studentId, { userId: '', email: '', status: 'imported', verifiedBy: '', verifiedAt: null, updatedAt: U.now() });
-    Audit.log({ actor: ctx.email, role: 'admin', action: 'student.unlink', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, previousUserId: prof.userId, reason: reason } });
-    return { student: Users._pubStudent(next) };
+    return Locks.with(function () {
+      Auth.requireRole(Auth._contextForEmail(ctx.email, true), ['admin']);
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      Users._reviewedClaim(prof, p);
+      if (!prof.userId && prof.status === 'imported') return { student: Users._pubStudent(prof), replayed: true };
+      Creds.revokeAllFor(studentId, ctx.email, 'profile unlinked: ' + reason);
+      var next = Db.update('StudentProfiles', studentId, { userId: '', email: '', status: 'imported', verifiedBy: '', verifiedAt: null, updatedAt: U.now() });
+      Audit.log({ actor: ctx.email, role: 'admin', action: 'student.unlink', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, previousUserId: prof.userId, reason: reason } });
+      return { student: Users._pubStudent(next), replayed: false };
+    });
   },
 
   /** Staff/admin/faculty student directory. Faculty only see students in their own courses. */
@@ -206,7 +232,7 @@ var Users = {
       var next = status === 'disabled' ? 'disabled' : (prof.userId ? (prof.verifiedAt ? 'verified' : 'pending') : 'imported');
       if (prof.status === next) return { student: Users._pubStudent(prof), replayed: true };
       if (status === 'enabled' && prof.status !== 'disabled') fail('INVALID_STATE', 'This profile is not disabled.');
-      var upd = Db.update('StudentProfiles', studentId, { status: next, updatedAt: U.now() });
+      var upd = Db.update('StudentProfiles', studentId, { status: next, verifiedAt: status === 'disabled' && prof.status !== 'verified' ? null : prof.verifiedAt, updatedAt: U.now() });
       Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: status === 'disabled' ? 'student.disable' : 'student.enable', entityType: 'StudentProfile', entityId: studentId, detail: { rollNo: prof.rollNo, was: prof.status, now: next, reason: reason } });
       if (prof.userId) Notify.toUser(prof.userId, 'verification', status === 'disabled' ? 'Profile disabled' : 'Profile enabled', status === 'disabled' ? 'Your lab profile was disabled. Contact the lab office.' : 'Your lab profile is active again.', 'stu-status:' + studentId + ':' + next + ':' + upd.updatedAt);
       return { student: Users._pubStudent(upd), replayed: false };
@@ -276,26 +302,38 @@ var Users = {
     return bytes;
   },
   _storePhoto: function (profile, bytes) {
-    var folder = Setup.folder(Cfg.PROP.PHOTO_FOLDER, 'LABFLOW Student Photos (private)');
-    var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', profile.studentId + '.jpg'));
-    var old = profile.photoFileId;
-    Db.update('StudentProfiles', profile.studentId, { photoFileId: file.getId(), updatedAt: U.now() });
-    if (old) { try { DriveApp.getFileById(old).setTrashed(true); } catch (e) {} }
-    return file.getId();
+    return Locks.with(function () {
+      var fresh = Db.mustGet('StudentProfiles', profile.studentId, 'Student');
+      if (fresh.userId !== profile.userId || fresh.email !== profile.email) fail('CONFLICT', 'The account linked to this profile changed. Review it again.');
+      if ((fresh.photoFileId || '') !== (profile.photoFileId || '')) fail('CONFLICT', 'The reference photo changed while this upload was being prepared. Review it again.');
+      var folder = Setup.folder(Cfg.PROP.PHOTO_FOLDER, 'LABFLOW Student Photos (private)');
+      var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', profile.studentId + '.jpg'));
+      var old = fresh.photoFileId;
+      Db.update('StudentProfiles', profile.studentId, { photoFileId: file.getId(), updatedAt: U.now() });
+      if (old) { try { DriveApp.getFileById(old).setTrashed(true); } catch (e) {} }
+      return file.getId();
+    });
   },
   setPhoto: function (ctx, p) {
     V.obj(p);
-    var prof;
-    if (p.studentId && (ctx.has('staff') || ctx.has('admin'))) prof = Db.mustGet('StudentProfiles', V.id(p.studentId, 'Student', 'student'), 'Student');
-    else {
-      if (!ctx.student) fail('NOT_FOUND', 'No student profile.');
-      prof = ctx.student;
-      // The photo is the reference for spot checks: once a profile is verified with a photo, only staff may change it.
-      if (prof.photoFileId && prof.status === 'verified') fail('FORBIDDEN', 'Your verified photo can only be changed by lab staff. Visit the lab desk.');
-    }
-    Users._storePhoto(prof, Users._decodePhoto(p.photo));
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'photo.set', entityType: 'StudentProfile', entityId: prof.studentId });
-    return { ok: true };
+    var bytes = Users._decodePhoto(p.photo);
+    var studentId = p.studentId ? V.id(p.studentId, 'Student', 'student') : '';
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true), prof;
+      Auth.requireRole(actor, ['student', 'staff', 'admin']);
+      if (studentId && (actor.has('staff') || actor.has('admin'))) {
+        prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+        Users._reviewedClaim(prof, p);
+      } else {
+        if (!actor.student || (studentId && studentId !== actor.student.studentId)) fail('FORBIDDEN', 'This profile is not linked to your account. Refresh and contact the lab desk.');
+        prof = actor.student;
+        // A verified reference photo may have appeared while the upload was being prepared.
+        if (prof.photoFileId && prof.status === 'verified') fail('FORBIDDEN', 'Your verified photo can only be changed by lab staff. Visit the lab desk.');
+      }
+      Users._storePhoto(prof, bytes);
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.set', entityType: 'StudentProfile', entityId: prof.studentId });
+      return { ok: true };
+    });
   },
   /**
    * Photos are personal data. Access is limited to: admin/staff (identity verification) and the faculty member
@@ -304,21 +342,24 @@ var Users = {
   getPhoto: function (ctx, p) {
     V.obj(p);
     var studentId = V.id(p.studentId, 'Student', 'student');
-    var allowed = ctx.has('admin') || ctx.has('staff');
-    var detail = {};
-    if (!allowed && ctx.has('faculty')) {
-      var checks = Db.where('SpotChecks', function (c) { return c.studentId === studentId && c.outcome === 'pending'; });
-      for (var i = 0; i < checks.length && !allowed; i++) {
-        var ses = Db.get('Sessions', checks[i].sessionId);
-        if (ses && Auth.ownsSession(ctx, ses)) { allowed = true; detail.checkId = checks[i].checkId; }
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
+      var allowed = actor.has('admin') || actor.has('staff');
+      var detail = {};
+      if (!allowed && actor.has('faculty')) {
+        var checks = Db.where('SpotChecks', function (c) { return c.studentId === studentId && c.outcome === 'pending'; });
+        for (var i = 0; i < checks.length && !allowed; i++) {
+          var ses = Db.get('Sessions', checks[i].sessionId);
+          if (ses && Auth.ownsSession(actor, ses)) { allowed = true; detail.checkId = checks[i].checkId; }
+        }
       }
-    }
-    if (!allowed) { Audit.tryLog({ actor: ctx.email, role: ctx.roles[0], action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, result: 'denied' }); fail('FORBIDDEN', 'You cannot view this photo.'); }
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    if (!prof.photoFileId) return { dataUrl: null };
-    var blob = DriveApp.getFileById(prof.photoFileId).getBlob();
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, detail: detail });
-    return { dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(blob.getBytes()) };
+      if (!allowed) { Audit.tryLog({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, result: 'denied' }); fail('FORBIDDEN', 'You cannot view this photo.'); }
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      if (!prof.photoFileId) return { dataUrl: null };
+      var blob = DriveApp.getFileById(prof.photoFileId).getBlob();
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, detail: detail });
+      return { dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(blob.getBytes()) };
+    });
   },
 
   // ---- administration of accounts ---------------------------------------------------------------------

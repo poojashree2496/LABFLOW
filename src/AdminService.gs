@@ -83,7 +83,51 @@ var Admin = {
     var mailLeft = null; try { mailLeft = MailApp.getRemainingDailyQuota(); } catch (e) {}
     var queued = Db.tail('Notifications', 500).filter(function (n) { return n.emailStatus === 'queued'; }).length;
     return { triggers: Triggers.status(), latestJobs: latest, recentErrors: errors, mail: { remainingToday: mailLeft, queued: queued }, serverNow: U.now(), timeZone: Cfg.TZ,
-             allowedDomains: Auth.allowedDomains(), emailTransport: PropertiesService.getScriptProperties().getProperty(Cfg.PROP.EMAIL_TRANSPORT) || 'gmail' };
+             allowedDomains: Auth.allowedDomains(), emailTransport: PropertiesService.getScriptProperties().getProperty(Cfg.PROP.EMAIL_TRANSPORT) || 'gmail', readiness: Admin.labReadiness() };
+  },
+  /** Read-only configuration checks, not certification of GPS, identity, cameras or successful attendance. */
+  labReadiness: function () {
+    var now = U.now(), today = U.local(now).date, dow = U.local(now).dow;
+    var kiosks = Db.readAll('Kiosks'), projects = Db.readAll('Projects'), slots = Db.readAll('Timetable');
+    var todaySessions = Db.whereEq('Sessions', { date: today }), bySlot = U.indexBy(todaySessions, 'slotKey');
+    var sessions = todaySessions.filter(function (s) { return (s.type === 'class' || s.type === 'event') && (s.status === 'scheduled' || s.status === 'open') && s.scheduledEnd > now; });
+    var categories = U.indexBy(Db.readAll('Categories'), 'categoryId'), assets = Db.readAll('Assets');
+    function check(key, label, state, detail, target) { return { key: key, label: label, state: state, detail: detail, target: target }; }
+    var labs = Db.whereEq('Labs', { status: 'active' }).map(function (lab) {
+      var modeA = Labs.allows(lab, 'A'), hours = U.isTime(lab.openTime) && U.isTime(lab.closeTime) && lab.closeTime > lab.openTime;
+      var active = kiosks.filter(function (k) { return k.labId === lab.labId && k.status === 'active'; });
+      var seen = active.some(function (k) { return k.lastSeenAt && k.lastSeenAt <= now && now - k.lastSeenAt <= 120000; });
+      var teaching = sessions.some(function (s) { return s.labId === lab.labId; }) || slots.some(function (s) {
+        if (s.labId !== lab.labId || s.status !== 'active' || s.dayOfWeek !== dow || s.validFrom > today || s.validTo < today || !U.isTime(s.endTime)) return false;
+        // A closed/cancelled materialized class must not look like an upcoming timetable slot.
+        var key = s.slotId + '|' + today;
+        if (bySlot[key]) return false;
+        return U.fromLocal(today, s.endTime) > now;
+      });
+      var usable = projects.some(function (p) { return p.labId === lab.labId && (p.status === 'pending' || p.status === 'active'); });
+      var systems = assets.filter(function (a) { return a.labId === lab.labId && a.status !== 'retired' && a.trackingMode === 'individual' && categories[a.categoryId] && categories[a.categoryId].workstation; }).length;
+      return { labId: lab.labId, code: lab.code, name: lab.name, mode: Labs.modeOf(lab), checks: [
+        check('geofence', 'Door GPS', !modeA ? 'not_required' : Labs.hasGeofence(lab) ? 'configured' : 'attention', !modeA ? 'Device QR mode does not use GPS.' : Labs.hasGeofence(lab) ? 'Coordinates and a ' + Labs.radiusOf(lab) + ' m radius are saved. Test inside and outside at the door.' : 'Save the lab location from a phone in the room, then test the boundary.', 'labs'),
+        check('walkins', 'Walk-in access', lab.openLab ? 'configured' : 'info', lab.openLab ? 'Walk-ins enabled.' : 'Walk-ins are off. Enable them if this lab offers extra-hours visits.', 'labs'),
+        check('hours', 'Opening hours', hours ? 'configured' : lab.openLab ? 'attention' : 'not_required', hours ? lab.openTime + ' to ' + lab.closeTime + ' IST.' : lab.openLab ? 'Walk-ins need valid opening and closing times.' : 'No hours saved; required only when walk-ins are enabled.', 'labs'),
+        check('kiosk', 'Door kiosk', seen ? 'configured' : 'attention', seen ? 'An active kiosk reported within the last 2 minutes.' : active.length ? 'No active kiosk reported within the last 2 minutes. Sign in at the door.' : 'No active kiosk is assigned to this lab.', 'labs'),
+        check('teaching', 'Class or event today', teaching ? 'configured' : 'info', teaching ? 'A class or event remains scheduled today; opening and roster checks still apply.' : 'No remaining class or event today. Add one if your demo needs a teaching session.', 'academics'),
+        check('project', 'Walk-in projects', usable ? 'configured' : lab.openLab ? 'attention' : 'not_required', usable ? 'A pending or active project is assigned to this lab. Each visitor needs an eligible own/group project.' : lab.openLab ? 'Create a student project for this lab before rehearsing walk-in entry.' : 'No pending/active project; required only for walk-in visits.', 'projects'),
+        check('systems', 'Workstations', 'info', systems + ' workstation(s) configured. Own-laptop visits are also supported.', 'labs')
+      ] };
+    });
+    var backup = check('backup', 'Recent backup', 'attention', 'No backup copy found. Use Back up now below.', 'backups');
+    var folderId = PropertiesService.getScriptProperties().getProperty(Cfg.PROP.BACKUP_FOLDER);
+    if (folderId) {
+      try {
+        // Inspect only an existing folder; displaying setup checks must not create Drive resources.
+        var entries = Backup._entries(DriveApp.getFolderById(folderId));
+        var times = entries.map(function (e) { return e.createdAt; }).filter(function (t) { return t <= now; }).sort(function (a, b) { return b - a; });
+        if (times.length) { backup.state = now - times[0] <= 36 * 3600000 ? 'configured' : 'attention'; backup.detail = backup.state === 'configured' ? 'A database copy was created within the last 36 hours. Restore testing is separate.' : 'The latest database copy is older than 36 hours. Check nightly jobs or back up now.'; backup.lastBackupAt = times[0]; }
+      } catch (e) { backup.state = 'unknown'; backup.detail = 'Could not inspect the backup folder. Check Drive access and refresh.'; }
+    }
+    var hods = Db.where('Users', function (u) { return u.status === 'active' && String(u.roles).split(',').indexOf('hod') >= 0 && !!String(u.department || '').trim(); }).length;
+    return { checkedAt: now, labs: labs, global: [backup, check('hod', 'Department HOD account', hods ? 'configured' : 'info', hods ? 'An active HOD account has a department. Check that it matches the labs you will show.' : 'No active HOD account has a department. Configure one if the demo includes departmental views.', 'users')] };
   },
   reconcileInventory: function (ctx, p) {
     var rep = Assets.reconcile({ fix: !(p && p.dryRun) });

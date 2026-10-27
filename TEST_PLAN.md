@@ -1,5 +1,17 @@
 # LABFLOW test plan and results
 
+Merge of `main` into the tier-3 branch (2026-10-27): lint and 361 backend tests passed (355 from `main` plus 6 tier-3 tests); `npm run sim` passed 27/27. Replacement approval keeps the fresh authorization lookup and retry handling from `main` and still lets faculty approve phone-app switches.
+
+Device approval failure audit (2026-10-27): lint and 355 backend tests passed; 27/27 scenarios and 17 isolated Brave identity checks passed, including a lost success response and retry. See the follow-up in [identity-audit.md](docs/identity-audit.md).
+
+Identity audit (2026-10-27): lint and 346 backend tests passed; 27/27 scenarios, 85 general browser checks, 15 identity checks and 10 recovery checks passed on isolated Brave/Chromium with local fakes. See [identity-audit.md](docs/identity-audit.md).
+
+Readiness update (2026-10-23): lint and 335 backend tests passed; 27/27 scenarios, 85 general browser checks and 15 readiness browser checks passed. The mobile panel screenshot was inspected.
+
+Recovery audit run (2026-10-23): lint and all 330 backend tests passed; 27/27 scenarios and 10 isolated Brave recovery browser checks passed. Other browser results below retain their recorded run dates.
+
+Session audit run (2026-10-22): `npm run check` passed lint and 322 backend tests; `npm run sim` passed 27/27 scenarios; isolated Brave/Chromium passed 85 general browser checks and 36 new session-workflow checks. The other focused browser suites below were last run on 2026-10-21. These tests use in-memory Google-service fakes. See the [session workflow audit](docs/session-workflow-audit.md) for findings and deployment limits.
+
 Latest local run (2026-10-22): `npm run check` passed 323 backend tests and `npm run sim` passed 27/27 scenarios. The Android app (`android/`) builds (`gradle assembleDebug`) and its signature conversion passes a JVM unit test; it has not run on a phone or emulator. The tier-3 browser suite (`npm run e2e:tier3`) passes 11 checks; on 2026-10-22 the other suites passed again: general 85, issue 33, projects 27, open lab 15, work selection 23, automatic sign-out 15, live board 26, reports 17, HOD 22. The browser suites were rerun on 2026-10-21 in Chrome: 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks. All services remain in-memory fakes; see [workflow audit](docs/workflow-audit.md) for the backend fixes and their limits.
 
 ## A. What actually ran
@@ -7,9 +19,13 @@ Latest local run (2026-10-22): `npm run check` passed 323 backend tests and `npm
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (33), checkin (21), contracts (3), crypt (11), dev-world (3), foundation (16), hod (4), inventory (23), jobs (40), openlab (16), platform (14), presence (1), projects (14), reports (16), roll (4), scanning (14), tier3 (6), work-selection (19), workflow-audit (29) | `npm test` | **323 pass, 0 fail** |
+| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (33), checkin (21), contracts (3), crypt (11), dev-world (3), device-approval-audit (4), device-retry (9), foundation (16), hod (4), identity-audit (7), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), reports (16), readiness (5), recovery (8), roll (4), scanning (14), session-workflow (2), tier3 (6), work-selection (19), workflow-audit (29) | `npm test` | **361 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **85 pass, 0 fail** |
+| Focused identity E2E (Playwright, Brave/Chromium) | `npm run e2e:identity` with `CHROMIUM_PATH` | **17 pass, 0 fail** |
+| Focused readiness E2E (Playwright, Brave/Chromium) | `npm run e2e:readiness` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
+| Focused recovery E2E (Playwright, Brave/Chromium) | `npm run e2e:recovery` with `CHROMIUM_PATH` | **10 pass, 0 fail** |
+| Focused session workflow E2E (Playwright, Brave/Chromium) | `npm run e2e:session` with `CHROMIUM_PATH` | **36 pass, 0 fail** |
 | Focused issue E2E (Playwright, Brave/Chromium) | `npm run e2e:issue` with `CHROMIUM_PATH` | **33 pass, 0 fail** |
 | Focused project E2E (Playwright, Brave/Chromium) | `npm run e2e:projects` with `CHROMIUM_PATH` | **27 pass, 0 fail** |
 | Focused open-lab E2E (Playwright, Brave/Chromium) | `npm run e2e:openlab` with `CHROMIUM_PATH` | **15 pass, 0 fail** |
@@ -21,7 +37,7 @@ Latest local run (2026-10-22): `npm run check` passed 323 backend tests and `npm
 
 How the backend tests work: `test/harness.js` loads the real `src/*.gs` files into a Node `vm` with hand-written fakes of SpreadsheetApp, CacheService, LockService, PropertiesService, Utilities, MailApp/GmailApp, DriveApp, ScriptApp and Session. The fakes are as faithful as I could make them, but they are my interpretation of Google's behaviour.
 
-What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (missing class exits only credit verified presence; open labs credit to automatic closing); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the four trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
+What the backend tests cover: schema creation and mismatch refusal; role routing and denial for each role; unauthenticated and wrong-domain refusal; kiosk-only access; rate limit; payload size limit; registration challenge and in-person approval for second/replacement devices; QR validity (bad signature, tampered token, expired, wrong lab, wrong session, wrong student, revoked credential, replay, concurrent duplicate); exit handling (missing class exits only credit verified presence; open labs credit to automatic closing); rescans and spot checks; corrections, voids and admin approval of old corrections; student history including an open session; timetable conflict detection; loans, kits, reservations, idempotent issue/return and reconciliation; booking capacity; audit chain tamper, truncation and head rewrite; the five trigger handlers, their minimum intervals and the email digest/transport switch; CSV formula neutralisation.
 
 Coverage added with the v2 work (each is in `npm test`, mapped to requirements in [docs/traceability.md](docs/traceability.md)):
 

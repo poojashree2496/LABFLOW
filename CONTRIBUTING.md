@@ -17,6 +17,12 @@ One test file: `node --test test/checkin.test.js`. One test: `node --test --test
 
 In the dev server, `?as=` picks the signed-in account: `admin@`, `staff@`, `faculty@`, `faculty2@`, `student1@`... and `kiosk1@`.. `kiosk3@karunya.edu`. It exists only locally.
 
+## Automated checks
+
+[CI](.github/workflows/ci.yml) runs on branch pushes and pull requests. It can also be started manually from GitHub's Actions tab. The **Backend checks** job uses Node 24 on Ubuntu, installs locked dependencies with `npm ci`, rebuilds vendor bundles/styles, and runs lint, backend tests and all local scenarios. Open a failed job to see which step needs fixing.
+
+The workflow uses a read-only repository token and needs no Google credentials or repository secrets. It does not deploy the app. Browser suites and real Workspace checks remain separate; see [Testing](docs/testing.md).
+
 ## Generated files
 
 `src/Styles.html`, `src/Vendor_P256.gs` and `src/Vendor_QR.html` are generated. Never edit them by hand; run `npm run build`. Tailwind only scans `src/Index.html`, `src/Scripts*.html` and `src/SharedComponents.html`, so a utility class you have not used before exists only after `npm run build:css`.

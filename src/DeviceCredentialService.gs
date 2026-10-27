@@ -105,6 +105,7 @@ var Creds = {
     return Locks.with(function () {
       if (U.now() / 1000 > Number(parts[3])) fail('EXPIRED', 'Registration timed out. Start again.');
       st = Attend._verifiedStudent(st.studentId);
+      if (!ctx.user || st.userId !== ctx.user.userId || st.email !== ctx.email) fail('FORBIDDEN', 'This profile is no longer linked to your account. Refresh and contact the lab desk.');
       if (Tokens.wasRedeemed(parts[2])) fail('REPLAY', 'This registration code was already used.');
       var all = Db.whereEq('DeviceCredentials', { studentId: st.studentId }).filter(Creds._web);
       var active = all.filter(function (c) { return c.status === 'active'; });
@@ -146,20 +147,42 @@ var Creds = {
     var idChecked = V.bool(p.idChecked);
     if (!idChecked) fail('BAD_INPUT', 'Confirm that you checked the student\'s ID in person.');
     return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
       var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
-      if (!Creds._mayDecide(ctx, c)) fail('FORBIDDEN', 'Faculty approve phone-app changes only. Browser devices are approved at the lab desk.');
-      if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
-      if (ctx.student && ctx.student.studentId === c.studentId) fail('FORBIDDEN', 'You cannot approve your own device.');
-      var now = U.now();
-      if (c.replacesCredentialId) {
-        var old = Db.get('DeviceCredentials', c.replacesCredentialId);
-        if (old && old.status === 'active') Db.update('DeviceCredentials', old.credentialId, { status: 'replaced', revokedAt: now, revokedBy: ctx.email, revokeReason: 'replaced by ' + c.credentialId });
+      if (!Creds._mayDecide(actor, c)) fail('FORBIDDEN', 'Faculty approve phone-app changes only. Browser devices are approved at the lab desk.');
+      var replayed = c.status === 'active' && c.approvedAt !== null && c.approvedBy && c.approvedBy !== 'auto-first-device';
+      if (c.status !== 'pending_approval' && !replayed) fail('INVALID_STATE', 'This request is no longer pending.');
+      var st = Attend._verifiedStudent(c.studentId);
+      if (c.userEmail !== st.email) fail('CONFLICT', 'This device request belongs to a different account. Refresh and review the student again.');
+      if (actor.student && actor.student.studentId === c.studentId) fail('FORBIDDEN', 'You cannot approve your own device.');
+      var now = U.now(), next = c;
+      if (!replayed) {
+        var old = c.replacesCredentialId ? Db.get('DeviceCredentials', c.replacesCredentialId) : null;
+        try {
+          if (old && old.status === 'active') Db.update('DeviceCredentials', old.credentialId, { status: 'replaced', revokedAt: now, revokedBy: ctx.email, revokeReason: 'replaced by ' + c.credentialId });
+          next = Db.update('DeviceCredentials', credentialId, { status: 'active', approvedBy: ctx.email, approvedAt: now });
+        } catch (e) {
+          // A write may have committed before throwing. Never restore the old phone if the new one is active.
+          var saved = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
+          if (saved.status === 'active' && saved.approvedBy === ctx.email && saved.approvedAt === now) next = saved;
+          else {
+            if (saved.status !== 'active' && old && old.status === 'active') {
+              try {
+                var currentOld = Db.mustGet('DeviceCredentials', old.credentialId, 'Credential');
+                if (currentOld.status === 'replaced' && currentOld.revokeReason === 'replaced by ' + credentialId) {
+                  Db.update('DeviceCredentials', old.credentialId, { status: 'active', revokedAt: old.revokedAt, revokedBy: old.revokedBy, revokeReason: old.revokeReason });
+                }
+              } catch (rollback) { Syslog.warn('creds', 'APPROVAL_ROLLBACK_FAILED', 'Retry approval for ' + credentialId + ': ' + String(rollback.message)); }
+            }
+            throw e;
+          }
+        }
       }
-      var next = Db.update('DeviceCredentials', credentialId, { status: 'active', approvedBy: ctx.email, approvedAt: now });
-      Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId } });
-      var st = Db.get('StudentProfiles', c.studentId);
-      if (st && st.userId) Notify.toUser(st.userId, 'device', 'New device approved', 'Your new device is active. The old device no longer works.', 'credok:' + credentialId);
-      return { credential: Creds._pub(next) };
+      // A retry after an interrupted audit records the approval too; duplicate audit entries are intentional.
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(actor), action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId, replayed: !!replayed } });
+      try { Notify.toUser(st.userId, 'device', 'New device approved', 'Your new device is active. The old device no longer works.', 'credok:' + credentialId); }
+      catch (notification) { Syslog.warn('creds', 'APPROVAL_NOTIFY_FAILED', String(notification.message)); }
+      return { credential: Creds._pub(next), replayed: !!replayed };
     });
   },
 

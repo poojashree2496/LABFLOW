@@ -58,14 +58,18 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 323 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks and 22 HOD checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 361 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks, 22 HOD checks, 36 session-workflow checks, 10 recovery checks, 15 readiness checks and 17 identity checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 | Phone app (tier 3): 6 backend tests and 11 browser checks with the app simulated in Node (same keys, messages and `/exec` calls); the APK builds and its signature format passes a unit test | The APK on a real Android phone: background reports with the screen locked, fingerprint prompt, battery killers, the Apps Script redirect from the app |
 
-Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Nothing in this repo has been run against a live Google account.
+Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Automated runs use local fakes. The repo records an initial live setup on 21 Oct; see the dated snapshot and remaining physical checks in [Presenting](docs/presenting.md).
 
 The [critical workflow audit](docs/workflow-audit.md) adds 29 regression cases and fixes attendance races, booking/fulfilment checks and interrupted-return recovery. Backend checks, all 27 local scenarios and 84 browser checks pass, including the staff return form's live balances, validation, return-all shortcut and safe retry after an uncertain response.
+
+The [session workflow audit](docs/session-workflow-audit.md) adds five backend regressions and 36 browser checks for per-session modes, manual rescans and onboarding. It fixes imported-email claim blocking, partial account writes, stale identity during concurrent claims, final-lock mode checks and the faculty dialog overriding rescan policy.
+
+The [identity audit](docs/identity-audit.md) covers reference photos and replacement-device approval. It restores the desk upload route, checks current photo/claim permissions under the lock and rejects replacement approvals for disabled/unverified students or demoted operators.
 
 The issue screen adds a request/kit checklist, combined stock validation, booking collection guidance and an action to open the new loan for return. Its 33 focused browser checks also cover stale responses, multi-unit kits and retrying an uncertain checkout without changing the original payload.
 
@@ -78,6 +82,8 @@ Faculty, staff and admin can open **Live board** to see current visitors, projec
 Reports now include student hours/days/visits/auto sign-outs, per-system use and supervised project outcomes/hours, with CSV/PDF exports. Student Today shows per-lab days and hours for the past 90 days. Reservations and loans stay separate from verified attendance; see [Reports](docs/reports.md).
 
 Super admins can assign the HOD role and account/lab departments. HOD accounts have an overview, read-only facilities, live board and scoped reports. A blank lab department means shared; a HOD with no department sees shared labs only. See [HOD access](docs/hod-access.md).
+
+Super admins can open **Audit & system → System health → Lab readiness** to review door GPS, walk-in hours/projects, recent kiosk activity, teaching sessions, workstation counts, HOD setup and backup recency. These are configuration checks; they do not replace a phone check-in and an outside-geofence rehearsal.
 
 ## Authentication: the blocker you must check
 
@@ -217,7 +223,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 323 backend tests
+npm run check      # syntax lint of every .gs/.html script + 361 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)
@@ -226,6 +232,9 @@ npm run e2e:openlab # lab settings and walk-in QR/GPS attendance (same browser s
 npm run e2e:work   # project/system entry and mid-visit changes (same browser setup)
 npm run e2e:tier3  # phone-app linking, live roster, fingerprint check and override (the app simulated)
 cd android && gradlew assembleDebug   # the Android app (see "Build the APK")
+npm run e2e:session # session modes, rescans and onboarding (same browser setup)
+npm run e2e:readiness # admin setup checks and refresh (same browser setup)
+npm run e2e:identity # reference photos and replacement-device approval
 ```
 
 The dev server runs the real `.gs` files against in-memory fakes of SpreadsheetApp, CacheService, LockService, etc., and injects a mock `google.script.run`. Opening `http://localhost:8787/` shows a local demo account picker. Choose a seeded profile or enter a Karunya email, then use the Account menu to switch demo accounts or sign out. This only selects a simulated test identity; it does **not** sign in to Google, verify ownership of an email, or change production authentication. `?as=` remains available as a direct local testing shortcut; production has no such parameter. The fakes prove logic, not Google's behaviour.
