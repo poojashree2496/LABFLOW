@@ -75,7 +75,7 @@ Under **Audit & system → System health → Lab readiness**, review each active
 
 Walk-ins that are intentionally off do not require opening hours or projects. Pending projects are usable, but each visitor still needs their own eligible project or an active group membership. A device-only lab does not need GPS. Closed/cancelled teaching sessions do not count as remaining sessions today.
 
-The panel verifies saved configuration and recent activity. It does not verify university identity, camera operation, the real door boundary, attendance throughput or backup restoration. Rehearse an inside check-in, an outside refusal and a rescan in the room.
+The panel verifies saved configuration and recent activity. It does not verify university identity, camera operation, the real door boundary, attendance throughput or backup restoration. Rehearse an inside check-in, an outside check-in (recorded and flagged, not counted as present) and a rescan in the room.
 
 ## 6. Backups and the archive
 

@@ -1,6 +1,6 @@
 # LABFLOW test plan and results
 
-Merge of `main` into the tier-3 branch (2026-10-27): lint and 361 backend tests passed (355 from `main` plus 6 tier-3 tests); `npm run sim` passed 27/27. Replacement approval keeps the fresh authorization lookup and retry handling from `main` and still lets faculty approve phone-app switches.
+Merge of `main` into the tier-3 branch (2026-10-27): lint and 361 backend tests passed (355 from `main` plus 6 tier-3 tests); `npm run sim` passed 27/27. Replacement approval keeps the fresh authorization lookup and retry handling from `main` and still lets faculty approve phone-app switches. Browser suites on the merged tree: general 85/85, tier 3 all passed, session workflow 36/36, identity 17/17.
 
 Device approval failure audit (2026-10-27): lint and 355 backend tests passed; 27/27 scenarios and 17 isolated Brave identity checks passed, including a lost success response and retry. See the follow-up in [identity-audit.md](docs/identity-audit.md).
 
