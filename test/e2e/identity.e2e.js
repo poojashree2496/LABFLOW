@@ -67,6 +67,24 @@ const { start } = require('../../dev/server');
     await d.getByRole('button', { name: 'Approve device', exact: true }).click(); await d.waitFor({ state: 'hidden' });
     check('valid approval activates the new phone and replaces the old one', devices().find((x) => x.credentialId === pending.credentialId).status === 'active' && devices().find((x) => x.credentialId === old.credentialId).status === 'replaced');
 
+    const uncertain = await w.registerDevice({ ...s, email }); let interrupted = false;
+    await staff.route('**/rpc', async (route) => {
+      const body = route.request().postDataJSON();
+      if (body.action === 'cred.approve' && body.payload.credentialId === uncertain.credentialId && !interrupted) {
+        interrupted = true; const committed = await (await route.fetch()).json(); assert.ok(committed.ok);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'INTERNAL', message: 'Approval confirmation interrupted.' } }) });
+      } else await route.continue();
+    });
+    d = await approval(); await d.getByLabel("I have checked the student's ID card in person", { exact: true }).check();
+    await d.getByRole('button', { name: 'Approve device', exact: true }).click();
+    await d.getByRole('alert').filter({ hasText: 'Approval confirmation interrupted.' }).waitFor();
+    const savedAt = devices().find((x) => x.credentialId === uncertain.credentialId).approvedAt;
+    check('a lost success response leaves an enabled retry in the same review', interrupted && savedAt && await d.getByRole('button', { name: 'Approve device', exact: true }).isEnabled());
+    const response = staff.waitForResponse((r) => r.url().endsWith('/rpc') && r.request().postDataJSON().action === 'cred.approve');
+    await d.getByRole('button', { name: 'Approve device', exact: true }).click();
+    const retried = await (await response).json(); await d.waitFor({ state: 'hidden' });
+    check('retry confirms the approved phone without changing its timestamp or reactivating another', retried.ok && retried.data.replayed && devices().filter((x) => x.status === 'active').length === 1 && devices().find((x) => x.credentialId === uncertain.credentialId).approvedAt === savedAt);
+
     d = await details(staff);
     w.e.run(`Db.update('StudentProfiles',${JSON.stringify(s.studentId)},{importedEmail:''});`);
     w.ok(w.admin, 'students.unlink', { studentId: s.studentId, reason: 'Reclaim while photo dialog is open' });

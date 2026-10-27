@@ -57,8 +57,8 @@ Open [http://localhost:8787/lab](http://localhost:8787/lab) for the Test Lab: ch
 
 | Verified here (automated, on in-memory fakes of the Apps Script services) | NOT verified: needs your Workspace deployment |
 |---|---|
-| 346 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
-| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks, 22 HOD checks, 36 session-workflow checks, 10 recovery checks, 15 readiness checks and 15 identity checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
+| 355 backend tests run the real `.gs` files in a Node `vm` | `Session.getActiveUser()` behaviour for your two domains (see Authentication) |
+| 85 general browser checks, 33 focused issue checks, 27 project checks, 15 open-lab checks, 23 work-selection checks, 15 automatic sign-out checks, 26 live-board checks, 17 report checks, 22 HOD checks, 36 session-workflow checks, 10 recovery checks, 15 readiness checks and 17 identity checks (Playwright + real Chromium WebCrypto/IndexedDB) against the real server code, including all 10 site themes | HtmlService iframe: IndexedDB key persistence, `getUserMedia`, `BarcodeDetector` |
 | Real P-256 signature verification, QR render, replay refusal, mobile overflow | Real latency, `LockService` throughput, quotas, trigger runs |
 
 Details and exact counts: [TEST_PLAN.md](TEST_PLAN.md). Automated runs use local fakes. The repo records an initial live setup on 21 Oct; see the dated snapshot and remaining physical checks in [Presenting](docs/presenting.md).
@@ -135,7 +135,7 @@ Kiosk input, in order of preference: a USB/Bluetooth keyboard-wedge QR scanner (
 ```
 npm install
 npm run build      # vendors @noble/curves + qrcode-generator, compiles Tailwind into src/Styles.html
-npm run check      # syntax lint of every .gs/.html script + 346 backend tests
+npm run check      # syntax lint of every .gs/.html script + 355 backend tests
 npm run dev        # http://localhost:8787/   (local demo account picker)
 npm run e2e        # Playwright browser flow (needs Chromium; screenshots in .build/shots)
 npm run e2e:issue  # focused equipment issue flows (same browser setup)

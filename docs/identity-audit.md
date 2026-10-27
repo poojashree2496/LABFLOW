@@ -27,3 +27,13 @@ No schema columns or frozen v2 contracts changed. Replacement approvals still re
 ## Limits
 
 No real Google account, personal browser profile, photograph or production database was used. These runs do not verify Workspace identity, real Drive behaviour, quotas, HtmlService storage/camera support or physical ID checks. Photo operations now hold the script lock through Drive access; real latency and contention still need deployment measurement. This is a targeted audit, not a claim that every application workflow or failure mode has been verified.
+
+## Follow-up: replacement approval failures (27 Oct)
+
+Injected failures showed that retiring the old phone before activation could leave no active phone when the activation write failed. A success response lost after activation, or an audit failure at that point, also made a desk retry return `INVALID_STATE`.
+
+The approval handler now attempts to restore the old phone on caught failures while the replacement remains inactive. It reads back uncertain activation writes: a saved activation can finish normally, and the old phone is never restored while the new one is active. A valid already-approved active credential can be confirmed on retry, with its original approval timestamp. Revoked/replaced credentials and the first self-service phone cannot be activated through this replay path. Every replay rechecks the operator, verified profile and account binding. Notifications remain deduplicated and a notification exception does not fail the completed replacement.
+
+`test/device-retry.test.js` adds nine cases: failures before/after retirement, before/after activation, a lost success response, an audit interruption, failed rollback, replay authorization and notification failure. Lint and all **355 backend tests** pass, as do **27 scenarios**. The identity browser suite now has **17 checks**, including a real server-committed approval whose response is deliberately replaced with an error, then retried from the same dialog.
+
+This is best-effort recovery, not a transaction across Sheets rows. If execution stops outright between retirement and activation, or the rollback write/read also fails, the pending approval can still need a desk retry after the service recovers. Until then the student may temporarily have no working credential. A retry after an audit interruption appends an approval event; repeated retries may produce multiple explicitly marked audit entries, rather than claiming exactly-once audit delivery. Other browser suites were not rerun for this follow-up.
