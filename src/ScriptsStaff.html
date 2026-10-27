@@ -40,7 +40,7 @@ function showStudent(s, reload) {
   (async () => {
     try {
       const [creds, photo] = await Promise.all([api('cred.list', { studentId: s.studentId }), s.hasPhoto ? api('photo.get', { studentId: s.studentId }).catch(() => ({ dataUrl: null })) : Promise.resolve({ dataUrl: null })]);
-      const file = h('input', { type: 'file', accept: 'image/*', capture: 'user', class: 'input', 'aria-label': 'Take or upload a reference photo', onchange: async (e) => { try { await api('photo.set', { studentId: s.studentId, photo: await LF.util.photoFromFile(e.target.files[0]) }); LF.toast('Photo saved', 'good'); m.close(); if (reload) reload(); } catch (x) { LF.fail(x); } } });
+      const file = h('input', { type: 'file', accept: 'image/*', capture: 'user', class: 'input', 'aria-label': 'Take or upload a reference photo', onchange: async (e) => { try { await api('photo.set', { studentId: s.studentId, expectedEmail: s.email, photo: await LF.util.photoFromFile(e.target.files[0]) }); LF.toast('Photo saved', 'good'); m.close(); if (reload) reload(); } catch (x) { LF.fail(x); } } });
       clear(body).append(h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap' } }, photo.dataUrl ? h('img', { class: 'photo', src: photo.dataUrl, alt: 'Reference photo of ' + s.name }) : h('div', { class: 'photo', style: { display: 'grid', placeItems: 'center' } }, 'No photo'),
         h('dl', { class: 'dl' }, ...[['Email', s.email || '-'], ['Dept / section', s.department + ' / ' + (s.section || '-')], ['Year', s.year || '-'], ['Profile', s.status]].flatMap(([k, v]) => [h('dt', null, k), h('dd', null, String(v))]))),
         h('div', { class: 'field' }, h('label', null, 'Reference photo'), file),

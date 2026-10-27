@@ -44,6 +44,8 @@ Onboarding checks imported-email binding and existing claims before creating an 
 
 Verification/rejection and account unlinking refresh desk authorization and profile state under one lock. Current desk screens send the email being reviewed; a changed claim is refused with `CONFLICT`. Unlinking holds the lock across device revocation and profile detachment, and registration checks that the profile still belongs to its original caller before writing a device. Rejected profiles do not regain verification through disable/enable. These interleavings are tested on local fakes.
 
+Reference-photo reads and writes refresh identity and profile/spot-check permissions under the script lock through Drive access. Desk uploads carry the reviewed email; delayed onboarding uploads compare ownership and the photo reference before saving. Replacement-device approval refreshes desk authorization and verifies that the pending phone belongs to the current verified, active account before replacing any credential. See the targeted [identity audit](docs/identity-audit.md) for reproductions and local-testing limits.
+
 ## 3. Audit log
 
 Every sensitive action appends a row with `hash = SHA-256(prev_hash + canonical row)`. Checkpoints store the head in a sheet, in a script property, and in emailed anchors. `Audit.verify` detects edits, deletions in the middle, truncation and head rewrite (tested).

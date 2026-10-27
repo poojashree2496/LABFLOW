@@ -129,7 +129,9 @@ var Users = {
     });
     if (photo) { try { Users._storePhoto(profile, photo); } catch (e) { Syslog.warn('users', 'PHOTO_STORE_FAILED', String(e.message)); } }
     if (profile.status === 'pending') Notify.toRole('staff', 'verification', 'Student awaiting verification', profile.name + ' (' + profile.rollNo + ') needs identity verification.', 'verify:' + profile.studentId);
-    return { student: Users._pubStudent(Db.get('StudentProfiles', profile.studentId)) };
+    var current = Db.mustGet('StudentProfiles', profile.studentId, 'Student');
+    if (current.userId !== profile.userId || current.email !== profile.email) fail('CONFLICT', 'This profile was reclaimed while it was being saved. Refresh and contact the lab desk.');
+    return { student: Users._pubStudent(current) };
   },
 
   verifyStudent: function (ctx, p) {
@@ -300,26 +302,38 @@ var Users = {
     return bytes;
   },
   _storePhoto: function (profile, bytes) {
-    var folder = Setup.folder(Cfg.PROP.PHOTO_FOLDER, 'LABFLOW Student Photos (private)');
-    var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', profile.studentId + '.jpg'));
-    var old = profile.photoFileId;
-    Db.update('StudentProfiles', profile.studentId, { photoFileId: file.getId(), updatedAt: U.now() });
-    if (old) { try { DriveApp.getFileById(old).setTrashed(true); } catch (e) {} }
-    return file.getId();
+    return Locks.with(function () {
+      var fresh = Db.mustGet('StudentProfiles', profile.studentId, 'Student');
+      if (fresh.userId !== profile.userId || fresh.email !== profile.email) fail('CONFLICT', 'The account linked to this profile changed. Review it again.');
+      if ((fresh.photoFileId || '') !== (profile.photoFileId || '')) fail('CONFLICT', 'The reference photo changed while this upload was being prepared. Review it again.');
+      var folder = Setup.folder(Cfg.PROP.PHOTO_FOLDER, 'LABFLOW Student Photos (private)');
+      var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', profile.studentId + '.jpg'));
+      var old = fresh.photoFileId;
+      Db.update('StudentProfiles', profile.studentId, { photoFileId: file.getId(), updatedAt: U.now() });
+      if (old) { try { DriveApp.getFileById(old).setTrashed(true); } catch (e) {} }
+      return file.getId();
+    });
   },
   setPhoto: function (ctx, p) {
     V.obj(p);
-    var prof;
-    if (p.studentId && (ctx.has('staff') || ctx.has('admin'))) prof = Db.mustGet('StudentProfiles', V.id(p.studentId, 'Student', 'student'), 'Student');
-    else {
-      if (!ctx.student) fail('NOT_FOUND', 'No student profile.');
-      prof = ctx.student;
-      // The photo is the reference for spot checks: once a profile is verified with a photo, only staff may change it.
-      if (prof.photoFileId && prof.status === 'verified') fail('FORBIDDEN', 'Your verified photo can only be changed by lab staff. Visit the lab desk.');
-    }
-    Users._storePhoto(prof, Users._decodePhoto(p.photo));
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'photo.set', entityType: 'StudentProfile', entityId: prof.studentId });
-    return { ok: true };
+    var bytes = Users._decodePhoto(p.photo);
+    var studentId = p.studentId ? V.id(p.studentId, 'Student', 'student') : '';
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true), prof;
+      Auth.requireRole(actor, ['student', 'staff', 'admin']);
+      if (studentId && (actor.has('staff') || actor.has('admin'))) {
+        prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+        Users._reviewedClaim(prof, p);
+      } else {
+        if (!actor.student || (studentId && studentId !== actor.student.studentId)) fail('FORBIDDEN', 'This profile is not linked to your account. Refresh and contact the lab desk.');
+        prof = actor.student;
+        // A verified reference photo may have appeared while the upload was being prepared.
+        if (prof.photoFileId && prof.status === 'verified') fail('FORBIDDEN', 'Your verified photo can only be changed by lab staff. Visit the lab desk.');
+      }
+      Users._storePhoto(prof, bytes);
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.set', entityType: 'StudentProfile', entityId: prof.studentId });
+      return { ok: true };
+    });
   },
   /**
    * Photos are personal data. Access is limited to: admin/staff (identity verification) and the faculty member
@@ -328,21 +342,24 @@ var Users = {
   getPhoto: function (ctx, p) {
     V.obj(p);
     var studentId = V.id(p.studentId, 'Student', 'student');
-    var allowed = ctx.has('admin') || ctx.has('staff');
-    var detail = {};
-    if (!allowed && ctx.has('faculty')) {
-      var checks = Db.where('SpotChecks', function (c) { return c.studentId === studentId && c.outcome === 'pending'; });
-      for (var i = 0; i < checks.length && !allowed; i++) {
-        var ses = Db.get('Sessions', checks[i].sessionId);
-        if (ses && Auth.ownsSession(ctx, ses)) { allowed = true; detail.checkId = checks[i].checkId; }
+    return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
+      var allowed = actor.has('admin') || actor.has('staff');
+      var detail = {};
+      if (!allowed && actor.has('faculty')) {
+        var checks = Db.where('SpotChecks', function (c) { return c.studentId === studentId && c.outcome === 'pending'; });
+        for (var i = 0; i < checks.length && !allowed; i++) {
+          var ses = Db.get('Sessions', checks[i].sessionId);
+          if (ses && Auth.ownsSession(actor, ses)) { allowed = true; detail.checkId = checks[i].checkId; }
+        }
       }
-    }
-    if (!allowed) { Audit.tryLog({ actor: ctx.email, role: ctx.roles[0], action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, result: 'denied' }); fail('FORBIDDEN', 'You cannot view this photo.'); }
-    var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
-    if (!prof.photoFileId) return { dataUrl: null };
-    var blob = DriveApp.getFileById(prof.photoFileId).getBlob();
-    Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, detail: detail });
-    return { dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(blob.getBytes()) };
+      if (!allowed) { Audit.tryLog({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, result: 'denied' }); fail('FORBIDDEN', 'You cannot view this photo.'); }
+      var prof = Db.mustGet('StudentProfiles', studentId, 'Student');
+      if (!prof.photoFileId) return { dataUrl: null };
+      var blob = DriveApp.getFileById(prof.photoFileId).getBlob();
+      Audit.log({ actor: ctx.email, role: Auth.actorRole(actor), action: 'photo.view', entityType: 'StudentProfile', entityId: studentId, detail: detail });
+      return { dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(blob.getBytes()) };
+    });
   },
 
   // ---- administration of accounts ---------------------------------------------------------------------

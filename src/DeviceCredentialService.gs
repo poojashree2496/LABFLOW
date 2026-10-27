@@ -141,17 +141,20 @@ var Creds = {
     var idChecked = V.bool(p.idChecked);
     if (!idChecked) fail('BAD_INPUT', 'Confirm that you checked the student\'s ID in person.');
     return Locks.with(function () {
+      var actor = Auth._contextForEmail(ctx.email, true);
+      Auth.requireRole(actor, ['staff', 'admin']);
       var c = Db.mustGet('DeviceCredentials', credentialId, 'Credential');
       if (c.status !== 'pending_approval') fail('INVALID_STATE', 'This request is no longer pending.');
-      if (ctx.student && ctx.student.studentId === c.studentId) fail('FORBIDDEN', 'You cannot approve your own device.');
+      var st = Attend._verifiedStudent(c.studentId);
+      if (c.userEmail !== st.email) fail('CONFLICT', 'This device request belongs to a different account. Refresh and review the student again.');
+      if (actor.student && actor.student.studentId === c.studentId) fail('FORBIDDEN', 'You cannot approve your own device.');
       var now = U.now();
       if (c.replacesCredentialId) {
         var old = Db.get('DeviceCredentials', c.replacesCredentialId);
         if (old && old.status === 'active') Db.update('DeviceCredentials', old.credentialId, { status: 'replaced', revokedAt: now, revokedBy: ctx.email, revokeReason: 'replaced by ' + c.credentialId });
       }
       var next = Db.update('DeviceCredentials', credentialId, { status: 'active', approvedBy: ctx.email, approvedAt: now });
-      Audit.log({ actor: ctx.email, role: ctx.has('admin') ? 'admin' : 'staff', action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId } });
-      var st = Db.get('StudentProfiles', c.studentId);
+      Audit.log({ actor: ctx.email, role: actor.has('admin') ? 'admin' : 'staff', action: 'cred.approve', entityType: 'DeviceCredential', entityId: credentialId, detail: { studentId: c.studentId, replaced: c.replacesCredentialId } });
       if (st && st.userId) Notify.toUser(st.userId, 'device', 'New device approved', 'Your new device is active. The old device no longer works.', 'credok:' + credentialId);
       return { credential: Creds._pub(next) };
     });

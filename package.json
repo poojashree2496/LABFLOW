@@ -22,6 +22,7 @@
     "e2e:session": "node test/e2e/session-workflow.e2e.js",
     "e2e:recovery": "node test/e2e/recovery.e2e.js",
     "e2e:readiness": "node test/e2e/readiness.e2e.js",
+    "e2e:identity": "node test/e2e/identity.e2e.js",
     "dev": "node dev/server.js",
     "check": "npm run lint && npm test"
   },

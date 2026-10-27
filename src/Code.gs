@@ -46,7 +46,7 @@ var ROUTES = {
   'attend.events': { roles: ['student'], fn: function (c, p) { return Attend.myEvents(c, p); } },
   'sessions.mine': { roles: ['student'], fn: function (c, p) { return Sessions.listForStudent(c, p); } },
   'research.request': { roles: ['student'], rl: [10, 600], fn: function (c, p) { return Sessions.requestResearch(c, p); } },
-  'photo.set': { roles: ['student'], rl: [10, 600], maxBytes: 700000, fn: function (c, p) { return Users.setPhoto(c, p); } },
+  'photo.set': { roles: ['student', 'staff', 'admin'], rl: [10, 600], maxBytes: 700000, fn: function (c, p) { return Users.setPhoto(c, p); } },
 
   // attendance, Version A: kiosk shows a rotating QR, the student's phone opens it and sends its location
   'checkin.open': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Checkin.open(c, p); } },

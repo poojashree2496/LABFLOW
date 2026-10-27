@@ -136,7 +136,7 @@ function createEnv(opts = {}) {
       computeHmacSha256Signature: (v, k) => signed(nodeCrypto.createHmac('sha256', k).update(v).digest()),
       base64EncodeWebSafe: (v) => (typeof v === 'string' ? Buffer.from(v, 'utf8') : toBuf(v)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_'),
       base64DecodeWebSafe: (s) => signed(Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64')),
-      newBlob: (s) => ({ getBytes: () => signed(Buffer.from(s, 'utf8')) }),
+      newBlob: (s, type, name) => ({ getBytes: () => signed(Buffer.from(s, 'utf8')), getContentType: () => type || 'application/octet-stream', getName: () => name || '' }),
       base64Decode: (s) => signed(Buffer.from(s, 'base64')),
       base64Encode: (v) => (typeof v === 'string' ? Buffer.from(v, 'utf8') : toBuf(v)).toString('base64'),
       sleep: () => {},
@@ -171,12 +171,16 @@ function createEnv(opts = {}) {
         f.makeCopy = (n, folder) => { const c = mk('file-' + (++seq), n, folder || parent, { copyOf: id }); if (folder) folder.files.push(c); return c; };
         f.moveTo = (folder) => { f.parent = folder; folder.files.push(f); return f; };
         f.getAs = () => ({ getBytes: () => signed(Buffer.from('%PDF-fake')) });
+        f.getBlob = () => { if (!f.blob) throw new Error('File has no blob content'); return f.blob; };
         files[id] = f; return f;
       };
       return {
         createFolder: (n) => {
           const f = { id: 'fld-' + n, name: n, files: [], getId: () => 'fld-' + n, getUrl: () => 'https://drive/folders/' + n,
-            createFile: (name, body) => { const file = mk('file-' + (++seq), name, f, { body }); f.files.push(file); return file; },
+            createFile: (name, body) => {
+              const blob = name && typeof name.getBytes === 'function' ? name : null;
+              const file = mk('file-' + (++seq), blob ? blob.getName() : name, f, { body, blob }); f.files.push(file); return file;
+            },
             getFiles: () => { const list = f.files.filter((x) => !x.trashed); let i = 0; return { hasNext: () => i < list.length, next: () => list[i++] }; } };
           folders[f.id] = f; return f;
         },
