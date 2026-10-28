@@ -56,6 +56,8 @@ var Presence = {
     var key = function (v, n) { return V.str(v, n, { max: 120, re: /^[A-Za-z0-9_-]+$/ }); };
     var publicKey = key(p.publicKey, 'Public key'), bioPublicKey = key(p.bioPublicKey, 'Fingerprint key');
     var label = V.str(p.label, 'Phone name', { optional: true, max: 60, def: 'Phone app' });
+    // A hash of the phone's ANDROID_ID: it survives Unlink, reinstalling and clearing the app, so one phone is one student.
+    var phoneId = V.str(p.phoneId, 'Phone id', { optional: true, max: 64, re: /^[A-Za-z0-9_-]{16,64}$/, def: '' });
     if (!Creds.verifySignature(publicKey, p.token, key(p.sig, 'Signature')) || !Creds.verifySignature(bioPublicKey, p.token, key(p.bioSig, 'Fingerprint signature'))) {
       fail('BAD_SIGNATURE', 'The phone could not prove it holds its keys. Try linking again.');
     }
@@ -65,8 +67,20 @@ var Presence = {
       var mine = Db.whereEq('DeviceCredentials', { studentId: st.studentId }).filter(function (c) { return c.kind === 'app'; });
       var active = mine.filter(function (c) { return c.status === 'active'; }), now = U.now();
       // The same phone signing in again (its sign-in expired, or the app was reopened): same keys, no new approval.
-      var same = mine.filter(function (c) { return c.publicKey === publicKey && c.bioPublicKey === bioPublicKey && (c.status === 'active' || c.status === 'pending_approval'); })[0];
+      var live = function (c) { return c.status === 'active' || c.status === 'pending_approval'; };
+      var taken = phoneId && Db.where('DeviceCredentials', function (c) { return c.kind === 'app' && c.phoneId === phoneId && c.studentId !== st.studentId && live(c); })[0];
+      if (taken) {
+        var owner = Db.get('StudentProfiles', taken.studentId) || {};
+        Audit.log({ actor: user.email, role: 'student', action: 'app.link_refused', entityType: 'DeviceCredential', entityId: taken.credentialId, detail: { studentId: st.studentId, phoneOf: taken.studentId, reason: 'phone linked to another student' } });
+        // Tied to the phone owner's open session, if any, so the faculty running it see the flag.
+        var last = Db.where('AttendanceEvents', function (e) { return e.studentId === taken.studentId; }).pop(), sess = last && Db.get('Sessions', last.sessionId);
+        sess = sess && sess.status === 'open' ? sess : null;
+        [st.studentId, taken.studentId].forEach(function (sid) { Flags.raise('shared_phone', { studentId: sid, sessionId: sess ? sess.sessionId : '', labId: sess ? sess.labId : '', detail: { students: [st.studentId, taken.studentId], label: label }, dedupeKey: 'sharedphone|' + sid + '|' + phoneId }); });
+        fail('PHONE_TAKEN', 'This phone is already linked to ' + (owner.name || 'another student') + (owner.rollNo ? ' (' + owner.rollNo + ')' : '') + '. One phone can belong to one student only. The faculty have been told.');
+      }
+      var same = mine.filter(function (c) { return c.publicKey === publicKey && c.bioPublicKey === bioPublicKey && live(c); })[0];
       if (same) {
+        if (phoneId && !same.phoneId) Db.update('DeviceCredentials', same.credentialId, { phoneId: phoneId });
         Tokens.redeem(parts[2], 'P', st.studentId, '', '', same.credentialId);
         Audit.log({ actor: user.email, role: 'student', action: 'app.signin', entityType: 'DeviceCredential', entityId: same.credentialId, detail: { studentId: st.studentId } });
         var again = Auth._issueSession(user.email);
@@ -74,11 +88,14 @@ var Presence = {
       }
       // A newer request replaces an older pending one (a reinstall makes new keys).
       mine.forEach(function (c) { if (c.status === 'pending_approval') Db.update('DeviceCredentials', c.credentialId, { status: 'revoked', revokedAt: now, revokedBy: user.email, revokeReason: 'superseded by a newer link request' }); });
-      var needsApproval = mine.length > 0;
+      // The same phone with new keys (the student pressed Unlink and linked again): it replaces its old key, no approval.
+      var again = phoneId && mine.filter(function (c) { return c.status === 'active' && c.phoneId === phoneId; })[0];
+      if (again) Db.update('DeviceCredentials', again.credentialId, { status: 'revoked', revokedAt: now, revokedBy: user.email, revokeReason: 'same phone linked again' });
+      var needsApproval = !again && mine.length > 0;
       var cred = Db.insert('DeviceCredentials', {
         credentialId: U.id('cred'), studentId: st.studentId, userEmail: user.email, publicKey: publicKey, alg: 'ES256', label: label,
         status: needsApproval ? 'pending_approval' : 'active', replacesCredentialId: needsApproval && active.length ? active[0].credentialId : '',
-        createdAt: now, approvedBy: needsApproval ? '' : 'auto-first-device', approvedAt: needsApproval ? null : now, kind: 'app', bioPublicKey: bioPublicKey
+        createdAt: now, approvedBy: needsApproval ? '' : again ? 'same-phone' : 'auto-first-device', approvedAt: needsApproval ? null : now, kind: 'app', bioPublicKey: bioPublicKey, phoneId: phoneId
       });
       Tokens.redeem(parts[2], 'P', st.studentId, '', '', cred.credentialId);
       Audit.log({ actor: user.email, role: 'student', action: needsApproval ? 'app.link_request' : 'app.link', entityType: 'DeviceCredential', entityId: cred.credentialId,

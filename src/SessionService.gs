@@ -259,9 +259,12 @@ var Sessions = {
     if (s.status !== 'open') fail('INVALID_STATE', 'Open the session first.');
     var lab = Db.get('Labs', s.labId);
     if (!Sessions.allows(s, lab, 'A')) fail('MODE_DISABLED', 'This session uses device QR only. Change the check-in mode to show the lab QR.');
-    // ponytail: borrows the lab's first active kiosk id for the code; a lab with no kiosk record cannot show one.
-    var k = Db.where('Kiosks', function (x) { return x.labId === s.labId && x.status === 'active'; })[0];
-    if (!k) fail('NOT_FOUND', 'This lab has no active kiosk. Ask an admin to add one under Kiosks.');
+    // The code carries a kiosk id: the lab's first active kiosk, or a "faculty screen" record made for a lab with none.
+    // Its account address is not a Google account, so nobody can sign in as it.
+    var mine = function (x) { return x.labId === s.labId && x.status === 'active'; };
+    var k = Db.where('Kiosks', mine)[0] || Locks.with(function () {
+      return Db.where('Kiosks', mine)[0] || Db.insert('Kiosks', { kioskId: U.id('kiosk'), labId: s.labId, name: 'Faculty screen', authorizedEmail: 'screen.' + s.labId.toLowerCase() + '@labflow.invalid', status: 'active', createdAt: U.now() });
+    });
     var now = U.now(), interval = Checkin._interval(), step = Checkin._step(now), code = Checkin._code(k.kioskId, step);
     return { code: code, url: Checkin.linkFor(code), interval: interval, nextAt: (step + 1) * interval * 1000, serverNow: now };
   },

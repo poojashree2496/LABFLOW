@@ -32,7 +32,8 @@ var Flags = {
     clock_skew: { severity: 'medium', label: 'The phone clock was far off (reports dated in the future)' },
     stale_code: { severity: 'medium', label: 'Scanned a kiosk code that was too old (a forwarded picture)' },
     unapproved_device: { severity: 'medium', label: 'Used a phone that is not approved for this student' },
-    away_from_lab: { severity: 'medium', label: 'A random location check placed the phone away from the lab' }
+    away_from_lab: { severity: 'medium', label: 'A random location check placed the phone away from the lab' },
+    shared_phone: { severity: 'high', label: 'Tried to link a phone that is already linked to another student' }
   },
   WINDOW_MS: 30 * 86400000,
 

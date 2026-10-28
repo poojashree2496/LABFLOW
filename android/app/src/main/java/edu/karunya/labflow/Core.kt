@@ -21,6 +21,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
@@ -134,6 +135,11 @@ object Keys {
         return int() + int()
     }
     fun b64u(b: ByteArray): String = Base64.encodeToString(b, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+
+    /** A hash of ANDROID_ID. Unlike the keys it survives Unlink, a reinstall and clearing the app, so the server can
+     *  tell that a second student is signing in on a phone that is already linked. */
+    @SuppressLint("HardwareIds")
+    fun phoneId(ctx: Context): String = b64u(MessageDigest.getInstance("SHA-256").digest(("labflow|" + android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID)).toByteArray()))
 }
 
 /** A fresh location reading. Blocking; call it off the main thread. */

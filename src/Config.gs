@@ -36,7 +36,7 @@ var Cfg = (function () {
     AttendanceSummaries: 'sumId sessionId studentId status firstIn:n lastOut:n verifiedUntil:n verifiedMinutes:n flags:j computedAt:n',
     SpotChecks: 'checkId sessionId studentId requestedBy requestedAt:n outcome resolvedBy resolvedAt:n note',
     RescanWindows: 'windowId sessionId kind openedAt:n closesAt:n openedBy status',
-    DeviceCredentials: 'credentialId studentId:s:c userEmail publicKey:s:u alg label status replacesCredentialId createdAt:n approvedBy approvedAt:n revokedAt:n revokedBy revokeReason lastUsedAt:n kind bioPublicKey',
+    DeviceCredentials: 'credentialId studentId:s:c userEmail publicKey:s:u alg label status replacesCredentialId createdAt:n approvedBy approvedAt:n revokedAt:n revokedBy revokeReason lastUsedAt:n kind bioPublicKey phoneId',
     Redemptions: 'nonce purpose studentId sessionId kioskId at:n eventId',
     Flags: 'flagId type severity studentId sessionId labId detail:j status createdAt:n resolvedBy resolvedAt:n note dedupeKey:s:u',
     Categories: 'categoryId name:s:u trackingMode notes workstation:b',

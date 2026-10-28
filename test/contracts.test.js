@@ -8,7 +8,7 @@ test('v2 contract: schema columns are appended in the agreed order', () => {
   const w = world({ students: 0 });
   const cols = (t) => w.eval("Cfg.SCHEMA['" + t + "'].map(function(c){ return c.name; })");
   const tail = { Labs: ['department', 'openLab'], Users: ['department'], StudentProfiles: ['joinYear'], Categories: ['workstation'], Sessions: ['archivedAt', 'checkinMode'],
-    AttendanceEvents: ['projectId', 'assetId', 'outcome'], DeviceCredentials: ['kind', 'bioPublicKey'], Reservations: ['projectId', 'waitlistedAt'] };
+    AttendanceEvents: ['projectId', 'assetId', 'outcome'], DeviceCredentials: ['kind', 'bioPublicKey', 'phoneId'], Reservations: ['projectId', 'waitlistedAt'] };
   for (const t of Object.keys(tail)) assert.deepEqual(cols(t).slice(-tail[t].length), tail[t], t);
   assert.deepEqual(cols('Projects'), ['projectId', 'title', 'description', 'ownerStudentId', 'groupId', 'supervisorFacultyId', 'labId', 'startDate', 'endDate', 'status',
     'outcome', 'outcomeLink', 'outcomeAt', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt']);

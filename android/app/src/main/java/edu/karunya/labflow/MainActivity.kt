@@ -286,7 +286,7 @@ class MainActivity : Activity() {
             thread {
                 try {
                     val r = Api.call(store, "app.link", JSONObject().put("token", token).put("publicKey", Keys.publicKey(Keys.DEVICE)).put("bioPublicKey", Keys.publicKey(Keys.BIO))
-                        .put("sig", Keys.sign(Keys.DEVICE, token)).put("bioSig", bioSig).put("label", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL), session = null)
+                        .put("sig", Keys.sign(Keys.DEVICE, token)).put("bioSig", bioSig).put("label", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("phoneId", Keys.phoneId(this)), session = null)
                     val st = r.getJSONObject("student")
                     store.session = r.getString("session"); store.credentialId = r.getString("credentialId"); store.deviceStatus = r.getString("status")
                     store.name = st.optString("name"); store.rollNo = st.optString("rollNo")

@@ -226,3 +226,38 @@ test('the site inside the app shows a device QR signed with the app key, and the
   const r = w.phoneScan(w.faculty, qr);
   assert.equal(r.ok, true, JSON.stringify(r.error));
 });
+
+test('demo run: a new lab with no kiosk shows its QR from the faculty screen; one phone cannot be linked to two students', async () => {
+  const w = world({ students: 3, mode: 'AB' }); const [cleo, jonathan, jerome] = w.students;
+  const lab = w.ok(w.admin, 'labs.upsert', { code: 'IOTDEMO', name: 'IoT Lab demo', type: 'iot', capacity: 40, latitude: LAB_A.lat, longitude: LAB_A.lng, radiusM: 40, checkinMode: 'AB' }).lab;
+  w.ok(w.admin, 'timetable.upsert', { labId: lab.labId, courseId: w.course.courseId, facultyId: w.facultyId, section: 'A', dayOfWeek: 3, startTime: '12:00', endTime: '18:00', validFrom: '2026-10-01', validTo: '2026-12-31' });
+  w.advance(2 * 60 * MIN);
+  w.sid = w.ok(w.faculty, 'sessions.day', { date: w.today }).sessions.find((s) => s.labId === lab.labId).sessionId;
+  w.ok(w.faculty, 'sessions.open', { sessionId: w.sid, checkinMode: 'C' });
+  const code = w.ok(w.faculty, 'sessions.checkinQr', { sessionId: w.sid }).code;
+  assert.equal(w.ok(w.faculty, 'sessions.checkinQr', { sessionId: w.sid }).code, code, 'one faculty-screen record per lab');
+  const phone = 'pixel-of-cleo-0123456789abcdef';
+  const linkOn = async (s, phoneId) => {
+    const dev = await genDevice(), bio = await genDevice(), pc = w.ok(s.email, 'app.pairCode');
+    const r = post(w, 'app.link', { token: pc.token, publicKey: dev.publicKey, bioPublicKey: bio.publicKey, sig: await signWith(dev, pc.token), bioSig: await signWith(bio, pc.token), label: 'Pixel', phoneId });
+    return r.ok ? { dev, bio, session: r.data.session, credentialId: r.data.credentialId, status: r.data.status, seq: 0, student: s, metres: 3, acc: 12, mock: false } : r.error;
+  };
+  const app = await linkOn(cleo, phone);
+  assert.equal(app.status, 'active');
+  const r = await scan(w, app, { code });
+  assert.equal(r.ok, true, JSON.stringify(r.error));
+  await w.registerDevice(jonathan);
+  assert.equal(w.phoneScan(w.faculty, await w.qr(jonathan, w.sid, 'in')).ok, true, 'reverse QR scanned by the faculty');
+  w.ok(w.faculty, 'attend.openRescan', { sessionId: w.sid });
+  const away = w.ok(jonathan.email, 'presence.confirm', { sessionId: w.sid, geo: w.at(500, 12) });
+  assert.equal(away.geofence, 'fail'); assert.equal(away.assurance, 'flagged');
+  assert.ok(flagsOf(w, jonathan).includes('outside_geofence'));
+  // Cleo presses Unlink (the app makes new keys) and Jerome signs in on the same phone
+  const taken = await linkOn(jerome, phone);
+  assert.equal(taken.code, 'PHONE_TAKEN'); assert.match(taken.message, new RegExp(cleo.rollNo));
+  assert.ok(flagsOf(w, jerome).includes('shared_phone') && flagsOf(w, cleo).includes('shared_phone'));
+  // Cleo links the same phone again: it replaces its old key without approval
+  const back = await linkOn(cleo, phone);
+  assert.equal(back.status, 'active');
+  assert.equal(api(w, app, 'app.status').error.code, 'NO_DEVICE', 'the old key is dead');
+});
