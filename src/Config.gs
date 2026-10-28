@@ -100,6 +100,8 @@ var Cfg = (function () {
     kioskPassMinutes: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 2, min: 1, max: 5, desc: 'After the page opens, the student has this long to finish checking in (FR-9).' },
     defaultGeofenceRadiusM: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 20, min: 5, max: 500, desc: 'Geofence radius for labs that do not set their own (metres).' },
     gpsAccuracyAllowanceM: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 30, min: 0, max: 100, desc: 'Up to this much of the phone\'s reported GPS error is forgiven, so indoor error does not reject a student in the lab (FR-12).' },
+    geoFlagMediumM: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 150, min: 20, max: 2000, desc: 'A location flag this far (metres) from the lab centre or more is medium severity; nearer is low (GPS drift indoors, the next room).' },
+    geoFlagHighM: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 400, min: 50, max: 5000, desc: 'A location flag this far (metres) from the lab centre or more is high severity (another building, off campus).' },
     minPlausibleAccuracyM: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 2, min: 0, max: 20, desc: 'Readings claiming better accuracy than this are impossible for a phone browser and are rejected (FR-30).' },
     geoUnavailablePolicy: { group: 'Kiosk QR + GPS (A)', type: 'enum', def: 'allow_flagged', values: ['allow_flagged', 'reject'], desc: 'When the phone cannot give a location: accept the check-in with geofence "not available" and a flag, or refuse it.' },
     maxTravelSpeedKmh: { group: 'Kiosk QR + GPS (A)', type: 'int', def: 15, min: 3, max: 200, desc: 'Consecutive check-ins at two labs implying a faster speed are flagged as impossible travel (FR-29).' },

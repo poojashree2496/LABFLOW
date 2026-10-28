@@ -335,3 +335,17 @@ test('presence check: one location reading confirms presence, no QR; outside the
   const roster = w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster, st = (s) => roster.find((x) => x.studentId === s.studentId).status;
   assert.equal(st(a), 'present'); assert.ok(['flagged', 'missed_rescan'].includes(st(b)), st(b));
 });
+
+test('flags: location severity follows the distance, the list is highest severity first, and a busy session clears in one go without notes', () => {
+  const w = world({ students: 3, mode: 'A' }); const [a, b, c] = w.students; w.sid = w.session().sessionId;
+  w.ok(w.faculty, 'sessions.open', { sessionId: w.sid });
+  w.checkin(a, { geo: w.at(100, 12) }); w.checkin(b, { geo: w.at(250, 12) }); w.checkin(c, { geo: w.at(900, 12) });
+  const open = w.ok(w.faculty, 'flags.list', {}).flags.filter((f) => f.type === 'outside_geofence');
+  assert.deepEqual(open.map((f) => [f.studentId, f.severity]), [[c.studentId, 'high'], [b.studentId, 'medium'], [a.studentId, 'low']]);
+  assert.equal(w.ok(w.faculty, 'flags.resolve', { flagId: open[2].flagId, outcome: 'dismissed' }).ok, true, 'no note needed');
+  const all = w.ok(w.faculty, 'flags.list', {}).flags.map((f) => f.flagId).concat(open[2].flagId);
+  const r = w.ok(w.faculty, 'flags.resolve', { flagIds: all, outcome: 'dismissed' });
+  assert.equal(r.skipped, 1, 'the one already dismissed is skipped'); assert.equal(r.done, all.length - 1);
+  assert.equal(w.ok(w.faculty, 'flags.list', {}).flags.length, 0);
+  assert.equal(w.err(w.faculty2, 'flags.resolve', { flagId: open[0].flagId, outcome: 'resolved' }).code, 'FORBIDDEN');
+});

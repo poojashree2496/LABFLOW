@@ -219,6 +219,15 @@ LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root
       navigator.geolocation.getCurrentPosition((p) => { lat.input.value = p.coords.latitude.toFixed(6); lng.input.value = p.coords.longitude.toFixed(6); here.textContent = 'Set from this device (accuracy about ' + Math.round(p.coords.accuracy) + ' m). Measure on site for best results.'; resolve(); },
         (e) => { here.textContent = e.code === 1 ? 'Location permission was refused.' : 'Could not read the location.'; resolve(); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
     }) });
+    // Templates fill the usual values for a new lab; the admin still presses "Use this device's location" in the room.
+    const TEMPLATES = { iot: { code: 'IOTLAB', name: 'IoT Lab', type: 'iot', capacity: 40, department: 'CSE', checkinMode: 'AB', radiusM: 40, openTime: '08:00', closeTime: '17:00' },
+      computing: { code: 'COMPLAB', name: 'Computer Lab', type: 'computing', capacity: 60, department: 'CSE', checkinMode: 'AB', radiusM: 40, openTime: '08:00', closeTime: '17:00' },
+      gpu: { code: 'GPULAB', name: 'GPU / AI Lab', type: 'gpu', capacity: 30, department: 'CSE', checkinMode: 'AB', radiusM: 30, openTime: '08:00', closeTime: '19:00' } };
+    const fields = { code, name, type, capacity: cap, department, checkinMode: mode, radiusM: radius, openTime: open, closeTime: close };
+    const template = l ? null : h('select', { class: 'input', 'aria-label': 'Start from a template', style: { maxWidth: '240px' }, onchange: (e) => {
+      const t = TEMPLATES[e.target.value]; if (!t) return;
+      Object.keys(t).forEach((k) => { fields[k].input.value = t[k]; });
+    } }, h('option', { value: '' }, 'Start from a template...'), h('option', { value: 'iot' }, 'IoT lab'), h('option', { value: 'computing' }, 'Computer lab'), h('option', { value: 'gpu' }, 'GPU / AI lab'));
     const msg = h('div', { class: 'err', role: 'alert', hidden: true }), grid = (...k) => h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px' } }, ...k);
     let m;
     const save = ui.button('Save', { kind: 'primary', onClick: async () => {
@@ -230,7 +239,7 @@ LF.register({ role: 'admin', id: 'labs', label: 'Labs', icon: 'lab', render(root
         LF.toast('Saved', 'good'); m.close(); reload();
       } catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
     } });
-    m = LF.modal(l ? 'Edit ' + l.name : 'Add lab', h('div', { style: { display: 'grid', gap: '12px' } }, grid(code.el, name.el, type.el, cap.el), grid(building.el, room.el, status.el), department.el,
+    m = LF.modal(l ? 'Edit ' + l.name : 'Add lab', h('div', { style: { display: 'grid', gap: '12px' } }, template ? h('div', { class: 'toolbar' }, template, h('span', { class: 'hint' }, 'Fills the usual values; change any of them.')) : null, grid(code.el, name.el, type.el, cap.el), grid(building.el, room.el, status.el), department.el,
       h('fieldset', { style: { border: '1px solid var(--hair)', borderRadius: '8px', padding: '12px', display: 'grid', gap: '12px' } }, h('legend', { class: 't-label' }, 'Check-in and geofence'), mode.el, grid(lat.el, lng.el, radius.el), h('div', { class: 'toolbar' }, useHere, here)),
       grid(open.el, close.el), walkins.el, inch.el, notes.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), save)), { wide: true });
   }

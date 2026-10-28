@@ -1,5 +1,6 @@
 # LABFLOW test plan and results
 
+Flags clear fast (2026-10-28): lint and 369 backend tests passed (new checkin flags test); browser smoke of the lab template and bulk dismiss on the dev server, no page errors.
 One phone, one student (2026-10-28): lint and 368 backend tests passed (new tier3 demo-run test). Android app 1.5 builds and its unit tests pass.
 Presence checks are a location confirmation, not a rescan (2026-10-28): lint and 367 backend tests passed (new checkin test); session-workflow browser suite 37/37.
 
@@ -24,7 +25,7 @@ Latest local run (2026-10-22): `npm run check` passed 323 backend tests and `npm
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (35), checkin (22), contracts (3), crypt (11), dev-world (3), device-approval-audit (4), device-retry (9), foundation (16), hod (4), identity-audit (7), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), proxy (1), reports (16), readiness (5), recovery (8), roll (4), scanning (15), session-workflow (2), tier3 (8), work-selection (19), workflow-audit (29) | `npm test` | **368 pass, 0 fail** |
+| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (35), checkin (23), contracts (3), crypt (11), dev-world (3), device-approval-audit (4), device-retry (9), foundation (16), hod (4), identity-audit (7), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), proxy (1), reports (16), readiness (5), recovery (8), roll (4), scanning (15), session-workflow (2), tier3 (8), work-selection (19), workflow-audit (29) | `npm test` | **369 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **85 pass, 0 fail** |
 | Focused identity E2E (Playwright, Brave/Chromium) | `npm run e2e:identity` with `CHROMIUM_PATH` | **17 pass, 0 fail** |

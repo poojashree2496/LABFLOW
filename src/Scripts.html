@@ -810,10 +810,19 @@ LF.ui.flagsView = () => {
         { key: 'label', label: 'Flag' }, { label: 'Student', text: (x) => (x.rollNo || '') + ' ' + (x.name || ''), render: (x) => x.rollNo ? h('span', null, h('strong', null, x.rollNo), ' ' + (x.name || '')) : '-' },
         { label: 'Session', text: (x) => x.sessionTitle || '', render: (x) => (x.sessionTitle || '-') + (x.labCode ? ' · ' + x.labCode : '') }, { label: 'Detail', sort: false, render: (x) => h('span', { class: 'hint' }, detailText(x)) },
         { key: 'status', label: 'Status', render: (x) => x.status === 'open' ? badge('open', 'warn') : h('span', { title: x.note || '' }, badge(x.status, x.status === 'resolved' ? 'good' : '')) },
-        { label: '', sort: false, render: (x) => x.status === 'open' ? h('span', { class: 'toolbar' }, ['resolved', 'dismissed'].map((o) => button(o === 'resolved' ? 'Resolve' : 'Dismiss', { size: 'sm', kind: o === 'resolved' ? 'primary' : '', onClick: () => ui.formModal({ title: (o === 'resolved' ? 'Resolve: ' : 'Dismiss: ') + x.label, intro: x.rollNo ? x.rollNo + ' ' + (x.name || '') : '', fields: [{ name: 'note', label: 'What you found', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: o === 'resolved' ? 'Resolve' : 'Dismiss', onSubmit: async (v) => { await api('flags.resolve', { flagId: x.flagId, outcome: o, note: v.note }); toast('Saved', 'good'); load(); } }) }))) : null }] }).el;
+        { label: '', sort: false, render: (x) => x.status === 'open' ? h('span', { class: 'toolbar' }, ['resolved', 'dismissed'].map((o) => button(o === 'resolved' ? 'Resolve' : 'Dismiss', { size: 'sm', kind: o === 'resolved' ? 'primary' : '', onClick: async () => { await api('flags.resolve', { flagId: x.flagId, outcome: o }); toast(o === 'resolved' ? 'Resolved' : 'Dismissed', 'good'); load(); } })),
+          button('Note', { size: 'sm', title: 'Resolve with a note', onClick: () => ui.formModal({ title: 'Resolve: ' + x.label, intro: x.rollNo ? x.rollNo + ' ' + (x.name || '') : '', fields: [{ name: 'note', label: 'What you found', type: 'textarea', rows: 2, maxlength: 300 }], submitLabel: 'Resolve', onSubmit: async (v) => { await api('flags.resolve', { flagId: x.flagId, outcome: 'resolved', note: v.note }); toast('Saved', 'good'); load(); } }) })) : null }] }).el;
   });
+  // Clearing a busy session: dismiss every open low flag, or every open flag, in one go.
+  const bulk = (label, pick) => button(label, { size: 'sm', onClick: async () => {
+    const r = await api('flags.list', { status: 'open' }), ids = r.flags.filter(pick).map((f) => f.flagId);
+    if (!ids.length) return toast('Nothing to dismiss', '');
+    if (!await LF.confirm({ title: label + '?', message: ids.length + ' open flag' + (ids.length === 1 ? '' : 's') + ' will be marked dismissed.', confirmLabel: 'Dismiss ' + ids.length })) return;
+    const d = await api('flags.resolve', { flagIds: ids, outcome: 'dismissed' }); toast('Dismissed ' + d.done, 'good'); load();
+  } });
   status.addEventListener('change', load); load();
-  return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'A flag never changes attendance. It marks something a person should look at; resolve it with a note.'), h('div', { class: 'toolbar' }, status), out);
+  return h('div', { style: { display: 'grid', gap: '12px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'A flag never changes attendance. It marks something a person should look at. Highest severity first; a location flag near the lab is low, far away is high.'),
+    h('div', { class: 'toolbar' }, status, bulk('Dismiss all low', (f) => f.severity === 'low'), bulk('Dismiss all open', () => true)), out);
 };
 
 /* ------------------------------------------------------------------ generic reports view (all roles) */

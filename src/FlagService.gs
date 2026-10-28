@@ -40,12 +40,12 @@ var Flags = {
   raise: function (type, o) {
     var meta = Flags.TYPES[type];
     if (!meta) throw new Error('Unknown flag type ' + type);
-    var rec;
+    var rec, severity = Flags._severity(type, o.detail) || meta.severity;
     try {
-      rec = Db.insert('Flags', { flagId: U.id('flag'), type: type, severity: meta.severity, studentId: o.studentId || '', sessionId: o.sessionId || '', labId: o.labId || '', detail: o.detail || null,
+      rec = Db.insert('Flags', { flagId: U.id('flag'), type: type, severity: severity, studentId: o.studentId || '', sessionId: o.sessionId || '', labId: o.labId || '', detail: o.detail || null,
         status: 'open', createdAt: U.now(), dedupeKey: o.dedupeKey || '' });
     } catch (e) { if (e && e.code === 'DUPLICATE') return null; throw e; }
-    if (meta.severity !== 'low') {
+    if (severity !== 'low') {
       var st = o.studentId ? (Db.cachedGet('StudentProfiles', 'studentId', o.studentId, 300) || {}) : {}, who = st.name ? st.name + ' (' + st.rollNo + ')' : 'A student';
       var s = o.sessionId ? Db.get('Sessions', o.sessionId) : null, f = s && s.facultyId ? Db.get('FacultyProfiles', s.facultyId) : null;
       var body = who + ': ' + meta.label + (s ? ' in ' + s.title : '') + '. Review it under Flags.';
@@ -54,6 +54,14 @@ var Flags = {
     }
     return rec;
   },
+
+  /** A location flag is as serious as the distance: the next room is low (GPS drift indoors), across campus is high. */
+  _severity: function (type, detail) {
+    var d = detail && detail.distanceM;
+    if ((type !== 'outside_geofence' && type !== 'away_from_lab') || typeof d !== 'number') return '';
+    return d >= Settings.get('geoFlagHighM') ? 'high' : d >= Settings.get('geoFlagMediumM') ? 'medium' : 'low';
+  },
+  SEVERITY_RANK: { high: 0, medium: 1, low: 2 },
 
   // ---- detectors ------------------------------------------------------------------------------------------
   afterScan: function (c) {
@@ -141,24 +149,31 @@ var Flags = {
     var sessions = U.indexBy(Db.readAll('Sessions'), 'sessionId'), profiles = U.indexBy(Db.readAll('StudentProfiles'), 'studentId'), labs = U.indexBy(Db.readAll('Labs'), 'labId');
     var rows = Db.readAll('Flags').filter(function (f) {
       return (status === 'all' || f.status === status) && (!p.sessionId || f.sessionId === p.sessionId) && (!p.studentId || f.studentId === p.studentId) && Flags._visible(ctx, f, sessions);
-    }).reverse().slice(0, 300);
+    }).reverse().sort(function (a, b) { return (Flags.SEVERITY_RANK[a.severity] || 0) - (Flags.SEVERITY_RANK[b.severity] || 0) || b.createdAt - a.createdAt; }).slice(0, 300);
     return { flags: rows.map(function (f) {
       var st = profiles[f.studentId] || {}, s = sessions[f.sessionId] || {}, meta = Flags.TYPES[f.type] || {};
       return { flagId: f.flagId, type: f.type, label: meta.label || f.type, severity: f.severity, studentId: f.studentId, name: st.name, rollNo: st.rollNo, sessionId: f.sessionId, sessionTitle: s.title,
                labCode: (labs[f.labId] || {}).code, detail: f.detail, status: f.status, createdAt: f.createdAt, resolvedBy: f.resolvedBy, resolvedAt: f.resolvedAt, note: f.note };
     }), types: Flags.TYPES };
   },
+  /** One flag (flagId) or many at once (flagIds, for clearing a busy session). The note is optional. In a batch,
+   *  flags already reviewed or not visible to the caller are skipped and counted. */
   resolve: function (ctx, p) {
     V.obj(p);
-    var outcome = V.enumOf(p.outcome, 'Outcome', ['resolved', 'dismissed']), note = V.str(p.note, 'Note', { min: 3, max: 300 });
+    var outcome = V.enumOf(p.outcome, 'Outcome', ['resolved', 'dismissed']), note = V.str(p.note, 'Note', { optional: true, max: 300, def: '' });
+    var many = Array.isArray(p.flagIds), ids = many ? V.arr(p.flagIds, 'Flags', 300).map(function (id) { return V.id(id, 'Flag', 'flag'); }) : [V.id(p.flagId, 'Flag', 'flag')];
     return Locks.with(function () {
-      var f = Db.mustGet('Flags', V.id(p.flagId, 'Flag', 'flag'), 'Flag');
-      var sessions = {}; if (f.sessionId) sessions[f.sessionId] = Db.get('Sessions', f.sessionId);
-      if (!Flags._visible(ctx, f, sessions)) fail('FORBIDDEN', 'You cannot review this flag.');
-      if (f.status !== 'open') fail('INVALID_STATE', 'This flag was already reviewed.');
-      Db.update('Flags', f.flagId, { status: outcome, resolvedBy: ctx.email, resolvedAt: U.now(), note: note });
-      Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'flag.' + outcome, entityType: 'Flag', entityId: f.flagId, detail: { type: f.type, studentId: f.studentId, note: note } });
-      return { ok: true };
+      var done = 0, skipped = 0, sessions = {};
+      ids.forEach(function (id) {
+        var f = Db.mustGet('Flags', id, 'Flag');
+        if (f.sessionId && !(f.sessionId in sessions)) sessions[f.sessionId] = Db.get('Sessions', f.sessionId);
+        var bad = !Flags._visible(ctx, f, sessions) ? ['FORBIDDEN', 'You cannot review this flag.'] : f.status !== 'open' ? ['INVALID_STATE', 'This flag was already reviewed.'] : null;
+        if (bad) { if (!many) fail(bad[0], bad[1]); skipped++; return; }
+        Db.update('Flags', f.flagId, { status: outcome, resolvedBy: ctx.email, resolvedAt: U.now(), note: note });
+        Audit.log({ actor: ctx.email, role: ctx.roles[0], action: 'flag.' + outcome, entityType: 'Flag', entityId: f.flagId, detail: { type: f.type, studentId: f.studentId, note: note, bulk: many } });
+        done++;
+      });
+      return { ok: true, done: done, skipped: skipped };
     });
   }
 };
