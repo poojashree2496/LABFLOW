@@ -472,3 +472,34 @@ test('the faculty picks the check-in mode when opening; the other mode is refuse
   const w3 = world({ students: 1, mode: 'A' }); w3.sid = w3.session().sessionId;
   assert.equal(w3.err(w3.faculty, 'sessions.open', { sessionId: w3.sid, checkinMode: 'B' }).code, 'MODE_DISABLED', 'a lab without device QR cannot be switched to it');
 });
+
+test('the faculty can switch the check-in mode of an open session and show the lab QR from their own screen', async () => {
+  const w = world({ students: 2, mode: 'AB' }); const [a, b] = w.students; await w.registerDevice(b);
+  w.sid = w.session().sessionId;
+  w.ok(w.faculty, 'sessions.open', { sessionId: w.sid, checkinMode: 'B' });
+  assert.equal(w.err(w.faculty, 'sessions.checkinQr', { sessionId: w.sid }).code, 'MODE_DISABLED', 'no lab QR in a device-QR session');
+  assert.equal(w.ok(w.faculty, 'sessions.setMode', { sessionId: w.sid, checkinMode: 'A' }).session.labMode, 'A');
+  const d = w.ok(w.faculty, 'sessions.checkinQr', { sessionId: w.sid });
+  assert.equal(w.checkin(a, { code: d.code }).ok, true, 'the code from the faculty screen checks a student in');
+  assert.equal(w.err(b.email, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: w.devices[b.studentId].credentialId }).code, 'MODE_DISABLED', 'device QR is off now');
+  assert.equal(w.err(w.faculty2, 'sessions.setMode', { sessionId: w.sid, checkinMode: 'B' }).code, 'FORBIDDEN');
+  assert.equal(w.err(w.faculty2, 'sessions.checkinQr', { sessionId: w.sid }).code, 'FORBIDDEN');
+  assert.equal(w.err(a.email, 'sessions.setMode', { sessionId: w.sid, checkinMode: 'B' }).code, 'FORBIDDEN');
+
+  const w2 = world({ students: 1, mode: 'A' }); w2.sid = w2.session().sessionId; w2.ok(w2.faculty, 'sessions.open', { sessionId: w2.sid });
+  assert.equal(w2.err(w2.faculty, 'sessions.setMode', { sessionId: w2.sid, checkinMode: 'B' }).code, 'MODE_DISABLED', 'only modes the lab allows');
+});
+
+test('a faculty member adds students to the course they teach, creating new ones in the same step', () => {
+  const w = world({ students: 1 }); const [s] = w.students;
+  assert.equal(w.ok(w.faculty, 'courses.list').courses.find((c) => c.courseId === w.course.courseId).mine, true);
+  const r = w.ok(w.faculty, 'roster.import', { courseId: w.course.courseId, rows: [s.rollNo, { rollNo: 'URK99CS9001', name: 'New Student', email: 'new9001@karunya.edu' }, { rollNo: 'URK99CS9002' }] });
+  assert.equal(r.newStudents, 1); assert.equal(r.already, 1); assert.equal(r.added, 1);
+  assert.equal(r.errors.length, 1, 'an unknown roll number without a name is reported');
+  const row = w.ok(w.faculty, 'roster.list', { courseId: w.course.courseId }).roster.find((x) => x.rollNo === 'URK99CS9001');
+  assert.equal(row.name, 'New Student');
+  assert.equal(w.err(w.faculty2, 'roster.import', { courseId: w.course.courseId, rows: ['URK99CS9001'] }).code, 'FORBIDDEN', 'not their course');
+  assert.equal(w.err(w.faculty2, 'roster.remove', { rosterId: row.rosterId }).code, 'FORBIDDEN');
+  w.ok(w.faculty, 'roster.remove', { rosterId: row.rosterId });
+  assert.equal(w.err(s.email, 'roster.import', { courseId: w.course.courseId, rows: ['URK99CS9001'] }).code, 'FORBIDDEN');
+});

@@ -233,6 +233,39 @@ var Sessions = {
     });
   },
 
+  /** Change how students check in while the session is open (A, B, AB or C, within what the lab allows).
+   *  Check-ins already recorded stay as they are. */
+  setMode: function (ctx, p) {
+    V.obj(p);
+    return Locks.with(function () {
+      var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
+      if (!Auth.canOperate(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+      if (s.status !== 'open') fail('INVALID_STATE', 'Only an open session can change its check-in mode.');
+      var cm = V.enumOf(p.checkinMode, 'Check-in mode', Cfg.SESSION_MODES), labMode = Labs.modeOf(Db.get('Labs', s.labId));
+      if (!Sessions._within(cm === 'C' ? 'A' : cm, labMode)) fail('MODE_DISABLED', 'This lab is set up for ' + labMode + ' only. Ask an admin to change the check-in mode of the lab.');
+      var next = Db.update('Sessions', s.sessionId, { checkinMode: cm });
+      Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: 'session.mode', entityType: 'Session', entityId: s.sessionId, detail: { from: s.checkinMode || '', to: cm } });
+      Occupancy.invalidate(s.labId);
+      return { session: Sessions.pub(next, Sessions._ref()) };
+    });
+  },
+
+  /** The lab's rotating kiosk code for an open session, so the faculty can show it from their own screen
+   *  (projector or laptop) when no kiosk screen is up. Same code and checks as the kiosk display. */
+  checkinQr: function (ctx, p) {
+    V.obj(p);
+    var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
+    if (!Auth.canOperate(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+    if (s.status !== 'open') fail('INVALID_STATE', 'Open the session first.');
+    var lab = Db.get('Labs', s.labId);
+    if (!Sessions.allows(s, lab, 'A')) fail('MODE_DISABLED', 'This session uses device QR only. Change the check-in mode to show the lab QR.');
+    // ponytail: borrows the lab's first active kiosk id for the code; a lab with no kiosk record cannot show one.
+    var k = Db.where('Kiosks', function (x) { return x.labId === s.labId && x.status === 'active'; })[0];
+    if (!k) fail('NOT_FOUND', 'This lab has no active kiosk. Ask an admin to add one under Kiosks.');
+    var now = U.now(), interval = Checkin._interval(), step = Checkin._step(now), code = Checkin._code(k.kioskId, step);
+    return { code: code, url: Checkin.linkFor(code), interval: interval, nextAt: (step + 1) * interval * 1000, serverNow: now };
+  },
+
   /** Random time between minFraction and maxFraction of the remaining session; null if the session is too short. */
   /** Check-in mode in force for a session: the one its faculty chose at opening (A kiosk QR + GPS, B device QR, AB both,
    *  C the phone app), else the lab's. A choice the lab no longer supports falls back to the lab's mode. */

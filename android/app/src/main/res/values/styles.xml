@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The website's colours (styles/input.css): Karunya blue, gold, cool paper background. Dialogs pick up the accent. -->
+<resources>
+    <style name="LabflowTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#143d8f</item>
+        <item name="android:colorPrimaryDark">#0b2a66</item>
+        <item name="android:colorAccent">#143d8f</item>
+        <item name="android:statusBarColor">#0b2a66</item>
+        <item name="android:navigationBarColor">#f3f6fb</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

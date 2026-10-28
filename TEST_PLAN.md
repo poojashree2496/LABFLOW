@@ -1,5 +1,7 @@
 # LABFLOW test plan and results
 
+Mid-session mode switch, faculty check-in QR and faculty course rosters (2026-10-28): lint and 364 backend tests passed (two new attendance tests).
+
 Attended-or-not and proxy attempts (2026-10-28): lint and 362 backend tests passed (new `proxy.test.js`: seven tier-3 proxy tricks, each caught, the honest student attended; attendance, inventory and presence tests updated for the 75 % rule); `npm run sim` 27/27. The demo page build checks the proxy runs too.
 
 Merge of `main` into the tier-3 branch (2026-10-27): lint and 361 backend tests passed (355 from `main` plus 6 tier-3 tests); `npm run sim` passed 27/27. Replacement approval keeps the fresh authorization lookup and retry handling from `main` and still lets faculty approve phone-app switches. Browser suites on the merged tree: general 85/85, tier 3 all passed, session workflow 36/36, identity 17/17.
@@ -21,7 +23,7 @@ Latest local run (2026-10-22): `npm run check` passed 323 backend tests and `npm
 | Suite | Command | Result |
 |---|---|---|
 | Syntax lint of every `.gs` (as plain V8 scripts) and every inline `<script>` in `.html` | `npm run lint` | all files ok |
-| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (33), checkin (21), contracts (3), crypt (11), dev-world (3), device-approval-audit (4), device-retry (9), foundation (16), hod (4), identity-audit (7), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), proxy (1), reports (16), readiness (5), recovery (8), roll (4), scanning (14), session-workflow (2), tier3 (6), work-selection (19), workflow-audit (29) | `npm test` | **362 pass, 0 fail** |
+| Backend and Test Lab seed: access (19), api (9), archive (8), attendance (35), checkin (21), contracts (3), crypt (11), dev-world (3), device-approval-audit (4), device-retry (9), foundation (16), hod (4), identity-audit (7), inventory (23), jobs (40), onboarding (3), openlab (16), platform (14), presence (1), projects (14), proxy (1), reports (16), readiness (5), recovery (8), roll (4), scanning (14), session-workflow (2), tier3 (6), work-selection (19), workflow-audit (29) | `npm test` | **364 pass, 0 fail** |
 | Scripted local scenarios | `npm run sim` | **27 of 27 pass** |
 | Browser E2E (Playwright, Brave/Chromium) | `npm run e2e` with `CHROMIUM_PATH` | **85 pass, 0 fail** |
 | Focused identity E2E (Playwright, Brave/Chromium) | `npm run e2e:identity` with `CHROMIUM_PATH` | **17 pass, 0 fail** |

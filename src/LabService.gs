@@ -198,7 +198,10 @@ var Kiosks = {
 
 var Courses = {
   _pub: function (c) { return { courseId: c.courseId, code: c.code, name: c.name, department: c.department, semester: c.semester, status: c.status }; },
-  list: function (ctx) { var allowed = Auth.courseFilter(ctx); return { courses: Db.readAll('Courses').filter(function(c){return allowed(c.courseId);}).map(Courses._pub) }; },
+  list: function (ctx) {
+    var allowed = Auth.courseFilter(ctx);
+    return { courses: Db.readAll('Courses').filter(function(c){return allowed(c.courseId);}).map(function (c) { return Object.assign(Courses._pub(c), { mine: Roster._teaches(ctx, c.courseId) }); }) };
+  },
   upsert: function (ctx, p) {
     V.obj(p);
     var rec = { code: V.str(p.code, 'Course code', { max: 20, re: /^[A-Za-z0-9_-]+$/ }).toUpperCase(), name: V.str(p.name, 'Name', { max: 100 }),
@@ -230,11 +233,26 @@ var Roster = {
   _bump: function () { PropertiesService.getScriptProperties().setProperty('ROSTER_VER', U.now() + '-' + Utilities.getUuid().slice(0, 8)); },
   _ver: function () { return PropertiesService.getScriptProperties().getProperty('ROSTER_VER') || '0'; },
 
+  /** Does this faculty member teach the course (an active FacultyCourses mapping)? */
+  _teaches: function (ctx, courseId) {
+    return !!ctx.faculty && Db.where('FacultyCourses', function (m) { return m.facultyId === ctx.faculty.facultyId && m.courseId === courseId && m.status === 'active'; }).length > 0;
+  },
+  /** Staff and admins manage every course roster; faculty only the courses they teach. */
+  _assertCourse: function (ctx, courseId) {
+    if (!ctx.has('staff') && !ctx.has('admin') && !Roster._teaches(ctx, courseId)) fail('FORBIDDEN', 'This is not your course.');
+  },
+
+  /** Rows: a roll number, or { rollNo, name, email? }. A roll number not in the student list is added to it when the
+   *  row has a name (created only, never changing an existing profile), so faculty can enrol in one step. */
   import: function (ctx, p) {
     V.obj(p);
     var course = Db.mustGet('Courses', V.id(p.courseId, 'Course', 'course'), 'Course');
+    Roster._assertCourse(ctx, course.courseId);
     var rows = V.arr(p.rows, 'Rows', 500);
     var profiles = U.indexBy(Db.readAll('StudentProfiles'), 'rollNo');
+    var fresh = rows.filter(function (r) { return r && typeof r === 'object' && r.name && r.rollNo && !profiles[String(r.rollNo).trim().toUpperCase()]; });
+    var created = fresh.length ? Users.importStudents(ctx, { rows: fresh.map(function (r) { return { rollNo: r.rollNo, name: r.name, email: r.email, section: r.section }; }) }) : null;
+    if (created && created.created) profiles = U.indexBy(Db.readAll('StudentProfiles'), 'rollNo');
     var current = {};
     Db.where('Rosters', function (r) { return r.scopeType === 'course' && r.scopeId === course.courseId; }).forEach(function (r) { current[r.studentId] = r; });
     var create = [], reactivate = [], errors = [], already = 0, seen = {};
@@ -243,7 +261,8 @@ var Roster = {
         var roll = V.rollNo(typeof r === 'string' ? r : r.rollNo);
         if (seen[roll]) return; seen[roll] = true;
         var prof = profiles[roll];
-        if (!prof) fail('NOT_FOUND', 'Roll number ' + roll + ' is not in the student list. Import students first.');
+        if (!prof && created && fresh.some(function (f) { return String(f.rollNo).trim().toUpperCase() === roll; })) return; // reported by the student import below
+        if (!prof) fail('NOT_FOUND', 'Roll number ' + roll + ' is not in the student list. Add a name to create it.');
         if (prof.status === 'disabled') fail('BAD_INPUT', roll + ' is disabled.');
         var ex = current[prof.studentId];
         if (ex && ex.status === 'active') { already++; return; }
@@ -256,7 +275,8 @@ var Roster = {
       Roster._bump();
       Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'roster.import', entityType: 'Course', entityId: course.courseId, detail: { added: create.length + reactivate.length, already: already, errors: errors.length } });
     });
-    return { added: create.length + reactivate.length, already: already, errors: errors };
+    if (created) created.errors.forEach(function (e) { errors.push({ row: rows.indexOf(fresh[e.row - 1]) + 1, message: e.message }); });
+    return { added: create.length + reactivate.length, already: already, newStudents: created ? created.created : 0, errors: errors };
   },
 
   /** Add participants to ONE session (event or research visit). Faculty owner or admin. */
@@ -286,6 +306,8 @@ var Roster = {
   remove: function (ctx, p) {
     V.obj(p);
     var r = Db.mustGet('Rosters', V.id(p.rosterId, 'Roster entry', 'roster'), 'Roster entry');
+    if (r.scopeType === 'course') Roster._assertCourse(ctx, r.scopeId);
+    else if (!ctx.has('staff') && !ctx.has('admin') && !Auth.ownsSession(ctx, Db.mustGet('Sessions', r.scopeId, 'Session'))) fail('FORBIDDEN', 'This is not your session.');
     Db.update('Rosters', r.rosterId, { status: 'removed' });
     Roster._bump();
     Audit.log({ actor: ctx.email, role: Auth.actorRole(ctx), action: 'roster.remove', entityType: 'Roster', entityId: r.rosterId, detail: { scope: r.scopeType + ':' + r.scopeId, studentId: r.studentId } });

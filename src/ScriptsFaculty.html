@@ -33,6 +33,8 @@ LF.sessionCard = function (s, reload) {
   if (s.status === 'scheduled') actions.push(ui.button('Open session', { kind: 'primary', icon: 'check', onClick: () => openFlow(s, reload) }), ui.button('Cancel', { size: 'sm', onClick: () => cancelFlow(s, reload) }));
   if (s.status === 'open') actions.push(ui.button('Live roster', { kind: 'primary', icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }),
     String(s.labMode || '').indexOf('B') >= 0 ? ui.button('Scan students', { icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }) : null,
+    String(s.labMode || '').indexOf('A') >= 0 ? ui.button('Show check-in QR', { icon: 'qr', onClick: () => showLabQr(s) }) : null,
+    ui.button('Check-in mode', { size: 'sm', onClick: () => modeFlow(s, reload) }),
     ui.button('Close session', { icon: 'x', onClick: () => closeFlow(s, reload) }));
   if (s.status === 'closed') actions.push(ui.button('View roster', { icon: 'users', onClick: () => { LF.sel.sessionId = s.sessionId; LF.go('live'); } }));
   return h('article', { class: 'card', 'aria-label': s.title },
@@ -43,9 +45,43 @@ LF.sessionCard = function (s, reload) {
     s.notes ? h('div', { class: 'hint', style: { marginTop: '6px' } }, s.notes) : null,
     actions.length ? h('div', { class: 'toolbar', style: { marginTop: '12px' } }, actions) : null);
 };
-function openFlow(s, reload, override) {
-  const labMode = (s.labMode || 'A').replace('C', ''), modes = [{ value: 'A', label: 'Tier 1: kiosk QR + GPS, random location checks (recommended)' }, { value: 'B', label: 'Tier 2: device QR, scanned in the room' }, { value: 'AB', label: 'Tiers 1 and 2' }, { value: 'C', label: 'Tier 3: phone app, location for the whole session + fingerprint checks' }]
+/* Modes a session can use, given its lab's modes (C, the phone app, needs the kiosk QR, A). */
+function modeOptions(labMode) {
+  return [{ value: 'A', label: 'Tier 1: kiosk QR + GPS, random location checks (recommended)' }, { value: 'B', label: 'Tier 2: device QR, scanned in the room' }, { value: 'AB', label: 'Tiers 1 and 2' }, { value: 'C', label: 'Tier 3: phone app, location for the whole session + fingerprint checks' }]
     .filter((x) => (x.value === 'C' ? 'A' : x.value).split('').every((c) => labMode.includes(c)));
+}
+/* Change the check-in mode of an open session. The lab's modes are not sent to the client, so offer them all
+   and let the server refuse one the lab does not allow. */
+function modeFlow(s, reload) {
+  const cur = s.labMode && s.labMode.charAt(0) === 'C' ? 'C' : s.labMode;
+  const f = ui.field({ name: 'checkinMode', label: 'How students check in from now on', type: 'select', value: cur, options: modeOptions('AB'), hint: 'Check-ins already recorded stay as they are.' });
+  const msg = h('div', { class: 'err', role: 'alert', hidden: true });
+  const m = LF.modal('Check-in mode: ' + s.title, h('div', { style: { display: 'grid', gap: '12px' } }, f.el, msg, h('div', { class: 'toolbar', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'),
+    ui.button('Change', { kind: 'primary', onClick: async () => {
+      try { await api('sessions.setMode', { sessionId: s.sessionId, checkinMode: f.get() }); m.close(); LF.toast('Check-in mode changed', 'good'); reload(); }
+      catch (e) { msg.textContent = LF.errMsg(e); msg.hidden = false; }
+    } }))));
+}
+/* The lab's rotating check-in QR on the faculty's own screen (projector or laptop), like the kiosk shows it. */
+function showLabQr(s) {
+  let timer = null, stopped = false;
+  const qrBox = h('div', { class: 'qr-frame' }), bar = h('div', { class: 'progress gold', style: { width: 'min(76vw, 340px)' } }, h('i', { style: { width: '100%' } })), msg = h('div', { class: 'hint', role: 'status' });
+  LF.modal('Scan to check in: ' + s.title, h('div', { style: { display: 'grid', gap: '12px', justifyItems: 'center', textAlign: 'center' } },
+    h('p', { class: 'hint', style: { margin: 0 } }, 'Students scan this with the phone camera. It changes every few seconds, so a photo shared outside the room stops working.'), qrBox, bar, msg),
+    { sticky: true, onClose: () => { stopped = true; clearTimeout(timer); } });
+  (async function tick() {
+    if (stopped) return;
+    try {
+      const d = await api('sessions.checkinQr', { sessionId: s.sessionId });
+      clear(qrBox).appendChild(LF.util.qrSvg(d.url)); msg.textContent = '';
+      const ms = Math.max(1000, d.nextAt - LF.now()), bi = bar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
+      requestAnimationFrame(() => { bi.style.transition = 'width ' + ms + 'ms linear'; bi.style.width = '0%'; });
+      timer = setTimeout(tick, ms + 150);
+    } catch (e) { msg.textContent = LF.errMsg(e); msg.className = 'err'; timer = setTimeout(tick, 5000); }
+  })();
+}
+function openFlow(s, reload, override) {
+  const labMode = (s.labMode || 'A').replace('C', ''), modes = modeOptions(labMode);
   const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence rescan at any time from the Live roster. Tier 3 still accepts students without the app (iPhones), flagged for you to review.' }) : null;
   const isAdmin = LF.me.roles.includes('admin');
   const ov = isAdmin ? ui.field({ name: 'override', label: 'Admin override (outside the time window or lab busy)', type: 'checkbox', value: !!override }) : null;
@@ -145,6 +181,8 @@ function liveRoster(root) {
     if (r.guests) banner.append(h('div', { class: 'hint' }, r.guests + ' guest(s) added by the event lead.'));
     clear(actionsEl);
     if (open && String(s.labMode || '').indexOf('B') >= 0) actionsEl.append(ui.button('Scan students', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan students: ' + s.title) }));
+    if (open && String(s.labMode || '').indexOf('A') >= 0) actionsEl.append(ui.button('Show check-in QR', { kind: 'primary', icon: 'qr', onClick: () => showLabQr(s) }));
+    if (open) actionsEl.append(ui.button('Check-in mode', { icon: 'settings', onClick: () => modeFlow(s, refresh) }));
     if (open && r.appSession) actionsEl.append(ui.button('Fingerprint check now', { kind: 'primary', icon: 'check', onClick: async () => { const out = await api('presence.bioNow', { sessionId: s.sessionId }); LF.toast('Fingerprint check sent. Phones receive it within ' + Math.round(out.reachWithinSeconds / 60) + ' min; students then have 2 min.', 'good'); refresh(); } }));
     if (r.appSession) banner.append(h('div', { class: 'card flat' }, h('strong', null, 'Phone app session (tier 3). '), 'Phones report their location every few minutes and ask for a fingerprint at random times. Present needs most of the session at the lab, every fingerprint check passed and no open flag. Students without the app are flagged, not refused.'));
     if (open) actionsEl.append(ui.button('Request rescan now', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); refresh(); } }),
@@ -288,6 +326,7 @@ LF.register({ role: 'faculty', id: 'students', label: 'Students', icon: 'inbox',
       return ui.table({ caption: 'Students', searchPlaceholder: 'Search roll no. or name', rows: r.students, pageSize: 30, empty: ui.empty('No students yet', 'Students appear once an administrator maps you to a course roster.'),
         columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Batch' }, { key: 'year', label: 'Year' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status }] }).el;
     }); } },
+    { id: 'roster', label: 'Course roster', render: (p) => { p.appendChild(LF.rosterView()); } },
     { id: 'reps', label: 'Class representatives', render: (p) => { p.appendChild(LF.classRepsView()); } }]));
 } });
 

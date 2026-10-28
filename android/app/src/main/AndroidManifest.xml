@@ -16,7 +16,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="LABFLOW"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/LabflowTheme"
         android:usesCleartextTraffic="true">
 
         <activity

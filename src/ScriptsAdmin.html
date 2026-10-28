@@ -33,16 +33,27 @@ LF.studentStatusButton = (x, reload) => x.status === 'disabled'
 function rosterView() {
   const box = h('div', { style: { display: 'grid', gap: '16px' } });
   ui.loadInto(box, async () => {
-    const c = await api('courses.list'); if (!c.courses.length) return ui.empty('Add a course first');
-    const sel = ui.field({ name: 'course', label: 'Course', type: 'select', options: opt(c.courses, 'courseId', (x) => x.code + ' ' + x.name) }), list = h('div');
-    const imp = csvButton('Roll numbers CSV', 'Adds students to the selected course. Students must already be in the student list.', 'rollNo', async (rows) => { const r = await api('roster.import', { courseId: sel.get(), rows: rows.map((x) => ({ rollNo: x.rollNo || x.rollno || Object.values(x)[0] })) }); load(); return { summary: r.added + ' added, ' + r.already + ' already enrolled.', errors: r.errors }; });
+    const all = LF.me.roles.includes('staff') || LF.me.roles.includes('admin'), courses = (await api('courses.list')).courses.filter((x) => all || x.mine);
+    if (!courses.length) return ui.empty(all ? 'Add a course first' : 'No courses assigned to you', all ? '' : 'Ask an admin to assign you to your course.');
+    const sel = ui.field({ name: 'course', label: 'Course', type: 'select', options: opt(courses, 'courseId', (x) => x.code + ' ' + x.name) }), list = h('div');
+    const summary = (r) => r.added + ' added' + (r.newStudents ? ' (' + r.newStudents + ' new to the student list)' : '') + ', ' + r.already + ' already enrolled.';
+    const imp = csvButton('Roll numbers CSV', 'Adds students to the selected course. A student not in the student list yet is added to it when the row has a name.', 'rollNo, name, email (optional)', async (rows) => { const r = await api('roster.import', { courseId: sel.get(), rows: rows.map((x) => ({ rollNo: x.rollNo || x.rollno || Object.values(x)[0], name: x.name, email: x.email })) }); load(); return { summary: summary(r), errors: r.errors }; });
+    /* Quick add: one student per line, "roll number" or "roll number, name, email". */
+    const paste = ui.field({ name: 'add', label: 'Add students', type: 'textarea', rows: 4, hint: 'One per line: roll number, or roll number, name, email for a student who has not been added to LABFLOW yet.' }), pasteOut = h('div', { role: 'status' });
+    const add = ui.button('Add to course', { kind: 'primary', icon: 'plus', onClick: async () => {
+      const rows = paste.get().split(/\n/).map((l) => l.split(/[,\t;]/).map((x) => x.trim())).filter((x) => x[0]).map(([rollNo, name, email]) => ({ rollNo, name, email }));
+      if (!rows.length) throw new LF.ApiError('BAD_INPUT', 'Type at least one roll number.');
+      const r = await api('roster.import', { courseId: sel.get(), rows }); load();
+      clear(pasteOut).append(h('div', { class: r.errors.length ? 'card warn' : 'card good' }, summary(r), r.errors.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: '18px' } }, r.errors.slice(0, 12).map((e) => h('li', null, 'Line ' + e.row + ': ' + e.message))) : null));
+      if (!r.errors.length) paste.input.value = '';
+    } });
     const load = () => ui.loadInto(list, async () => {
       const r = await api('roster.list', { courseId: sel.get() });
       return ui.table({ caption: 'Course roster', rows: r.roster, searchPlaceholder: 'Search roster', pageSize: 25, empty: ui.empty('Nobody enrolled', 'Import roll numbers below.'), columns: [{ key: 'rollNo', label: 'Roll no.' }, { key: 'name', label: 'Name' }, { key: 'section', label: 'Batch' }, { key: 'status', label: 'Profile', render: (x) => ui.status(x.status), text: (x) => x.status },
         { label: '', sort: false, render: (x) => ui.button('Remove', { size: 'sm', onClick: async () => { if (!await LF.confirm({ title: 'Remove from roster?', message: x.rollNo + ' ' + x.name + '. Past attendance is kept.', confirmLabel: 'Remove', danger: true })) return; await api('roster.remove', { rosterId: x.rosterId }); load(); } }) }] }).el;
     });
     sel.input.addEventListener('change', load); load();
-    return h('div', { style: { display: 'grid', gap: '16px' } }, sel.el, list, h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import roster from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
+    return h('div', { style: { display: 'grid', gap: '16px' } }, sel.el, h('div', { class: 'card', style: { display: 'grid', gap: '10px' } }, paste.el, h('div', null, add), pasteOut), list, h('details', { class: 'card' }, h('summary', { style: { cursor: 'pointer', fontWeight: 700 } }, 'Import roster from CSV'), h('div', { style: { marginTop: '10px' } }, imp.el)));
   });
   return box;
 }
