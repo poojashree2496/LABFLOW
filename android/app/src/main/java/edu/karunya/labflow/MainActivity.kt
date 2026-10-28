@@ -265,7 +265,7 @@ class MainActivity : Activity() {
         })
         box.addView(button("Scan a link code shown on a laptop") {
             GmsBarcodeScanning.getClient(this, GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()).startScan()
-                .addOnSuccessListener { b -> val u = Uri.parse(b.rawValue ?: ""); if (u.scheme == "labflow" && u.host == "pair") u.getQueryParameter("t")?.let { link(it) } else say("That is not a LABFLOW link code.") }
+                .addOnSuccessListener { b -> val u = Uri.parse(b.rawValue ?: ""); if (u.scheme == "labflow" && u.host == "pair") u.getQueryParameter("t")?.let { link(it) } else say(wrongCode(b.rawValue ?: "", "link") ?: "That is not a LABFLOW link code.") }
                 .addOnFailureListener { say("Could not scan: ${it.message}") }
         })
         box.addView(section("Setup"))
@@ -320,8 +320,19 @@ class MainActivity : Activity() {
     private fun scan(purpose: String) = needLocation {
         val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
         GmsBarcodeScanning.getClient(this, options).startScan()
-            .addOnSuccessListener { b -> submit(purpose, kioskCode(b.rawValue ?: "")) }
+            .addOnSuccessListener { b -> val raw = b.rawValue ?: ""; wrongCode(raw, "lab")?.let { say(it) } ?: submit(purpose, kioskCode(raw)) }
             .addOnFailureListener { say("Could not scan: ${it.message}") }
+    }
+    /** Three QR codes look alike: the lab screen's check-in code (?k=), a student's own QR (?s=) and the app link code
+     *  (labflow://pair). Null when [raw] is the kind wanted, else what to tell the student. */
+    private fun wrongCode(raw: String, want: String): String? {
+        val kind = when { raw.startsWith("labflow:", true) -> "link"; Regex("[?&]s=").containsMatchIn(raw) -> "student"; Regex("[?&]k=|^k1\\.").containsMatchIn(raw) -> "lab"; else -> "" }
+        if (kind == "" || kind == want) return null
+        return when (kind) {
+            "link" -> "That is the code for linking the app, and this phone is already linked. To check in, scan the code on the lab screen."
+            "student" -> "That is a student's own QR, for the teacher to scan. Scan the code on the lab screen."
+            else -> "That is the lab screen's attendance code. Link this phone first: tap \"Sign in to link this phone\"."
+        }
     }
     /** The lab screen shows a link ending in ?k=<code>; the code alone also works. */
     private fun kioskCode(raw: String): String = Regex("[?&]k=([^&#]+)").find(raw)?.groupValues?.get(1)?.let { URLDecoder.decode(it, "UTF-8") } ?: raw.trim()

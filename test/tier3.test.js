@@ -215,3 +215,14 @@ test('tier 3 signatures in Android Keystore form (high S) verify; tier 1 random 
   assert.ok(flagsOf(w, b).includes('away_from_lab'));
   assert.equal(w.ok(a.email, 'presence.webPing', { sessionId: w.students[0] ? w.sid : '' }).next !== undefined, true);
 });
+
+test('the site inside the app shows a device QR signed with the app key, and the faculty scanner accepts it', async () => {
+  const w = world({ students: 1, mode: 'AB' }); const [s] = w.students; w.sid = w.session().sessionId;
+  w.ok(w.faculty, 'sessions.open', { sessionId: w.sid, checkinMode: 'B' });
+  const app = await link(w, s);
+  const ch = post(w, 'attend.challenge', { sessionId: w.sid, purpose: 'in', credentialId: app.credentialId }, app.session);   // the site, with the app session
+  assert.ok(ch.ok, JSON.stringify(ch.error));
+  const qr = await w.sign(ch.data.token, { credentialId: app.credentialId, privateKey: app.dev.privateKey });
+  const r = w.phoneScan(w.faculty, qr);
+  assert.equal(r.ok, true, JSON.stringify(r.error));
+});

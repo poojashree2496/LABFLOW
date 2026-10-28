@@ -114,7 +114,8 @@ function openQr(session, purpose, onDone) {
   async function draw() {
     if (stopped || !issued) return;
     const ts = Math.round(LF.now()), t = issued.ch.token + '.' + ts;
-    const sig = LF.util.b64u(await crypto.subtle.sign(SIG, issued.key.privateKey, utf8(t)));
+    // Inside the LABFLOW app the app's device key signs; in a browser, the key kept in IndexedDB.
+    const sig = issued.key.app ? window.LabflowApp.sign(t) : LF.util.b64u(await crypto.subtle.sign(SIG, issued.key.privateKey, utf8(t)));
     const payload = issued.ch.token + '~' + ts + '~' + sig, link = (issued.ch.url || LF.me.webAppUrl || '') + (issued.ch.url && issued.ch.url.indexOf('?') >= 0 ? '&' : '?') + 's=' + payload;
     clear(qrBox).appendChild(LF.util.qrSvg(link));
     const rotate = (issued.ch.rotateSeconds || 3) * 1000, bi = bar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
@@ -271,7 +272,7 @@ LF.kioskCheckin = (code) => {
 /** In-app camera / paste for the kiosk code, when the phone camera app is not convenient. */
 function scanLabScreen() {
   let m;
-  const sc = ui.scanner({ title: 'Code on the lab screen', onCode: (code) => { m.close(); LF.kioskCheckin(code); } });
+  const sc = ui.scanner({ title: 'Code on the lab screen', onCode: (code) => { m.close(); if (LF.wrongCode(code, 'lab')) return; LF.kioskCheckin(code); } });
   m = LF.modal('Scan the lab screen', h('div', { style: { display: 'grid', gap: '10px' } }, h('p', { class: 'hint', style: { margin: 0 } }, 'Easiest: open your phone\'s camera app and point it at the QR on the lab screen, then tap the link. Or use the camera here.'), sc.el), { onClose: () => sc.stop() });
 }
 LF.scanLabScreen = scanLabScreen;
@@ -345,10 +346,14 @@ function randomLocationChecks(sessionId) {
 /* Tier 3: the signed-in web app makes a single-use code; the LABFLOW Android app opens with it and links this account. */
 LF.linkPhoneApp = async () => {
   const r = await api('app.pairCode');
-  const qr = h('div', { class: 'qr-frame' }, LF.util.qrSvg(r.link));
+  // On a phone the app is right here: one button, no QR (a QR on a phone only gets shown to a scanner by mistake).
+  // On a laptop the QR is for the app's "Scan a link code" button, labelled so nobody takes it for attendance.
+  const desk = Device.isDesktop();
   LF.modal('Link the LABFLOW phone app', h('div', { style: { display: 'grid', gap: '12px' } },
-    h('p', { style: { margin: 0 } }, 'On the phone with the LABFLOW app: tap the button. On a laptop: open the app on your phone and scan this code. It works once and expires at ' + fmt.time(r.expiresAt) + '.'),
-    h('a', { class: 'btn btn-primary', href: r.link, style: { justifyContent: 'center' } }, 'Open the LABFLOW app'), qr,
+    desk ? h('p', { style: { margin: 0 } }, 'Open the LABFLOW app on your phone, tap "Scan a link code shown on a laptop" and point it at this code. It works once and expires at ' + fmt.time(r.expiresAt) + '.')
+      : h('p', { style: { margin: 0 } }, 'Tap the button to go back to the LABFLOW app and finish linking with your fingerprint. It works once and expires at ' + fmt.time(r.expiresAt) + '.'),
+    desk ? null : h('a', { class: 'btn btn-primary', href: r.link, style: { justifyContent: 'center', minHeight: '52px', fontSize: '17px' } }, 'Finish linking in the app'),
+    desk ? h('div', { style: { display: 'grid', gap: '6px', justifyItems: 'center' } }, h('div', { class: 'qr-frame' }, LF.util.qrSvg(r.link)), ui.badge('App link code · not for attendance', 'warn')) : null,
     h('p', { class: 'hint', style: { margin: 0 } }, 'Your first phone is linked at once. A new phone later needs your teacher\'s approval. Android only for now.')));
 };
 /* ------------------------------------------------------------------ History */

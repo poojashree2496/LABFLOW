@@ -749,11 +749,22 @@ LF.ui.scanError = (e) => h('div', { class: 'result bad', role: 'alert' }, h('div
  * The phone scanner (Version B) for a teacher, lab staff, an event coordinator or a class representative. Scans with
  * the in-app camera or a connected scanner; a code opened from the phone's own camera app arrives through scanLink().
  */
+/* Three kinds of QR look alike: the lab screen's check-in code (?k=), a student's own QR (?s=) and the app link code
+   (labflow://pair). A scanner that reads the wrong kind says which one it saw and what to scan instead. */
+LF.wrongCode = (code, want) => {
+  const c = String(code || ''), kind = /^labflow:/i.test(c) ? 'link' : /[?&]s=|^[^~\s]+~\d+~/.test(c) ? 'student' : /[?&]k=|^k1\./.test(c) ? 'lab' : '';
+  if (!kind || kind === want) return false;
+  LF.toast(kind === 'link' ? 'That is the code for linking the phone app, not for attendance. ' + (want === 'student' ? 'Ask the student to open Today and tap Show my QR.' : 'Scan the code on the lab screen.')
+    : kind === 'student' ? "That is a student's own QR. " + (want === 'lab' ? 'Scan the code on the lab screen instead.' : '')
+    : "That is the lab screen's check-in code. " + (want === 'student' ? "Students scan it with their own phone; here, scan the QR on the student's phone." : ''), 'bad');
+  return true;
+};
 LF.openPhoneScanner = (title, first) => {
   const results = h('div', { style: { display: 'grid', gap: '8px' } }), count = h('span', { class: 'badge info' }, '0 scanned');
   let n = 0, busy = Promise.resolve();
   const sc = LF.ui.scanner({ title: 'Student QR', onCode: (code) => { busy = busy.then(() => run(code)); } });
   async function run(code) {
+    if (LF.wrongCode(code, 'student')) return;
     try { const r = await api('scan.submit', { qr: code }); n++; count.textContent = n + ' scanned'; results.prepend(LF.ui.scanResult(r)); }
     catch (e) {
       if (e.code === 'SCAN_AGAIN') { const old = results.querySelector('.live-hint'); if (old) old.remove(); results.prepend(h('div', { class: 'hint live-hint', role: 'status' }, e.message)); }
