@@ -10,8 +10,8 @@ android {
         applicationId = "edu.karunya.labflow"
         minSdk = 30 // Android 11: framework BiometricPrompt with BIOMETRIC_STRONG and per-use Keystore keys
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         // The live LABFLOW API and site. Both can be changed in the app (Server settings), for a test server on the LAN.
         buildConfigField("String", "API_URL", "\"https://script.google.com/macros/s/AKfycbz6bQX3K7sMwWQQGmzO0T58eh1kF-rSSWTePAM7TJm47x7YcoiGh-UMfPYd4TUCc6VHMg/exec\"")
         buildConfigField("String", "WEB_URL", "\"https://labskarunya.vercel.app/\"")

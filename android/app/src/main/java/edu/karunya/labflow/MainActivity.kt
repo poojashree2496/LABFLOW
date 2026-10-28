@@ -1,6 +1,7 @@
 package edu.karunya.labflow
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -22,8 +23,16 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.webkit.GeolocationPermissions
+import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -37,13 +46,19 @@ import java.net.URLDecoder
 import kotlin.concurrent.thread
 
 /**
- * The one screen of the LABFLOW app: link the phone, check in and out by scanning the lab screen, answer fingerprint
- * checks, and set up permissions and battery. Plain framework views styled like the website, so the app has no UI
- * libraries to keep up to date.
+ * The LABFLOW app. Before linking it shows a native welcome screen; once linked it shows the LABFLOW website itself in a
+ * WebView, signed in with the app's session, and the site uses the app's camera scanner, device key and location
+ * tracking through window.LabflowApp (Bridge). The native screen stays for linking, fingerprint checks and setup.
+ * Plain framework views styled like the website, so the app has no UI libraries to keep up to date.
  */
 class MainActivity : Activity() {
     private lateinit var store: Store
     private lateinit var box: LinearLayout
+    private lateinit var nativeRoot: View
+    private var web: WebView? = null
+    private var webRoot: FrameLayout? = null
+    private var setup = false             // the native setup screen is open over the site
+    @Volatile private var pageHost: String? = null
     private var afterPermission: (() -> Unit)? = null
     private var busy = false
 
@@ -52,11 +67,71 @@ class MainActivity : Activity() {
         store = Store(this)
         Notes.channels(this)
         box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(32)) }
-        setContentView(LinearLayout(this).apply {
+        nativeRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(PAPER); fitsSystemWindows = true
             addView(header()); addView(ScrollView(context).apply { addView(box); layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) })
-        })
+        }
         handle(intent)
+    }
+
+    @Deprecated("Activity back handling")
+    override fun onBackPressed() {
+        val w = web
+        if (setup && store.session != null) { setup = false; render() }
+        else if (w != null && !setup && store.session != null && w.canGoBack()) w.goBack()
+        else @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    // ---- the website inside the app -----------------------------------------------------------------------------
+    private fun host(url: String?) = try { Uri.parse(url ?: "").host } catch (e: Exception) { null }
+    /** Hosts the bridge answers on: the configured site, and the built-in one (the old address redirects to it). */
+    private fun ours(h: String?) = h != null && (h == host(store.web) || h == host(BuildConfig.WEB_URL))
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun showWeb() {
+        val w = web ?: WebView(this).also { w ->
+            web = w
+            w.settings.javaScriptEnabled = true; w.settings.domStorageEnabled = true; w.settings.mediaPlaybackRequiresUserGesture = false
+            w.settings.setGeolocationEnabled(true)
+            w.setBackgroundColor(PAPER)
+            w.addJavascriptInterface(Bridge(), "LabflowApp")
+            w.webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { pageHost = host(url) }
+                override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
+                    val u = req.url
+                    if (u.scheme == "labflow" && u.host == "pair") { u.getQueryParameter("t")?.let { link(it) }; return true }
+                    if (ours(u.host)) return false
+                    try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { /* no app for it */ }
+                    return true
+                }
+            }
+            w.webChromeClient = object : WebChromeClient() {
+                // The site's own camera scanner (rescans) and random location checks.
+                override fun onPermissionRequest(r: PermissionRequest) = ui {
+                    if (!ours(host(r.origin.toString()))) return@ui r.deny()
+                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) r.grant(r.resources)
+                    else { afterPermission = { r.grant(r.resources) }; requestPermissions(arrayOf(Manifest.permission.CAMERA), 2) }
+                }
+                override fun onGeolocationPermissionsShowPrompt(origin: String, cb: GeolocationPermissions.Callback) { cb.invoke(origin, ours(host(origin)) && hasLocation(), false) }
+            }
+            w.loadUrl(store.web)
+        }
+        val root = webRoot ?: FrameLayout(this).apply { fitsSystemWindows = true; setBackgroundColor(PAPER); addView(w) }.also { webRoot = it }
+        if (root.parent == null) setContentView(root)
+    }
+    /** Unlinked or signed out: drop the page, so the next link starts clean. */
+    private fun dropWeb() { web?.destroy(); web = null; webRoot = null }
+
+    /** window.LabflowApp. Called on a WebView thread; answers only while a page of the LABFLOW site is loaded. */
+    inner class Bridge {
+        private fun ok() = ours(pageHost)
+        @JavascriptInterface fun session(): String = if (ok()) store.session ?: "" else ""
+        @JavascriptInterface fun credentialId(): String = if (ok() && store.deviceStatus == "active") store.credentialId ?: "" else ""
+        /** Signs a Version B QR payload with the phone's device key (the site's "Show my QR"). */
+        @JavascriptInterface fun sign(text: String): String = if (ok() && store.deviceStatus == "active") Keys.sign(Keys.DEVICE, text) else ""
+        @JavascriptInterface fun scan(purpose: String) { if (ok()) ui { scan(if (purpose == "out") "out" else "in") } }
+        @JavascriptInterface fun settings() { if (ok()) ui { setup = true; render() } }
+        @JavascriptInterface fun expired() { if (ok()) ui { store.session = null; dropWeb(); render() } }
     }
 
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handle(intent) }
@@ -147,10 +222,13 @@ class MainActivity : Activity() {
     private fun ui(fn: () -> Unit) = runOnUiThread(fn)
 
     private fun render() {
+        if (store.session != null && !setup) return showWeb()
+        if (nativeRoot.parent == null) setContentView(nativeRoot)
         box.removeAllViews()
         if (store.session == null) return renderWelcome()
         val linked = store.deviceStatus == "active"
-        box.addView(card(Color.WHITE, HAIR, 0,
+        box.addView(button("Back to LABFLOW", primary = true, top = 0) { setup = false; render() })
+        box.addView(card(Color.WHITE, HAIR, 16,
             text(store.name ?: "", 20f, true, 0),
             text(store.rollNo ?: "", 14f, top = 2, color = SOFT),
             if (linked) badge("Phone linked to you", GOOD, GOOD_SOFT) else badge("Waiting for teacher approval", WARN, WARN_SOFT),
@@ -219,7 +297,7 @@ class MainActivity : Activity() {
 
     private fun unlink() {
         AlertDialog.Builder(this).setTitle("Unlink this phone?").setMessage("The keys on this phone are deleted. Linking a phone again needs your teacher's approval.")
-            .setPositiveButton("Unlink") { _, _ -> stopService(Intent(this, TrackingService::class.java)); Keys.reset(); store.signOut(); render() }
+            .setPositiveButton("Unlink") { _, _ -> stopService(Intent(this, TrackingService::class.java)); Keys.reset(); store.signOut(); dropWeb(); setup = false; render() }
             .setNegativeButton("Cancel", null).show()
     }
 
@@ -234,7 +312,7 @@ class MainActivity : Activity() {
             Reports.flush(this, store)
             ui { render() }
         } catch (e: ApiError) {
-            if (e.code == "NO_IDENTITY" || e.code == "SESSION_EXPIRED" || e.code == "NO_DEVICE") { store.session = null; say(e.message ?: ""); ui { render() } }
+            if (e.code == "NO_IDENTITY" || e.code == "SESSION_EXPIRED" || e.code == "NO_DEVICE") { store.session = null; say(e.message ?: ""); ui { dropWeb(); render() } }
         } catch (e: Exception) { /* offline */ }
     }
 
@@ -261,7 +339,7 @@ class MainActivity : Activity() {
                 val flagged = r.optJSONArray("flagged")
                 val what = if (purpose == "in") "Checked in to ${r.optJSONObject("session")?.optString("title") ?: "the session"}." else "Checked out."
                 say(if (flagged != null && flagged.length() > 0) "$what Recorded but flagged for your teacher: ${flagged.join(", ").replace("\"", "").replace('_', ' ')}." else what)
-                ui { render(); if (purpose == "in") battery(onlyIfNeeded = true) }
+                ui { render(); web?.reload(); if (purpose == "in") battery(onlyIfNeeded = true) }
             } catch (e: Exception) { say(e.message ?: "Check-in failed.") } finally { busy = false }
         }
     }
@@ -319,6 +397,7 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
         val next = afterPermission; afterPermission = null
+        if (code == 2) { if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) next?.invoke() else say("Without the camera the site cannot scan. Use Check in from the LABFLOW home instead."); return }
         if (hasLocation()) next?.invoke() else say("Without location LABFLOW cannot confirm you are in the lab. You can still check in; your teacher will review it.")
     }
 

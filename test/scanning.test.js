@@ -246,3 +246,22 @@ test('liveness: out and rescan scans follow the same rule, and desk identificati
   assert.equal((await live('out')).ok, true);
   assert.equal(row(w, s).state, 'out');
 });
+
+test('unmark: the faculty and the event coordinator cancel a check-in, nobody else can', async () => {
+  const w = await ready(3); const [coord, a, b] = w.students;
+  assert.equal(w.scan(await w.qr(a, w.sid, 'in')).ok, true);
+  assert.equal(w.err(w.faculty2, 'attend.unmark', { sessionId: w.sid, studentId: a.studentId, reason: 'wrong person' }).code, 'FORBIDDEN');
+  assert.equal(w.err(b.email, 'attend.unmark', { sessionId: w.sid, studentId: a.studentId, reason: 'wrong person' }).code, 'FORBIDDEN');
+  assert.equal(w.ok(w.faculty, 'attend.unmark', { sessionId: w.sid, studentId: a.studentId, reason: 'proxy scan' }).voided, 1);
+  const row = w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster.find((x) => x.studentId === a.studentId);
+  assert.equal(row.firstIn, null, 'counts as not arrived'); assert.notEqual(row.state, 'in');
+  assert.equal(w.err(w.faculty, 'attend.unmark', { sessionId: w.sid, studentId: a.studentId, reason: 'again' }).code, 'NO_ENTRY');
+  assert.equal(w.scan(await w.qr(a, w.sid, 'in')).ok, true, 'can check in again after being unmarked');
+
+  w.ok(w.faculty, 'sessions.close', { sessionId: w.sid });
+  const ev = w.ok(w.faculty, 'events.create', { name: 'Workshop', labId: w.lab.labId, date: w.today, startTime: '10:00', endTime: '16:00', coordinatorEmail: coord.email, rollNos: [a.rollNo, b.rollNo] });
+  const sid = ev.event.sessionId; w.ok(coord.email, 'sessions.open', { sessionId: sid });
+  assert.equal(w.phoneScan(coord.email, await w.qr(b, sid, 'in')).ok, true);
+  assert.equal(w.ok(coord.email, 'attend.unmark', { sessionId: sid, studentId: b.studentId, reason: 'left at once' }).voided, 1);
+  assert.equal(w.err(coord.email, 'attend.unmark', { sessionId: w.sid, studentId: a.studentId, reason: 'not my event' }).code, 'FORBIDDEN');
+});

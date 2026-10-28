@@ -650,6 +650,32 @@ var Attend = {
     });
   },
 
+  /** Unmark a student: void every scan and correction they have in this session, so they count as not arrived.
+   *  The session's faculty, its event coordinator or an admin. Append-only like every correction (VOID rows). */
+  unmark: function (ctx, p) {
+    V.obj(p);
+    var reason = V.str(p.reason, 'Reason', { min: 3, max: 300 });
+    return Locks.with(function () {
+      var s = Db.mustGet('Sessions', V.id(p.sessionId, 'Session', 'session'), 'Session');
+      if (!Auth.ownsSession(ctx, s) && !Events.isCoordinator(ctx, s)) fail('FORBIDDEN', 'This is not your session.');
+      if (s.archivedAt) fail('ARCHIVED', 'This session is archived and can no longer be corrected.');
+      var studentId = V.id(p.studentId, 'Student', 'student'), student = Db.mustGet('StudentProfiles', studentId, 'Student');
+      var marks = (Attend._effective(Attend._eventsFor(s))[studentId] || []).filter(function (e) { return ['IN', 'OUT', 'RESCAN', 'CORR_IN', 'CORR_OUT'].indexOf(e.type) >= 0; });
+      if (!marks.length) fail('NO_ENTRY', 'This student has no attendance to unmark.');
+      var now = U.now(), late = now - s.scheduledEnd > Settings.get('correctionApprovalAfterHours') * 3600000, auto = ctx.has('admin') || !late;
+      Db.insertMany('AttendanceEvents', marks.map(function (e) {
+        return { eventId: U.id('event'), sessionId: s.sessionId, labId: s.labId, studentId: studentId, type: 'VOID', ref: e.eventId, at: now, source: 'manual', method: 'manual',
+          scannedBy: ctx.email, scannerRole: Auth.operatorRole(ctx, s), recordedBy: ctx.email, reason: 'Unmarked: ' + reason, createdAt: now,
+          approvalStatus: auto ? 'approved' : 'pending', approvedBy: auto ? (ctx.has('admin') ? ctx.email : 'policy:within-' + Settings.get('correctionApprovalAfterHours') + 'h') : '' };
+      }));
+      Audit.log({ actor: ctx.email, role: Auth.operatorRole(ctx, s), action: 'attendance.unmark', entityType: 'Session', entityId: s.sessionId, detail: { studentId: studentId, rollNo: student.rollNo, voided: marks.length, reason: reason, approval: auto ? 'approved' : 'pending' } });
+      if (!auto) Notify.toRole('admin', 'correction', 'Attendance correction needs approval', ctx.email + ' unmarked ' + student.rollNo + ' (' + s.title + ').', 'unmark:' + s.sessionId + ':' + studentId + ':' + now);
+      if (s.status === 'closed' && auto) Attend.rebuildSummary(s.sessionId);
+      Occupancy.invalidate(s.labId);
+      return { voided: marks.length, approvalStatus: auto ? 'approved' : 'pending' };
+    });
+  },
+
   pendingCorrections: function () {
     var all = Db.where('AttendanceEvents', function (e) { return (e.type === 'CORR_IN' || e.type === 'CORR_OUT' || e.type === 'VOID') && e.approvalStatus === 'pending'; });
     var decided = {}; Db.where('AttendanceEvents', function (e) { return e.type === 'DECISION'; }).forEach(function (d) { decided[d.ref] = true; });

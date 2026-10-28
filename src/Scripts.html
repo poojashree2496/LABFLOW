@@ -71,8 +71,11 @@ LF.ApiError = ApiError;
    a CORS "simple" request, which Apps Script can serve, and credentials are omitted so Google cookies never ride along. */
 const CFG = window.LF_CONFIG || null;
 LF.hosted = !!(CFG && CFG.apiUrl);
+/* Inside the LABFLOW Android app the site runs in a WebView and the app holds the sign-in (from linking), the device
+   key, the camera scanner and location tracking. The app exposes them as window.LabflowApp, only to this site. */
+LF.inApp = !!window.LabflowApp;
 LF.session = {
-  get: () => { try { return localStorage.getItem('lf-session') || ''; } catch (e) { return ''; } },
+  get: () => { if (LF.inApp) return window.LabflowApp.session() || ''; try { return localStorage.getItem('lf-session') || ''; } catch (e) { return ''; } },
   set: (v) => { try { localStorage.setItem('lf-session', v); } catch (e) { /* ignore */ } },
   clear: () => { try { localStorage.removeItem('lf-session'); } catch (e) { /* ignore */ } }
 };
@@ -85,6 +88,7 @@ async function fetchCall(action, payload) {
   } catch (e) { throw new ApiError('NETWORK', 'Could not reach the server. Check your connection.'); }
   if (r && r.ok) return r.data;
   if (r && r.error) {
+    if (LF.inApp && (r.error.code === 'SESSION_EXPIRED' || r.error.code === 'NO_IDENTITY')) { window.LabflowApp.expired(); throw new ApiError(r.error.code, r.error.message, r.error.extra); }
     if (action !== 'auth.google' && (r.error.code === 'SESSION_EXPIRED' || r.error.code === 'NO_IDENTITY')) { LF.session.clear(); if (LF.me) setTimeout(() => signInScreen(r.error.message)); }
     throw new ApiError(r.error.code, r.error.message, r.error.extra);
   }
@@ -562,6 +566,7 @@ function signInScreen(note) {
 }
 LF.signInScreen = signInScreen;
 function signOut() {
+  if (LF.inApp) return window.LabflowApp.settings(); // the app's own screen unlinks the phone
   LF.session.clear();
   try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ }
   signInScreen('You are signed out.');

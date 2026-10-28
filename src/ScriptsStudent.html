@@ -15,9 +15,10 @@ const ALG = { name: 'ECDSA', namedCurve: 'P-256' }, SIG = { name: 'ECDSA', hash:
 
 const Device = LF.device = {
   keyName: () => 'device:' + (LF.me ? LF.me.email : ''),
-  async load() { try { const r = await idbGet(Device.keyName()); return r && r.privateKey && r.credentialId ? r : null; } catch (e) { return null; } },
+  async load() { if (LF.inApp) { const id = window.LabflowApp.credentialId(); return id ? { credentialId: id, app: true } : null; } try { const r = await idbGet(Device.keyName()); return r && r.privateKey && r.credentialId ? r : null; } catch (e) { return null; } },
   /** Generate a key, prove possession to the server and keep the key only after the server accepted it. */
   async register(label) {
+    if (LF.inApp) throw new LF.ApiError('IN_APP', 'This phone is linked through the LABFLOW app, which signs your QR codes. Nothing to register.');
     if (!(window.crypto && crypto.subtle)) throw new LF.ApiError('UNSUPPORTED', 'This browser cannot create a secure device key (WebCrypto is unavailable).');
     // Fail early if this browser cannot keep the key: a registered device that cannot sign is worse than none.
     const probe = await Device.probeStorage(); if (!probe.ok) throw new LF.ApiError('UNSUPPORTED', 'This browser cannot store the device key (' + probe.why + '). Try the system browser (Chrome/Safari) instead of an in-app browser.');
@@ -29,7 +30,7 @@ const Device = LF.device = {
     await idbPut(Device.keyName(), { credentialId: out.credentialId, privateKey: pair.privateKey, publicKey: LF.util.b64u(raw), label: label || 'My phone', createdAt: Date.now() });
     return out;
   },
-  async sign(text) { const k = await Device.load(); if (!k) throw new LF.ApiError('NO_KEY', 'This phone does not hold your device key. Register this device first.'); return { credentialId: k.credentialId, signature: LF.util.b64u(await crypto.subtle.sign(SIG, k.privateKey, utf8(text))) }; },
+  async sign(text) { if (LF.inApp) { const id = window.LabflowApp.credentialId(); if (!id) throw new LF.ApiError('NO_KEY', 'This phone is waiting for approval by your teacher.'); return { credentialId: id, signature: window.LabflowApp.sign(text) }; } const k = await Device.load(); if (!k) throw new LF.ApiError('NO_KEY', 'This phone does not hold your device key. Register this device first.'); return { credentialId: k.credentialId, signature: LF.util.b64u(await crypto.subtle.sign(SIG, k.privateKey, utf8(text))) }; },
   async forget() { try { await idbDel(Device.keyName()); } catch (e) { /* ignore */ } },
   /** Students are expected to register phones; a desktop registration is allowed but flagged for review. */
   isDesktop() { try { if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') return !navigator.userAgentData.mobile; } catch (e) { /* ignore */ } return !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || ''); },
@@ -310,12 +311,12 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
         m.state === 'in' && m.work ? h('p', { class: 'hint', style: { overflowWrap: 'anywhere' } }, 'Project: ' + (m.work.projectTitle || 'Not selected') + ' · System: ' + (m.work.assetName || 'Own laptop / no system')) : null,
         s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,
-        need && a && String(s.labMode).charAt(0) === 'C' ? h('div', { class: 'card sky', style: { marginTop: '8px' } }, h('strong', null, 'Phone app session. '), 'Check in with the LABFLOW app (Device tab: link the app). Without it, for example on an iPhone, scan the lab screen as usual; your check-in is flagged for your teacher to review.') : null,
+        need && a && String(s.labMode).charAt(0) === 'C' && !LF.inApp ? h('div', { class: 'card sky', style: { marginTop: '8px' } }, h('strong', null, 'Phone app session. '), 'Check in with the LABFLOW app (Device tab: link the app). Without it, for example on an iPhone, scan the lab screen as usual; your check-in is flagged for your teacher to review.') : null,
         need && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Check in by scanning the QR on the lab screen with your phone camera.') : null, warn,
         s.status === 'open' && m.state === 'in' && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'While this page is open, LABFLOW checks your location at random times to confirm you are still at the lab.') : null,
         h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' } },
           s.status === 'open' && m.state === 'in' ? ui.button('Change system / project', { onClick: () => editWork(s, reload) }) : null,
-          need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => scanLabScreen() }) : null,
+          need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => LF.inApp && !resc ? window.LabflowApp.scan(m.state === 'in' ? 'out' : 'in') : scanLabScreen() }) : null,
           canIn && b ? ui.button('Show my QR', { kind: a ? '' : 'primary', icon: 'qr', onClick: () => openQr(s, 'in', () => reload()) }) : null,
           resc && b ? ui.button('Confirm presence (QR)', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'rescan', () => reload()) }) : null,
           canOut && b ? ui.button('Show exit QR', { icon: 'qr', onClick: () => openQr(s, 'out', () => reload()) }) : null));
@@ -389,13 +390,16 @@ LF.register({ role: 'student', id: 'device', label: 'Device', icon: 'phone', ren
     const hasActive = creds.credentials.some((c) => c.status === 'active'), anyHistory = creds.credentials.length > 0;
     const thisId = local ? local.credentialId : null;
     const mismatch = local && !creds.credentials.some((c) => c.credentialId === local.credentialId && (c.status === 'active' || c.status === 'pending_approval'));
+    const inApp = LF.inApp ? h('section', { class: 'card', 'aria-label': 'This phone' }, h('h2', { class: 't-h2' }, 'This phone'),
+      h('p', { class: 'hint' }, apps.some((c) => c.status === 'active') ? 'Linked to you through the LABFLOW app. It scans the lab screen, signs your QR codes and confirms you stay at the lab.' : 'Linked, waiting for approval by your teacher. Until then your check-ins are flagged for review.'),
+      h('div', { style: { marginTop: '10px' } }, ui.button('App settings', { icon: 'settings', onClick: () => window.LabflowApp.settings() }))) : null;
     clear(box).append(
-      gate,
-      h('section', { class: 'card', 'aria-label': 'Phone app' }, h('h2', { class: 't-h2' }, 'LABFLOW phone app (Android)'),
+      gate, inApp,
+      LF.inApp ? null : h('section', { class: 'card', 'aria-label': 'Phone app' }, h('h2', { class: 't-h2' }, 'LABFLOW phone app (Android)'),
         h('p', { class: 'hint' }, 'Some sessions use the phone app: it confirms you stay at the lab for the whole session and asks for your fingerprint now and then. One phone per student.'),
         apps.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '10px' } }, apps.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), h('div', { class: 'hint' }, 'Linked ' + fmt.dt(c.createdAt))), ui.status(c.status)))) : null,
         st && st.status === 'verified' ? h('div', { style: { marginTop: '12px' } }, ui.button(apps.length ? 'Link a new phone' : 'Link the phone app', { kind: apps.length ? '' : 'primary', icon: 'phone', onClick: () => LF.linkPhoneApp().catch(LF.fail) })) : null),
-      h('section', { class: 'card', 'aria-label': 'Registered devices' }, h('h2', { class: 't-h2' }, 'Registered devices'),
+      LF.inApp ? null : h('section', { class: 'card', 'aria-label': 'Registered devices' }, h('h2', { class: 't-h2' }, 'Registered devices'),
         h('p', { class: 'hint' }, 'Labs that use device QR codes need this. In labs that show a QR on a screen, you scan that instead and do not need a registered device.'),
         live.length ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '10px' } }, live.map((c) => h('div', { class: 'row' }, h('div', null, h('strong', null, c.label), c.credentialId === thisId ? h('span', { style: { marginLeft: '8px' } }, ui.badge('this phone', 'info')) : null, h('div', { class: 'hint' }, 'Registered ' + fmt.dt(c.createdAt))), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, ui.status(c.status),
           ui.button('Revoke', { size: 'sm', kind: 'danger', onClick: async () => { if (!await LF.confirm({ title: 'Revoke this device?', message: 'It stops working immediately. A replacement phone must then be approved in person at the lab desk.', confirmLabel: 'Revoke', danger: true })) return; await api('cred.revoke', { credentialId: c.credentialId, reason: 'revoked by student' }); if (c.credentialId === thisId) await Device.forget(); LF.toast('Device revoked', 'good'); draw(); } }))))) : ui.empty('No device registered', 'Register this phone once. After that your phone proves it is yours every time it shows a QR.'),
@@ -588,6 +592,7 @@ function coordinatorView(root) {
         e.active ? h('div', { class: 'toolbar', style: { marginTop: '12px' } },
           e.session && e.session.status === 'scheduled' ? ui.button('Open event session', { kind: 'primary', onClick: async () => { await api('sessions.open', { sessionId: e.sessionId }); reload(); } }) : null,
           e.session && e.session.status === 'open' ? ui.button('Scan participants', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan participants: ' + e.name) }) : null,
+          e.session && e.session.status !== 'scheduled' ? ui.button('Attendance', { icon: 'users', onClick: () => LF.eventRoster({ sessionId: e.sessionId, title: e.name }) }) : null,
           ui.button('Add a guest', { icon: 'plus', onClick: () => ui.formModal({ title: 'Add a guest', intro: 'For speakers or visitors without a Karunya account. Each addition is logged.', fields: [{ name: 'name', label: 'Name', required: true, maxlength: 80 }, { name: 'organisation', label: 'Organisation', maxlength: 80 }], submitLabel: 'Add guest', onSubmit: async (v) => { await api('events.addGuest', Object.assign({ labEventId: e.labEventId }, v)); LF.toast('Guest added', 'good'); reload(); } }) }),
           ui.button('Register participants', { onClick: () => ui.formModal({ title: 'Register participants', fields: [{ name: 'rolls', label: 'Roll numbers (one per line or comma separated)', type: 'textarea', rows: 6, required: true }], submitLabel: 'Register', onSubmit: async (v) => { const x = await api('events.register', { labEventId: e.labEventId, rollNos: v.rolls.split(/[\s,;]+/).filter(Boolean) }); LF.toast(x.added + ' registered' + (x.errors.length ? ', ' + x.errors.length + ' not found' : ''), x.errors.length ? '' : 'good'); reload(); } }) }),
           e.session && e.session.status === 'open' ? ui.button('Close', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close the event session?', message: 'Participants can still scan out for a short grace period.', confirmLabel: 'Close' })) return; await api('sessions.close', { sessionId: e.sessionId, reason: 'closed by coordinator' }); reload(); } }) : null)

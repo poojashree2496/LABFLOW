@@ -45,6 +45,22 @@ LF.sessionCard = function (s, reload) {
     s.notes ? h('div', { class: 'hint', style: { marginTop: '6px' } }, s.notes) : null,
     actions.length ? h('div', { class: 'toolbar', style: { marginTop: '12px' } }, actions) : null);
 };
+/* Unmark a student (faculty or event coordinator): their scans in this session are voided, never deleted. */
+LF.unmarkFlow = (s, x, after) => LF.ui.formModal({ title: 'Unmark ' + x.name, intro: 'Their check-ins for ' + s.title + ' are cancelled and they count as not arrived. The original scans stay in the record with your name and reason.',
+  fields: [{ name: 'reason', label: 'Reason', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: 'Unmark',
+  onSubmit: async (v) => { const r = await api('attend.unmark', { sessionId: s.sessionId, studentId: x.studentId, reason: v.reason }); LF.toast(r.approvalStatus === 'pending' ? 'Sent to an admin for approval' : x.name + ' unmarked', 'good'); after(); } });
+/* Who is checked in to an event, with Unmark, for the event coordinator. */
+LF.eventRoster = (s) => {
+  const body = h('div', null, ui.skeleton(3));
+  LF.modal('Attendance: ' + s.title, body);
+  const load = () => ui.loadInto(body, async () => {
+    const r = await api('attend.roster', { sessionId: s.sessionId }), marked = r.roster.filter((x) => x.firstIn);
+    if (!marked.length) return ui.empty('Nobody checked in yet');
+    return h('div', { style: { display: 'grid', gap: '8px' } }, marked.map((x) => h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } },
+      h('span', null, h('strong', null, x.name), ' ' + x.rollNo + ' · in ' + fmt.time(x.firstIn)), ui.button('Unmark', { size: 'sm', kind: 'danger', onClick: () => LF.unmarkFlow(s, x, load) }))));
+  });
+  load();
+};
 /* Modes a session can use, given its lab's modes (C, the phone app, needs the kiosk QR, A). */
 function modeOptions(labMode) {
   return [{ value: 'A', label: 'Tier 1: kiosk QR + GPS, random location checks (recommended)' }, { value: 'B', label: 'Tier 2: device QR, scanned in the room' }, { value: 'AB', label: 'Tiers 1 and 2' }, { value: 'C', label: 'Tier 3: phone app, location for the whole session + fingerprint checks' }]
@@ -74,7 +90,8 @@ function showLabQr(s) {
     try {
       const d = await api('sessions.checkinQr', { sessionId: s.sessionId });
       clear(qrBox).appendChild(LF.util.qrSvg(d.url)); msg.textContent = '';
-      const ms = Math.max(1000, d.nextAt - LF.now()), bi = bar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
+      // Server time on both sides: a phone or laptop clock that runs ahead must not turn this into a 1 s loop.
+      const ms = Math.max(2000, d.nextAt - d.serverNow), bi = bar.firstChild; bi.style.transition = 'none'; bi.style.width = '100%';
       requestAnimationFrame(() => { bi.style.transition = 'width ' + ms + 'ms linear'; bi.style.width = '0%'; });
       timer = setTimeout(tick, ms + 150);
     } catch (e) { msg.textContent = LF.errMsg(e); msg.className = 'err'; timer = setTimeout(tick, 5000); }
@@ -219,6 +236,7 @@ function liveRoster(root) {
     const s = session, open = s.status === 'open';
     const body = h('div', { style: { display: 'grid', gap: '10px' } },
       h('div', { class: 'hint' }, x.rollNo + ' · ' + x.name + ' · ' + x.status.replace(/_/g, ' ')),
+      x.firstIn ? ui.button('Unmark attendance', { block: true, kind: 'danger', onClick: () => { m.close(); LF.unmarkFlow(s, x, refresh); } }) : null,
       x.state !== 'in' ? ui.button('Add entry (student was present)', { block: true, onClick: () => correction(x, 'add_in') }) : null,
       x.state === 'in' ? ui.button('Add exit (student left)', { block: true, onClick: () => correction(x, 'add_out') }) : null,
       open && x.state === 'in' ? ui.button('Spot check this student', { block: true, icon: 'camera', onClick: async () => { await api('spot.start', { sessionId: s.sessionId, studentId: x.studentId }); LF.toast('Spot check created', 'good'); m.close(); refresh(); } }) : null,

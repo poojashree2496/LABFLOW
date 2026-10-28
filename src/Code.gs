@@ -77,7 +77,8 @@ var ROUTES = {
   'sessions.create': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.create(c, p); } },
   'sessions.open': { roles: ['user'], fn: function (c, p) { return Sessions.open(c, p); } },   // owner, event coordinator or class rep (checked in Sessions)
   'sessions.setMode': { roles: ['user'], rl: [20, 60], fn: function (c, p) { return Sessions.setMode(c, p); } },
-  'sessions.checkinQr': { roles: ['user'], rl: [60, 60], fn: function (c, p) { return Sessions.checkinQr(c, p); } },
+  'attend.unmark': { roles: ['user'], rl: [60, 60], fn: function (c, p) { return Attend.unmark(c, p); } },   // faculty owner, event coordinator or admin (checked in Attend)
+  'sessions.checkinQr': { roles: ['user'], rl: [120, 60], fn: function (c, p) { return Sessions.checkinQr(c, p); } },
   'sessions.close': { roles: ['user'], fn: function (c, p) { return Sessions.close(c, p); } },
   'sessions.cancel': { roles: ['faculty', 'admin'], fn: function (c, p) { return Sessions.cancel(c, p); } },
   'research.pending': { roles: ['faculty', 'admin'], fn: function (c) { return Sessions.pendingResearch(c); } },
