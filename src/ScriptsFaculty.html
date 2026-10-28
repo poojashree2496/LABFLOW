@@ -99,7 +99,7 @@ function showLabQr(s) {
 }
 function openFlow(s, reload, override) {
   const labMode = (s.labMode || 'A').replace('C', ''), modes = modeOptions(labMode);
-  const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence rescan at any time from the Live roster. Tier 3 still accepts students without the app (iPhones), flagged for you to review.' }) : null;
+  const mode = modes.length > 1 ? ui.field({ name: 'checkinMode', label: 'How students check in', type: 'select', value: labMode.includes('A') ? 'A' : labMode, options: modes, hint: 'You can call a presence check (students confirm their location) at any time from the Live roster. Tier 3 still accepts students without the app (iPhones), flagged for you to review.' }) : null;
   const isAdmin = LF.me.roles.includes('admin');
   const ov = isAdmin ? ui.field({ name: 'override', label: 'Admin override (outside the time window or lab busy)', type: 'checkbox', value: !!override }) : null;
   const msg = h('div', { class: 'err', role: 'alert', hidden: true });
@@ -191,7 +191,7 @@ function liveRoster(root) {
     const open = s.status === 'open';
     clear(countsEl).append(ui.stat('Inside', c.inside, c.capacity ? 'of ' + c.capacity + ' seats' + (c.overCapacity ? ' (over capacity)' : '') : null, c.overCapacity ? 'bad' : 'good'), ui.stat('Left', c.left), ui.stat('Attended', c.attended, c.enrolled !== null ? 'of ' + c.enrolled + ' enrolled' : 'open to all'), ui.stat(open ? 'Not arrived yet' : 'Absent', c.absent === null ? '-' : c.absent), ui.stat('Exit not scanned', c.unverifiedExits, null, c.unverifiedExits ? 'warn' : ''), ui.stat('Flagged', c.flagged, null, c.flagged ? 'bad' : ''));
     clear(banner);
-    if (c.rescanWindow) { const left = c.rescanWindow.closesAt - LF.now(); banner.append(h('div', { class: 'card sky', role: 'status' }, h('strong', null, 'Presence rescan in progress. '), 'Closes at ' + fmt.time(c.rescanWindow.closesAt) + ' (' + fmt.countdown(left) + ' left). Students inside must scan again.')); }
+    if (c.rescanWindow) { const left = c.rescanWindow.closesAt - LF.now(); banner.append(h('div', { class: 'card sky', role: 'status' }, h('strong', null, 'Presence check running. '), 'Closes at ' + fmt.time(c.rescanWindow.closesAt) + ' (' + fmt.countdown(left) + ' left). Students inside confirm their location on their phone.')); }
     if (!open) banner.append(h('div', { class: 'card flat' }, 'This session is ' + s.status + '. ', s.status === 'closed' ? 'Records are kept as scanned; use Actions for audited corrections.' : ''));
     if (c.onBreak) banner.append(h('div', { class: 'card sky' }, h('strong', null, 'Break. '), 'Attendance is paused until ' + fmt.time(s.breakEnd) + '; nobody needs to scan out for it.'));
     if (r.openFlags) banner.append(h('div', { class: 'card warn toolbar' }, h('strong', null, r.openFlags + ' open flag(s) for this session.'), h('button', { class: 'btn btn-sm', onclick: () => LF.go('flags') }, 'Review flags')));
@@ -202,7 +202,7 @@ function liveRoster(root) {
     if (open) actionsEl.append(ui.button('Check-in mode', { icon: 'settings', onClick: () => modeFlow(s, refresh) }));
     if (open && r.appSession) actionsEl.append(ui.button('Fingerprint check now', { kind: 'primary', icon: 'check', onClick: async () => { const out = await api('presence.bioNow', { sessionId: s.sessionId }); LF.toast('Fingerprint check sent. Phones receive it within ' + Math.round(out.reachWithinSeconds / 60) + ' min; students then have 2 min.', 'good'); refresh(); } }));
     if (r.appSession) banner.append(h('div', { class: 'card flat' }, h('strong', null, 'Phone app session (tier 3). '), 'Phones report their location every few minutes and ask for a fingerprint at random times. Present needs most of the session at the lab, every fingerprint check passed and no open flag. Students without the app are flagged, not refused.'));
-    if (open) actionsEl.append(ui.button('Request rescan now', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); refresh(); } }),
+    if (open) actionsEl.append(ui.button('Presence check now', { icon: 'pin', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Presence check started. Students inside confirm their location on their phone.', 'good'); refresh(); } }),
       ui.button('Random spot check', { icon: 'camera', onClick: async () => { const out = await api('spot.start', { sessionId: s.sessionId }); LF.toast(out.checks.length + ' student(s) selected for a spot check', 'good'); await drawSpot(s); } }),
       ui.button('Close session', { icon: 'x', onClick: async () => { await closeFlow({ sessionId: s.sessionId, title: s.title }, () => LF.go('live')); } }));
     actionsEl.append(ui.button('Reload', { size: 'sm', icon: 'refresh', onClick: () => refresh() }), h('span', { class: 'hint' }, 'Updated ' + fmt.time(LF.now()) + ' (auto-refresh 6 s)'));
@@ -261,7 +261,7 @@ function liveRoster(root) {
       const body = h('div', null, ui.skeleton(3)); const vm = LF.modal('Scans for ' + x.name, body);
       try {
         const r = await api('attend.studentEvents', { sessionId: s.sessionId, studentId: x.studentId });
-        const names = { IN: 'Entry scan', OUT: 'Exit scan', RESCAN: 'Presence rescan', CORR_IN: 'Entry added manually', CORR_OUT: 'Exit added manually', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed', VOID: 'Cancellation' };
+        const names = { IN: 'Entry scan', OUT: 'Exit scan', RESCAN: 'Presence confirmed', CORR_IN: 'Entry added manually', CORR_OUT: 'Exit added manually', SPOT_OK: 'Spot check passed', SPOT_FAIL: 'Spot check not passed', VOID: 'Cancellation' };
         const items = r.events.filter((e) => e.type !== 'VOID');
         clear(body).append(items.length ? h('div', { style: { display: 'grid', gap: '8px' } }, items.map((e) => h('div', { class: 'row' }, h('div', null, h('strong', null, names[e.type] || e.type), ' at ' + fmt.time(e.at), e.voided ? ui.badge('undone', '') : null, e.approvalStatus === 'pending' ? ui.badge('awaiting admin', 'warn') : null, e.reason ? h('div', { class: 'hint' }, e.reason) : null),
           e.voided || e.approvalStatus === 'pending' ? null : ui.button('Undo', { size: 'sm', onClick: () => { vm.close(); LF.ui.formModal({ title: 'Undo: ' + (names[e.type] || e.type), intro: 'The original record stays in the log; it is marked as cancelled by you.', fields: [{ name: 'reason', label: 'Reason (min 10 characters)', type: 'textarea', rows: 2, required: true, maxlength: 300 }], submitLabel: 'Undo scan',

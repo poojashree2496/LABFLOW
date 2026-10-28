@@ -308,7 +308,7 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
       const warn = b && !a && !hasKey && me.student.status === 'verified' && need ? h('div', { class: 'hint err' }, 'This lab uses device QR codes and this phone has no device key yet. Use the Device tab first.') : null;
       return h('article', { class: 'card', 'aria-label': s.title }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s) + (s.facultyName ? ' · ' + s.facultyName : ''))), h('div', { style: { display: 'flex', gap: '6px', alignItems: 'start', flexWrap: 'wrap' } }, ui.status(s.status), stateBadge(m))),
         s.type === 'openlab' ? h('p', { class: 'hint' }, 'Walk in during opening hours; no advance booking needed.') : null,
-        resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Scan again before ' + fmt.time(m.rescan.closesAt) + ' to stay verified.') : null,
+        resc ? h('div', { class: 'card warn', role: 'alert', style: { marginTop: '10px' } }, h('strong', null, 'Presence check. '), 'Confirm you are in the lab before ' + fmt.time(m.rescan.closesAt) + '. It only reads your location.') : null,
         m.state !== 'none' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'In ' + fmt.time(m.firstIn) + (m.lastOut ? ' · Out ' + fmt.time(m.lastOut) : '') + ' · Verified ' + fmt.mins(m.verifiedMinutes)) : null,
         m.state === 'in' && m.work ? h('p', { class: 'hint', style: { overflowWrap: 'anywhere' } }, 'Project: ' + (m.work.projectTitle || 'Not selected') + ' · System: ' + (m.work.assetName || 'Own laptop / no system')) : null,
         s.status === 'scheduled' ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'Not open yet. It opens at the start time.') : null,
@@ -317,15 +317,26 @@ LF.register({ role: 'student', id: 'today', label: 'Today', icon: 'home', render
         s.status === 'open' && m.state === 'in' && a ? h('div', { class: 'hint', style: { marginTop: '8px' } }, 'While this page is open, LABFLOW checks your location at random times to confirm you are still at the lab.') : null,
         h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' } },
           s.status === 'open' && m.state === 'in' ? ui.button('Change system / project', { onClick: () => editWork(s, reload) }) : null,
-          need && a ? ui.button('Scan the lab screen', { kind: 'primary', icon: 'scan', onClick: () => LF.inApp && !resc ? window.LabflowApp.scan(m.state === 'in' ? 'out' : 'in') : scanLabScreen() }) : null,
+          (canIn || canOut) && a ? ui.button('Scan the lab screen', { kind: resc ? '' : 'primary', icon: 'scan', onClick: () => LF.inApp ? window.LabflowApp.scan(m.state === 'in' ? 'out' : 'in') : scanLabScreen() }) : null,
           canIn && b ? ui.button('Show my QR', { kind: a ? '' : 'primary', icon: 'qr', onClick: () => openQr(s, 'in', () => reload()) }) : null,
-          resc && b ? ui.button('Confirm presence (QR)', { kind: 'primary', icon: 'qr', onClick: () => openQr(s, 'rescan', () => reload()) }) : null,
+          resc ? ui.button("I'm here: confirm my location", { kind: 'primary', icon: 'pin', onClick: () => LF.inApp ? window.LabflowApp.presence(s.sessionId) : confirmPresence(s, () => reload()) }) : null,
           canOut && b ? ui.button('Show exit QR', { icon: 'qr', onClick: () => openQr(s, 'out', () => reload()) }) : null));
     }));
   });
   LF.every(15000, () => { if (!document.querySelector('.modal-back')) reload(); });
   api('sessions.mine').then((r) => { const s = r.sessions.find((x) => x.status === 'open' && x.mine.state === 'in' && hasMode(x, 'A')); if (s) randomLocationChecks(s.sessionId); }).catch(() => {});
 } });
+/* Presence check: one location reading, sent while the teacher's presence window is open. No QR. */
+async function confirmPresence(s, done) {
+  LF.toast('Checking your location...', 'info');
+  const geo = await readLocation(() => {});
+  try {
+    const r = await api('presence.confirm', { sessionId: s.sessionId, geo: geo || undefined });
+    if (r.geofence === 'fail') LF.toast('Recorded, but your location looks away from the lab. Your teacher will see this.', 'bad');
+    else LF.toast('Presence confirmed', 'good');
+  } catch (e) { LF.toast(LF.errMsg(e), 'bad'); }
+  done();
+}
 /* Tier 1: while the page is open after check-in, report the location at random times the server picks. A hidden page
    waits and reports as soon as it is visible again. Nothing is shown unless the check places the phone away. */
 let locTimer = null, locSession = null;
@@ -563,18 +574,18 @@ LF.register({ role: 'student', id: 'research', label: 'Research', icon: 'lab', r
 LF.register({ role: 'student', id: 'classrep', label: 'Class rep', icon: 'users', when: (me) => !!me.classRep, render(root) {
   const out = h('div', { style: { display: 'grid', gap: '12px' } });
   root.append(h('h1', { class: 't-h1' }, 'Class representative'),
-    h('p', { class: 't-muted', style: { marginTop: 0 } }, 'You run your class session when needed: open or close it, call a rescan when your teacher asks, and in device-QR labs scan classmates. Scans are only possible while the session is open, only for your class, never for yourself, and every scan you make is shown to the teacher.'), out);
+    h('p', { class: 't-muted', style: { marginTop: 0 } }, 'You run your class session when needed: open or close it, call a presence check when your teacher asks, and in device-QR labs scan classmates. Scans are only possible while the session is open, only for your class, never for yourself, and every scan you make is shown to the teacher.'), out);
   const reload = () => ui.loadInto(out, async () => {
     const r = await api('cr.mine');
     if (!r.sessions.length) return ui.empty('No class session today', 'Sessions for ' + r.reps.map((x) => x.courseCode + (x.section ? ' ' + x.section : '')).join(', ') + ' appear here on class days.');
     return h('div', { style: { display: 'grid', gap: '12px' } }, r.sessions.map((s) => {
       const c = s.counts, b = String(s.labMode || 'A').indexOf('B') >= 0;
       return h('article', { class: 'card' }, h('div', { class: 'toolbar', style: { justifyContent: 'space-between' } }, h('div', null, h('div', { class: 't-h3' }, s.title), h('div', { class: 'hint' }, s.labName + ' · ' + sessionTimes(s))), ui.status(s.status)),
-        c ? h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Inside ' + c.inside, 'good'), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : null, c.rescanWindow ? ui.badge('Rescan until ' + fmt.time(c.rescanWindow.closesAt), 'warn') : null) : null,
+        c ? h('div', { class: 'pill-row', style: { marginTop: '8px' } }, ui.badge('Inside ' + c.inside, 'good'), c.enrolled !== null ? ui.badge('Enrolled ' + c.enrolled, 'info') : null, c.rescanWindow ? ui.badge('Presence check until ' + fmt.time(c.rescanWindow.closesAt), 'warn') : null) : null,
         h('div', { class: 'toolbar', style: { marginTop: '12px' } },
           s.status === 'scheduled' ? ui.button('Open session', { kind: 'primary', onClick: async () => { await api('sessions.open', { sessionId: s.sessionId }); LF.toast('Session opened', 'good'); reload(); } }) : null,
           s.status === 'open' && b && r.crScanning ? ui.button('Scan classmates', { kind: 'primary', icon: 'scan', onClick: () => LF.openPhoneScanner('Scan classmates: ' + s.title) }) : null,
-          s.status === 'open' ? ui.button('Call a rescan', { icon: 'refresh', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Rescan window opened', 'good'); reload(); } }) : null,
+          s.status === 'open' ? ui.button('Call a presence check', { icon: 'pin', onClick: async () => { await api('attend.openRescan', { sessionId: s.sessionId }); LF.toast('Presence check started', 'good'); reload(); } }) : null,
           s.status === 'open' ? ui.button('Close session', { icon: 'x', onClick: async () => { if (!await LF.confirm({ title: 'Close this session?', message: 'Only close it if your teacher asked you to.', confirmLabel: 'Close session' })) return; await api('sessions.close', { sessionId: s.sessionId, reason: 'closed by class representative' }); reload(); } }) : null));
     }));
   });

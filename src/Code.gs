@@ -51,6 +51,7 @@ var ROUTES = {
   // attendance, Version A: kiosk shows a rotating QR, the student's phone opens it and sends its location
   'checkin.open': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Checkin.open(c, p); } },
   'checkin.submit': { roles: ['student'], rl: [30, 60], fn: function (c, p) { return Checkin.submit(c, p); } },
+  'presence.confirm': { roles: ['student'], rl: [20, 60], fn: function (c, p) { return Checkin.presence(c, p); } },   // presence check: one location reading, no QR
   'kiosk.display': { roles: ['kiosk'], rl: [60, 60], fn: function (c) { return Checkin.display(c); } },
 
   // attendance, Version B: the student's device-signed QR is scanned by the kiosk or by a teacher / staff / CR phone

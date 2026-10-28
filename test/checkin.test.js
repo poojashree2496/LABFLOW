@@ -317,3 +317,21 @@ test('live board: filters validate ids, exclude inactive labs and retain empty a
   w.ok(w.admin, 'labs.upsert', { ...w.lab2, status: 'inactive' });
   assert.equal(w.board().labs.length, 1); assert.equal(w.err(w.staff, 'systems.status', { labId: w.lab2.labId }).code, 'FORBIDDEN');
 });
+
+test('presence check: one location reading confirms presence, no QR; outside the lab is flagged and counts as missed', () => {
+  const w = world({ students: 3, mode: 'A' }); const [a, b, c] = w.students; w.sid = w.session().sessionId;
+  w.ok(w.faculty, 'sessions.open', { sessionId: w.sid });
+  for (const s of [a, b]) assert.equal(w.checkin(s).ok, true);
+  const loc = (m) => { const g = w.at(m, 12); return g; };
+  assert.equal(w.err(a.email, 'presence.confirm', { sessionId: w.sid, geo: loc(3) }).code, 'NO_RESCAN_WINDOW');
+  w.ok(w.faculty, 'attend.openRescan', { sessionId: w.sid });
+  const ok = w.ok(a.email, 'presence.confirm', { sessionId: w.sid, geo: loc(3) });
+  assert.equal(ok.type, 'RESCAN'); assert.equal(ok.geofence, 'pass'); assert.equal(ok.method, 'geo');
+  assert.equal(w.err(a.email, 'presence.confirm', { sessionId: w.sid, geo: loc(3) }).code, 'ALREADY_RESCANNED');
+  const away = w.ok(b.email, 'presence.confirm', { sessionId: w.sid, geo: loc(900) });
+  assert.equal(away.geofence, 'fail'); assert.equal(away.assurance, 'flagged');
+  assert.equal(w.err(c.email, 'presence.confirm', { sessionId: w.sid, geo: loc(3) }).code, 'NO_ENTRY', 'not checked in');
+  w.advance(20 * 60000); w.eval('Attend.tickRescans()');
+  const roster = w.ok(w.faculty, 'attend.roster', { sessionId: w.sid }).roster, st = (s) => roster.find((x) => x.studentId === s.studentId).status;
+  assert.equal(st(a), 'present'); assert.ok(['flagged', 'missed_rescan'].includes(st(b)), st(b));
+});

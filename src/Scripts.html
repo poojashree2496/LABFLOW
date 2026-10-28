@@ -175,7 +175,7 @@ function badge(text, kind) { return h('span', { class: 'badge ' + (kind || '') }
 const STATUS_KIND = { present: 'good', verified: 'good', active: 'good', approved: 'good', open: 'good', closed: '', scheduled: 'info', pending: 'warn', pending_approval: 'warn', in: 'good', out: '', none: '',
   absent: 'bad', flagged: 'bad', rejected: 'bad', revoked: 'bad', damaged: 'bad', missing: 'bad', unverified_exit: 'warn', missed_rescan: 'warn', overdue: 'bad', cancelled: '', expired: '', fulfilled: 'info',
   on_loan: 'info', available: 'good', maintenance: 'warn', retired: '', partial: 'warn', failed: 'bad', disabled: 'bad', imported: '', replaced: '' };
-const STATUS_LABEL = { unverified_exit: 'exit not scanned', missed_rescan: 'missed rescan', pending_approval: 'awaiting approval', on_loan: 'on loan', none: 'not arrived' };
+const STATUS_LABEL = { unverified_exit: 'exit not scanned', missed_rescan: 'missed presence check', pending_approval: 'awaiting approval', on_loan: 'on loan', none: 'not arrived' };
 function statusBadge(s) { return badge(STATUS_LABEL[s] || String(s || '-').replace(/_/g, ' '), STATUS_KIND[s]); }
 LF.ui.badge = badge; LF.ui.status = statusBadge;
 

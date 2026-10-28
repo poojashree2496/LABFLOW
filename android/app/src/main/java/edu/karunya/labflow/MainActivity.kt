@@ -130,6 +130,8 @@ class MainActivity : Activity() {
         /** Signs a Version B QR payload with the phone's device key (the site's "Show my QR"). */
         @JavascriptInterface fun sign(text: String): String = if (ok() && store.deviceStatus == "active") Keys.sign(Keys.DEVICE, text) else ""
         @JavascriptInterface fun scan(purpose: String) { if (ok()) ui { scan(if (purpose == "out") "out" else "in") } }
+        /** Presence check: one location reading, no QR. */
+        @JavascriptInterface fun presence(sessionId: String) { if (ok()) ui { confirmPresence(sessionId) } }
         @JavascriptInterface fun settings() { if (ok()) ui { setup = true; render() } }
         @JavascriptInterface fun expired() { if (ok()) ui { store.session = null; dropWeb(); render() } }
     }
@@ -352,6 +354,21 @@ class MainActivity : Activity() {
                 say(if (flagged != null && flagged.length() > 0) "$what Recorded but flagged for your teacher: ${flagged.join(", ").replace("\"", "").replace('_', ' ')}." else what)
                 ui { render(); web?.reload(); if (purpose == "in") battery(onlyIfNeeded = true) }
             } catch (e: Exception) { say(e.message ?: "Check-in failed.") } finally { busy = false }
+        }
+    }
+
+    private fun confirmPresence(sessionId: String) = needLocation {
+        busy = true
+        say("Checking your location...")
+        thread {
+            try {
+                val f = Loc.current(this)
+                val p = JSONObject().put("sessionId", sessionId)
+                if (f != null) p.put("geo", JSONObject().put("lat", f.lat.toDouble()).put("lng", f.lng.toDouble()).put("accuracy", f.acc.toDouble()))
+                val r = Api.call(store, "presence.confirm", p)
+                say(if (r.optString("geofence") == "fail") "Recorded, but your location looks away from the lab. Your teacher will see this." else "Presence confirmed.")
+                ui { web?.reload() }
+            } catch (e: Exception) { say(e.message ?: "Could not confirm. Try again.") } finally { busy = false }
         }
     }
 

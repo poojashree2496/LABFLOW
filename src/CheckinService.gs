@@ -243,6 +243,8 @@ var Checkin = {
     } }
   ],
 
+  STEPS_PRESENCE: null, // built below from STEPS_A's location steps
+
   /** Which session the action applies to. A workstation booking without a session gets its self-work session here. */
   _resolveTarget: function (c) {
     c.purpose = c.action;
@@ -271,6 +273,21 @@ var Checkin = {
     c.session = found;
   },
 
+  /** Presence check: while a presence window is open, a student inside confirms with one location reading (no QR).
+   *  Same location steps as the kiosk check-in; outside the geofence is recorded flagged, which counts as missed. */
+  presence: function (ctx, p) {
+    V.obj(p);
+    var c = { ctx: ctx, mode: 'A', purpose: 'rescan', geo: p.geo || null, sessionId: V.id(p.sessionId, 'Session', 'session') };
+    try {
+      var res = Pipeline.run('A.presence', Checkin.STEPS_PRESENCE, c);
+      Attend._afterAccept(c);
+      return res;
+    } catch (e) {
+      if (e instanceof AppError) Attend._afterReject(c, e, ctx.email, 'student');
+      throw e;
+    }
+  },
+
   submit: function (ctx, p) {
     V.obj(p);
     var c = {
@@ -291,3 +308,29 @@ var Checkin = {
     }
   }
 };
+
+Checkin.STEPS_PRESENCE = [
+  { id: 'student_verified', label: 'Caller is a verified student', run: function (c) {
+    c.student = Creds._requireVerifiedStudent(c.ctx); c.studentId = c.student.studentId;
+  } },
+  { id: 'window', label: 'The session has a presence check running', run: function (c) {
+    c.session = Db.mustGet('Sessions', c.sessionId, 'Session');
+    c.lab = Db.cachedGet('Labs', 'labId', c.session.labId, 120); c.labId = c.session.labId;
+    if (!c.lab) fail('NOT_FOUND', 'Lab not found.');
+    if (!Attend.activeWindow(c.session.sessionId, U.now())) fail('NO_RESCAN_WINDOW', 'There is no presence check running right now.');
+  } }
+].concat(Checkin.STEPS_A.filter(function (s) { return ['geo_reading', 'geo_plausible', 'geofence'].indexOf(s.id) >= 0; })).concat([
+  { id: 'session_open', locked: true, label: 'Session is open', run: function (c) {
+    c.session = Db.get('Sessions', c.session.sessionId); c.now = U.now();
+    Attend._sessionGate(c.session, 'rescan', c.now);
+  } },
+  { id: 'attendance_state', locked: true, label: 'Student is inside and has not confirmed this check yet', run: function (c) {
+    c.state = Attend._stateGate(c.session, c.studentId, 'rescan', c.now, Attend._effective(Attend._eventsFor(c.session)));
+  } },
+  { id: 'record', locked: true, label: 'Append the presence confirmation', run: function (c) {
+    var w = Attend.activeWindow(c.session.sessionId, c.now);
+    c.method = 'geo'; c.scannerRole = 'student'; c.scannedBy = c.ctx.email;
+    c.nonce = 'P:' + w.windowId + ':' + c.studentId; c.redeemPurpose = 'P';
+    Attend._record(c);
+  } }
+]);

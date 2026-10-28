@@ -76,7 +76,7 @@ Each of these takes about a minute. All of them run on the live site.
 
 | Feature | Where | One line to say |
 |---|---|---|
-| Rescan | Faculty > Live roster > **Request rescan now** (or a class rep: **Call a rescan**) | Everyone inside must confirm again within a short window, which catches people who checked in and left |
+| Presence check | Faculty > Live roster > **Presence check now** (or a class rep: **Call a presence check**) | Everyone inside taps **I'm here: confirm my location** within a short window; the phone sends its location (no QR). Catches people who checked in and left |
 | Spot check | Faculty > Live roster > **Random spot check** | Picks random students and shows their photo to compare against the face in the room |
 | Flags | Faculty or Coordinator > Flags | Suspicious patterns (never scanning out, two students on one phone, impossible travel) are flagged for review; they never change attendance on their own |
 | Corrections | Faculty > Live roster, on a student | A manual fix is a new row with a reason; the original stays, and old corrections need admin approval |
@@ -145,7 +145,7 @@ Yes, with effort, and we say so. A phone reports its own location, and a student
 A browser cannot read any of them. Only a native app could, and the brief asks for Apps Script and HTML at no cost.
 
 **Does it keep checking that the student stays in the lab?**
-Yes, whenever the teacher wants. During a class the teacher (or a class rep) presses **Request rescan now**, and students get no warning. Automatic random rescans exist but are off by default: the teacher decides. Everyone marked inside must scan the door screen again within 90 seconds with GPS inside the lab, or show their device QR to the scanner. Anyone who doesn't is marked "missed rescan", and their credited time stops at their last proof. Spot checks compare the student's photo with the face in the room, and an exit scan closes the visit. Following a phone continuously isn't possible from a web page, because the browser pauses the page when the screen locks, and it would drain the battery and track students' locations all day. Show `/presence`.
+Yes, whenever the teacher wants. During a class the teacher (or a class rep) presses **Presence check now**, and students get no warning. Automatic random rescans exist but are off by default: the teacher decides. Everyone marked inside must tap **I'm here: confirm my location** within 90 seconds with GPS inside the lab, or show their device QR to the scanner. Anyone who doesn't is marked "missed rescan", and their credited time stops at their last proof. Spot checks compare the student's photo with the face in the room, and an exit scan closes the visit. Following a phone continuously isn't possible from a web page, because the browser pauses the page when the screen locks, and it would drain the battery and track students' locations all day. Show `/presence`.
 
 **Indoors GPS is poor. Will genuine students be refused?**
 No student is refused for location: a check-in outside the geofence is recorded and flagged, and the faculty decide.

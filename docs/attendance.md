@@ -89,7 +89,7 @@ Corrections to sessions older than `correctionApprovalAfterHours` (24) need admi
 
 Cryptography proves the key signed, not where the phone is. These controls add cost for a cheater and evidence for a reviewer:
 
-- **Rescan windows** - called by the faculty or a class rep at any time (Live roster > Request rescan now), `rescanWindowSeconds` (90) long, with no warning to students. A missed one caps credited time and flags the student. Automatic random rescans (`rescanMode: random`) remain available as a setting but are off by default.
+- **Presence checks** - called by the faculty or a class rep at any time (Live roster > Presence check now; class rep: Call a presence check), `rescanWindowSeconds` (90) long, with no warning to students. A presence check is not a rescan: each student inside taps "I'm here: confirm my location" and the phone sends one location reading (`presence.confirm`, the kiosk check-in's location steps, no QR). Inside the geofence it confirms presence (a `RESCAN` event, method `geo`); outside it is recorded flagged. A missed or failed one caps credited time and flags the student. A lab with no door location cannot place the phone, so the check passes with lower assurance. Automatic random checks (`rescanMode: random`) remain a setting, off by default.
 - **Spot checks** - faculty pick students and compare the photo on file with the person; a failure flags the student.
 - **Exit scans**, **back-to-back scan detection** (one phone scanning two students too fast), **mock-location heuristics**, **impossible travel** between labs.
 - **Flags** go to a review queue (`Flags`); resolving one is audited.
